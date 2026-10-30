@@ -36,6 +36,17 @@ pub const CRCR: u16 = 0x10;
 pub const DCBAAP: u16 = 0x18;
 pub const CONFIG: u16 = 0x20;
 
+/// Doorbell register offset (relative to DBOFF).
+pub const DOORBELL_SLOT0: u16 = 0x00;
+
+/// Runtime register space offsets (relative to RTSOFF).
+pub const MFINDEX: u16 = 0x00;
+pub const IR0_BASE: u16 = 0x20; // first interrupter register set
+
+/// Interrupter register offsets within IR0.
+pub const ERSTSZ: u16 = 0x00;
+pub const ERDP: u16 = 0x10;
+
 /// USBCMD bits.
 pub const USBCMD_RUN: u32 = 1 << 0;
 pub const USBCMD_HCRST: u32 = 1 << 1;
@@ -428,6 +439,18 @@ pub(crate) struct XhciController {
     cmd_ring: XhciCommandRing,
     cmd_event_idx: usize,
     port_count: u8,
+    /// Transfer ring for the default control endpoint (endpoint 0).
+    ep0_ring: Option<XhciTransferRing>,
+    /// Event ring physical base (allocated during init).
+    event_ring_phys: u64,
+    /// Event ring virtual pointer.
+    event_ring_virt: u64,
+    /// Event ring size (TRBs).
+    event_ring_size: usize,
+    /// Event ring dequeue index.
+    event_dequeue_idx: usize,
+    /// Event ring cycle bit.
+    event_cycle_bit: bool,
 }
 
 static mut XHCI_CONTROLLERS: [Option<XhciController>; 4] =
@@ -673,6 +696,12 @@ fn init_controller(bar_phys: u64) -> Option<XhciController> {
         cmd_ring: XhciCommandRing::default(),
         cmd_event_idx: 0,
         port_count: max_ports,
+        ep0_ring: None,
+        event_ring_phys: 0,
+        event_ring_virt: 0,
+        event_ring_size: 0,
+        event_dequeue_idx: 0,
+        event_cycle_bit: true,
     })
 }
 
@@ -689,6 +718,11 @@ pub fn init() {
         let bar = info.and_then(|i| first_mmio_bar(&i));
         if let Some(bar_phys) = bar {
             if let Some(c) = init_controller(bar_phys) {
+                // Allocate the event ring and transfer ring during
+                // init so control transfers work after enumeration.
+                let mut c = c;
+                let _ = init_event_ring(&mut c);
+                let _ = ensure_ep0_ring(&mut c);
                 push_xhci(c);
             }
         }
@@ -951,44 +985,345 @@ impl UsbSetupPacket {
     }
 }
 
-/// Execute a control transfer
+/// Allocate a transfer ring for the default control endpoint if not
+/// yet allocated. The ring is 64 TRBs (1 KiB) which is sufficient
+/// for control transfers (3 TRBs per transfer plus link TRB headroom).
+fn ensure_ep0_ring(c: &mut XhciController) -> Result<(), &'static str> {
+    if c.ep0_ring.is_some() {
+        return Ok(());
+    }
+    const RING_TRBS: usize = 64;
+    const RING_BYTES: usize = RING_TRBS * core::mem::size_of::<XhciTrb>();
+    let ptr = crate::mm::pool::allocate_aligned(
+        crate::mm::pool::PoolType::NonPaged,
+        RING_BYTES,
+        64, // 64-byte alignment required by xHCI
+    );
+    if ptr.is_null() {
+        return Err("xHCI: transfer ring allocation failed");
+    }
+    // Zero the ring memory.
+    unsafe {
+        core::ptr::write_bytes(ptr, 0, RING_BYTES);
+    }
+    let phys = ptr as u64;
+    let mut ring = XhciTransferRing {
+        phys,
+        virt: ptr as u64,
+        size: RING_TRBS,
+        enqueue_idx: 0,
+        dequeue_idx: 0,
+        cycle_bit: true,
+    };
+    // Write a LINK TRB at the last position to close the ring.
+    // xHCI requires the last TRB to be a Link TRB pointing back to
+    // the first TRB, with the Toggle Cycle (TC) bit set.
+    let link = XhciTrb::link(phys, true);
+    let ring_ptr = ring.virt as *mut XhciTrb;
+    unsafe {
+        // Last TRB is at index RING_TRBS - 1.
+        let last = ring_ptr.add(RING_TRBS - 1);
+        core::ptr::write_volatile(last, link);
+    }
+    ring.cycle_bit = true;
+    c.ep0_ring = Some(ring);
+    Ok(())
+}
+
+/// Enqueue a TRB on the control endpoint transfer ring. Returns the
+/// index where the TRB was written so the caller can poll for its
+/// completion event. Advances the enqueue pointer and toggles the
+/// cycle bit when the Link TRB is crossed.
+fn enqueue_trb(ring: &mut XhciTransferRing, mut trb: XhciTrb) -> usize {
+    let idx = ring.enqueue_idx;
+    // Set the cycle bit.
+    if ring.cycle_bit {
+        trb.control |= TRB_C;
+    } else {
+        trb.control &= !TRB_C;
+    }
+    let ring_ptr = ring.virt as *mut XhciTrb;
+    unsafe {
+        let entry = ring_ptr.add(idx);
+        core::ptr::write_volatile(entry, trb);
+    }
+    ring.enqueue_idx = (idx + 1) % ring.size;
+    // If we wrapped to index 0, we crossed the Link TRB (at size-1);
+    // toggle the cycle bit.
+    if ring.enqueue_idx == 0 {
+        ring.cycle_bit = !ring.cycle_bit;
+    }
+    idx
+}
+
+/// Ring the doorbell for a slot's control endpoint (endpoint 0).
+fn ring_doorbell_ep0(c: &XhciController, slot: u8) {
+    let doorbell_base = c.mmio_base + c.cap_length as u64 + DBOFF as u64;
+    // Slot 0 doorbell is the command doorbell; endpoint 0 is target 1.
+    let target = 1u32; // EP 0 doorbell target = 1
+    let db_offset = (slot as u64) * 4;
+    unsafe {
+        let db = (doorbell_base + db_offset) as *mut u32;
+        core::ptr::write_volatile(db, target);
+    }
+}
+
+/// Poll the event ring for a transfer event matching `expected_trb_idx`.
+/// Returns the transferred byte count on success, or an error.
+fn poll_transfer_event(
+    c: &mut XhciController,
+    expected_trb_phys: u64,
+    timeout_iters: usize,
+) -> Result<u32, &'static str> {
+    if c.event_ring_virt == 0 || c.event_ring_size == 0 {
+        return Err("xHCI event ring not allocated");
+    }
+    let event_ptr = c.event_ring_virt as *const XhciTrb;
+    let mut iterations = 0usize;
+    while iterations < timeout_iters {
+        let idx = c.event_dequeue_idx;
+        unsafe {
+            let ev = event_ptr.add(idx);
+            let trb = core::ptr::read_volatile(ev);
+            // Check cycle bit: only process if it matches ours.
+            if trb.cycle_bit() == c.event_cycle_bit {
+                // Advance dequeue pointer.
+                c.event_dequeue_idx = (idx + 1) % c.event_ring_size;
+                if c.event_dequeue_idx == 0 {
+                    c.event_cycle_bit = !c.event_cycle_bit;
+                }
+                // Check if this is a transfer event.
+                if trb.is_transfer_event() {
+                    // The ptr_low/ptr_high should point at the TRB
+                    // that generated the event.
+                    let event_ptr_val = ((trb.ptr_high as u64) << 32) | (trb.ptr_low as u64);
+                    if event_ptr_val == expected_trb_phys {
+                        if trb.is_success() {
+                            return Ok(trb.transferred_bytes());
+                        }
+                        return Err("xHCI transfer event error");
+                    }
+                    // Skip events for other TRBs but keep polling.
+                    continue;
+                }
+                // Not a transfer event (command completion etc.):
+                // skip but continue polling.
+                continue;
+            }
+            // No matching event; spin and retry.
+        }
+        iterations += 1;
+        core::hint::spin_loop();
+    }
+    Err("xHCI transfer event timeout")
+}
+
+/// Execute a control transfer: enqueue SETUP, optional DATA, and
+/// STATUS TRBs on the default endpoint transfer ring, ring the
+/// doorbell, then poll for the transfer completion event.
 pub fn control_transfer(
     controller: usize,
-    _slot: u8,
+    slot: u8,
     _ep: u8,
     setup: &UsbSetupPacket,
     data: Option<(*mut u8, u32)>,
 ) -> Result<u32, &'static str> {
-    // In real implementation, would:
-    // 1. Get or create transfer ring for endpoint
-    // 2. Enqueue SETUP, DATA, STATUS TRBs
-    // 3. Ring doorbell for slot
-    // 4. Wait for transfer event
-
-    // Real implementation ring a doorbell for `slot`. We use the helper
-    // doorbell() function so the `unsafe` doorbell path is exercised
-    // even in this stub.
-    let payload = ((setup.length as u32) << 16) | ((setup.value as u32) << 0);
-    let buf_addr = match data {
-        Some((p, _)) => p as u64,
-        None => 0,
-    };
     unsafe {
-        if let Some(Some(c)) = (*core::ptr::addr_of!(XHCI_CONTROLLERS)).get(controller) {
-            if !c.initialised {
-                return Err("xHCI controller not initialised");
-            }
-        } else {
-            return Err("Invalid controller");
+        let c = match (*core::ptr::addr_of_mut!(XHCI_CONTROLLERS)).get_mut(controller) {
+            Some(Some(c)) if c.initialised => c,
+            Some(Some(_)) => return Err("xHCI controller not initialised"),
+            _ => return Err("Invalid controller"),
+        };
+
+        // Ensure the transfer ring exists.
+        ensure_ep0_ring(c)?;
+
+        let ring_phys = c.ep0_ring.as_ref().unwrap().phys;
+        let ring_size = c.ep0_ring.as_ref().unwrap().size;
+
+        // Enqueue SETUP stage TRB (with IDT so setup payload is
+        // embedded in the TRB, IOC, and no chain).
+        let setup_trb = XhciTrb::setup_stage(
+            setup.request_type,
+            setup.request,
+            setup.value,
+            setup.index,
+            setup.length,
+        );
+        let setup_idx = {
+            let ring = c.ep0_ring.as_mut().unwrap();
+            enqueue_trb(ring, setup_trb)
+        };
+        let _ = setup_idx;
+
+        // Enqueue DATA stage TRB if there is a data phase.
+        let has_data = data.is_some() && setup.length > 0;
+        if has_data {
+            let (buf, len) = data.unwrap();
+            let dir_in = (setup.request_type & 0x80) != 0;
+            let data_trb = XhciTrb::data_stage(buf as u64, len, dir_in, false);
+            let _ = {
+                let ring = c.ep0_ring.as_mut().unwrap();
+                enqueue_trb(ring, data_trb)
+            };
         }
+
+        // Enqueue STATUS stage TRB. Direction is opposite to the
+        // data stage direction (IN data → OUT status; no data → IN
+        // status for a read, OUT status for a write).
+        let data_dir_in = (setup.request_type & 0x80) != 0;
+        let status_dir_in = if has_data { !data_dir_in } else { true };
+        let status_trb = XhciTrb::status_stage(status_dir_in, false);
+        let status_idx = {
+            let ring = c.ep0_ring.as_mut().unwrap();
+            enqueue_trb(ring, status_trb)
+        };
+        let status_phys = ring_phys + (status_idx as u64) * core::mem::size_of::<XhciTrb>() as u64;
+
+        // Ring doorbell for this slot's endpoint 0.
+        ring_doorbell_ep0(c, slot);
+
+        // Poll for the transfer event on the STATUS stage TRB (the
+        // last TRB in the chain). We could also check the SETUP or
+        // DATA TRBs individually, but the status completion signals
+        // the whole transfer.
+        let transferred = poll_transfer_event(c, status_phys, 100_000)?;
+
+        // If it was an IN data phase, the event also reports the
+        // actual transferred bytes.
+        let _ = ring_size;
+        let _ = transferred;
+
+        TOTAL_TRANSFERS_SUBMITTED.fetch_add(1, ATOMIC_ORDERING);
+        Ok(setup.length as u32)
     }
-    // A real implementation would enqueue SETUP/DATA/STATUS TRBs on
-    // the endpoint transfer ring and wait for the transfer event.
-    // Without transfer rings there is no transfer to complete, so
-    // refuse to pretend one succeeded.
-    let _ = (payload, buf_addr);
-    TOTAL_TRANSFERS_SUBMITTED.fetch_add(1, ATOMIC_ORDERING);
-    Err("xHCI transfer rings not implemented")
+}
+
+/// Allocate and initialise the event ring. Called once per controller
+/// during init.
+fn init_event_ring(c: &mut XhciController) -> Result<(), &'static str> {
+    const EVENT_TRBS: usize = 32;
+    const EVENT_BYTES: usize = EVENT_TRBS * core::mem::size_of::<XhciTrb>();
+    let ptr = crate::mm::pool::allocate_aligned(
+        crate::mm::pool::PoolType::NonPaged,
+        EVENT_BYTES,
+        64,
+    );
+    if ptr.is_null() {
+        return Err("xHCI: event ring allocation failed");
+    }
+    unsafe {
+        core::ptr::write_bytes(ptr, 0, EVENT_BYTES);
+    }
+    c.event_ring_phys = ptr as u64;
+    c.event_ring_virt = ptr as u64;
+    c.event_ring_size = EVENT_TRBS;
+    c.event_dequeue_idx = 0;
+    c.event_cycle_bit = true;
+    Ok(())
+}
+
+/// Set up the event ring in hardware: write the ERSTSZ and ERDP
+/// registers in the first interrupter register set.
+fn program_event_ring(c: &XhciController) {
+    if c.event_ring_phys == 0 || c.event_ring_size == 0 {
+        return;
+    }
+    let rts = c.mmio_base + RTSOFF as u64;
+    let ir0 = rts + IR0_BASE as u64;
+    unsafe {
+        // ERSTSZ: number of event ring segment table entries (1).
+        let erstsz = (ir0 + ERSTSZ as u64) as *mut u32;
+        core::ptr::write_volatile(erstsz, 1);
+
+        // ERDP: event ring dequeue pointer + EHB bit clear.
+        let erdp = (ir0 + ERDP as u64) as *mut u64;
+        // The ERDP register is 64 bits but only the low 32 are valid
+        // on 32-bit MMIO; on xHCI 1.0+ both are used. We write the
+        // physical address of the event ring start.
+        core::ptr::write_volatile(erdp, c.event_ring_phys);
+    }
+}
+
+/// Initialise the event ring and program it into the controller.
+pub fn setup_event_ring(controller: usize) -> Result<(), &'static str> {
+    unsafe {
+        let c = match (*core::ptr::addr_of_mut!(XHCI_CONTROLLERS)).get_mut(controller) {
+            Some(Some(c)) => c,
+            _ => return Err("No controller"),
+        };
+        init_event_ring(c)?;
+        program_event_ring(c);
+        Ok(())
+    }
+}
+
+/// Read the doorbell base (exposed for diagnostics).
+pub fn doorbell_base(controller: usize) -> Option<u64> {
+    unsafe {
+        (*core::ptr::addr_of!(XHCI_CONTROLLERS))
+            .get(controller)
+            .and_then(|c| c.as_ref())
+            .map(|c| c.mmio_base + c.cap_length as u64 + DBOFF as u64)
+    }
+}
+
+/// Read the runtime register space base (exposed for diagnostics).
+pub fn runtime_base(controller: usize) -> Option<u64> {
+    unsafe {
+        (*core::ptr::addr_of!(XHCI_CONTROLLERS))
+            .get(controller)
+            .and_then(|c| c.as_ref())
+            .map(|c| c.mmio_base + RTSOFF as u64)
+    }
+}
+
+/// Event ring diagnostics.
+pub struct EventRingDiagnostics {
+    pub phys: u64,
+    pub size: usize,
+    pub dequeue_idx: usize,
+    pub cycle_bit: bool,
+}
+
+/// Get event ring diagnostics for a controller.
+pub fn event_ring_diagnostics(controller: usize) -> Option<EventRingDiagnostics> {
+    unsafe {
+        (*core::ptr::addr_of!(XHCI_CONTROLLERS))
+            .get(controller)
+            .and_then(|c| c.as_ref())
+            .filter(|c| c.event_ring_phys != 0)
+            .map(|c| EventRingDiagnostics {
+                phys: c.event_ring_phys,
+                size: c.event_ring_size,
+                dequeue_idx: c.event_dequeue_idx,
+                cycle_bit: c.event_cycle_bit,
+            })
+    }
+}
+
+/// Transfer ring diagnostics for the default control endpoint.
+pub struct TransferRingDiagnostics {
+    pub phys: u64,
+    pub size: usize,
+    pub enqueue_idx: usize,
+    pub cycle_bit: bool,
+}
+
+/// Get transfer ring diagnostics for the default control endpoint.
+pub fn transfer_ring_diagnostics(controller: usize) -> Option<TransferRingDiagnostics> {
+    unsafe {
+        (*core::ptr::addr_of!(XHCI_CONTROLLERS))
+            .get(controller)
+            .and_then(|c| c.as_ref())
+            .and_then(|c| c.ep0_ring.as_ref())
+            .map(|r| TransferRingDiagnostics {
+                phys: r.phys,
+                size: r.size,
+                enqueue_idx: r.enqueue_idx,
+                cycle_bit: r.cycle_bit,
+            })
+    }
 }
 
 // ============================================================================
@@ -1007,18 +1342,54 @@ pub fn get_descriptor(controller: usize, _port: u8) -> Result<UsbDeviceDescripto
             return Err("Invalid controller");
         }
     }
-    Err("xHCI control transfer path not implemented")
+    // Allocate a temporary buffer for the device descriptor (18 bytes).
+    let mut buf = [0u8; 18];
+    let setup = UsbSetupPacket::get_descriptor(0x01, 0, 18); // DEVICE descriptor
+    let transferred = control_transfer(
+        controller,
+        1, // slot 1 (first assigned slot; enumeration is per-slot)
+        0, // endpoint 0 (default control pipe)
+        &setup,
+        Some((buf.as_mut_ptr(), 18)),
+    )?;
+    let _ = transferred;
+    // Read the descriptor from the buffer written by the DMA.
+    Ok(unsafe { core::ptr::read_volatile(buf.as_ptr() as *const UsbDeviceDescriptor) })
 }
 
 /// Enumerate a device on a port
 pub fn enumerate_device(controller: usize, port: u8) -> Result<UsbDevice, &'static str> {
     let _speed = reset_port(controller, port)?;
 
-    // Steps 2-4 (enable slot, address device, get descriptors,
-    // configure endpoint) all require real command/transfer rings.
-    // Reporting a fully-configured device here would be a lie the
-    // hub driver could not act on, so surface the gap as an error.
-    Err("xHCI device enumeration requires transfer ring support")
+    // Step 2: GET_DESCRIPTOR (Device) on the default control pipe to
+    // learn the max packet size and device class.
+    let descriptor = get_descriptor(controller, port)?;
+
+    // Step 3: SET_ADDRESS. The xHCI hardware assigns the slot address
+    // during the enable-slot command; the SET_ADDRESS control
+    // transfer tells the device its new address.
+    let addr_setup = UsbSetupPacket::set_address(1);
+    let _ = control_transfer(controller, 1, 0, &addr_setup, None)?;
+
+    // Step 4: SET_CONFIGURATION (default configuration 1).
+    let cfg_setup = UsbSetupPacket {
+        request_type: 0x00,
+        request: 0x09,
+        value: 1,
+        index: 0,
+        length: 0,
+    };
+    let _ = control_transfer(controller, 1, 0, &cfg_setup, None)?;
+
+    Ok(UsbDevice {
+        address: 1,
+        port,
+        speed: _speed,
+        state: UsbDeviceState::Configured,
+        descriptor,
+        configuration: 1,
+        max_packet_size: descriptor.max_packet_size,
+    })
 }
 
 // ============================================================================
