@@ -76,4 +76,3 @@ pub mod winlogon;
 pub mod cmd;
 pub mod find;
 pub mod more;
-pub mod synthetic;
