@@ -76,8 +76,6 @@ pub fn gpu_name(device_id: u16) -> &'static str {
     pci_ids::device_name(device_id)
 }
 
-/// Probe for NVIDIA GPU
-#[cfg(target_arch = "x86_64")]
 pub fn probe() -> bool {
     use crate::hal::common::pci;
 
@@ -90,8 +88,6 @@ pub fn probe() -> bool {
     false
 }
 
-/// Initialize NVIDIA GPU
-#[cfg(target_arch = "x86_64")]
 pub fn init() -> Option<NouveauDevice> {
     use crate::hal::common::pci;
 
@@ -108,14 +104,3 @@ pub fn init() -> Option<NouveauDevice> {
     None
 }
 
-/// Probe stub for non-x86_64
-#[cfg(not(target_arch = "x86_64"))]
-pub fn probe() -> bool {
-    false
-}
-
-/// Init stub for non-x86_64
-#[cfg(not(target_arch = "x86_64"))]
-pub fn init() -> Option<NouveauDevice> {
-    None
-}
