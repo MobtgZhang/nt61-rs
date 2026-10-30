@@ -1958,14 +1958,21 @@ fn load_raw_image_into_user_address_space(
     // Sv39 user VA is limited to the low 256 GiB. PE preferred bases
     // generated for other architectures can be far above that limit, so
     // RISC-V uses its own architecture-specific user image base and
-    // relies on PE base relocation. This mirrors the ARM64 loader policy
+    // must be relocated there. This mirrors the ARM64 loader policy
     // rather than inheriting x86_64 canonical addresses.
     #[cfg(target_arch = "riscv64")]
-    let _ = preferred_image_base;
+    let preferred_base = preferred_image_base;
     #[cfg(target_arch = "riscv64")]
     let image_base = crate::mm::vas::DEFAULT_USER_IMAGE_BASE;
     #[cfg(not(target_arch = "riscv64"))]
+    let preferred_base = preferred_image_base;
+    #[cfg(not(target_arch = "riscv64"))]
     let image_base = preferred_image_base;
+    // The base delta the relocations must absorb. On x86_64 this is
+    // normally zero (the image lands at its preferred base in a fresh
+    // per-process address space), but a non-zero delta is not an
+    // error: the OS loader relocates rather than refusing to load.
+    let delta = (image_base as i64).wrapping_sub(preferred_base as i64);
 
     // 2. Reserve a contiguous physical range big enough for the
     //    image and map it into the per-process PML4.
@@ -2017,6 +2024,54 @@ fn load_raw_image_into_user_address_space(
             chars: sh.characteristics,
         });
     }
+    // 2c. Lay the image out by RVA (headers at RVA 0, then sections)
+    //     and apply base relocations when the image did not land at
+    //     its preferred base. This is the OS-loader step that runs
+    //     before any of the image bytes reach user pages: pointers
+    //     baked into .data/.rdata and RIP-relative displacements are
+    //     all stored relative to the preferred ImageBase and must be
+    //     fixed by the same delta the mapping moved by.
+    let mut rva_image: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    rva_image.resize(size_of_image as usize, 0u8);
+    let header_len = (u32::from_le_bytes([
+        image[opt_off + 0x3C],
+        image[opt_off + 0x3D],
+        image[opt_off + 0x3E],
+        image[opt_off + 0x3F],
+    ]) as usize)
+        .min(image.len())
+        .min(rva_image.len());
+    rva_image[..header_len].copy_from_slice(&image[..header_len]);
+    for i in 0..file_hdr.number_of_sections as usize {
+        let sh_off = sect_off + i * 40;
+        if sh_off + 40 > image.len() {
+            continue;
+        }
+        let sh: SectionHeader = unsafe {
+            core::ptr::read_unaligned(image.as_ptr().add(sh_off) as *const SectionHeader)
+        };
+        if sh.virtual_size == 0 || sh.size_of_raw_data == 0 {
+            continue;
+        }
+        let dst = sh.virtual_address as usize;
+        if dst >= rva_image.len() {
+            continue;
+        }
+        let sz = core::cmp::min(sh.size_of_raw_data as usize, rva_image.len() - dst);
+        let src = sh.pointer_to_raw_data as usize;
+        if src + sz > image.len() {
+            continue;
+        }
+        rva_image[dst..dst + sz].copy_from_slice(&image[src..src + sz]);
+    }
+    if delta != 0 {
+        crate::userspace::loader::apply_base_relocations_to_image(
+            &mut rva_image,
+            image,
+            delta,
+        );
+    }
+
     // 3. Map each 4 KiB page at `image_base + i*0x1000` with
     //    appropriate permissions based on which section the page
     //    belongs to.
@@ -2052,9 +2107,11 @@ fn load_raw_image_into_user_address_space(
         }
     }
 
-    // 4. Copy section bytes from the source PE into the user
-    //    pages. Section table starts right after the optional
-    //    header. We do this BEFORE the final NX->X remap so that
+    // 4. Copy the relocated image bytes into the user pages. The
+    //    source is the RVA-laid-out, relocated buffer built in step
+    //    2c — not the raw file — so the user process executes exactly
+    //    the bytes the loader fixed up. We do this BEFORE the final
+    //    NX->X remap so that
     //    the remap transition (which is what should force QEMU's TB
     //    cache invalidation) happens *after* the bytes are in place
     //    and right before user-mode execution begins.
@@ -2084,7 +2141,7 @@ fn load_raw_image_into_user_address_space(
         if size == 0 {
             continue;
         }
-        if (sh.pointer_to_raw_data as usize) + size > image.len() {
+        if sh.virtual_address as usize + size > rva_image.len() {
             continue;
         }
         if sh.virtual_address as u64 + size as u64 > size_of_image as u64 {
@@ -2108,9 +2165,9 @@ fn load_raw_image_into_user_address_space(
                 for off8 in (0..chunk).step_by(8) {
                     let rem = chunk - off8;
                     let raw: u64;
-                    let src_p = image
+                    let src_p = rva_image
                         .as_ptr()
-                        .add(sh.pointer_to_raw_data as usize + off + off8);
+                        .add(sh.virtual_address as usize + off + off8);
                     if rem >= 8 {
                         raw = core::ptr::read_unaligned(src_p as *const u64);
                     } else {
