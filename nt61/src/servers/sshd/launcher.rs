@@ -21,6 +21,11 @@ use crate::netstack::socket::{self, SockAddr, SocketError, SocketType};
 /// mandate a size; 8 matches the socket layer's default).
 pub const LISTEN_BACKLOG: u32 = 8;
 
+/// Set once the dedicated service thread has been spawned, so a
+/// re-run of start_from_disk cannot accumulate duplicate threads.
+static SERVICE_THREAD_STARTED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 /// Canonical Windows OpenSSH installation path for `sshd_config`.
 pub const SSHD_CONFIG_PATH: &str = "C:\\Program Files\\OpenSSH\\sshd_config";
 
@@ -49,6 +54,23 @@ pub fn start_from_disk() -> Result<bool, LauncherError> {
     // explicitly by platform policy; never create a default account.
     start_listener()?;
     set_state(LauncherState::Accepting);
+    // Spawn the dedicated service thread once the listener is live.
+    // Guarded so a re-run of start_from_disk never accumulates
+    // duplicate service threads.
+    if SERVICE_THREAD_STARTED
+        .compare_exchange(
+            false,
+            true,
+            core::sync::atomic::Ordering::AcqRel,
+            core::sync::atomic::Ordering::Acquire,
+        )
+        .is_ok()
+    {
+        let _ = crate::ps::thread::ps_create_system_thread(
+            service_thread_entry as *const () as u64,
+            0,
+        );
+    }
     crate::hal::serial::write_string_always("[SSHD] listener started\r\n");
     Ok(true)
 }
@@ -133,9 +155,42 @@ fn base64_decode(input: &str) -> Option<alloc::vec::Vec<u8>> {
     Some(out)
 }
 
-/// Drive listener accepts and active SSH sessions from the timer tick.
+/// Drive listener accepts and active SSH sessions from the timer
+/// tick. Compatibility wrapper; the dedicated service thread
+/// handles this work via service_thread_entry.
 pub fn service_tick() {
     poll_once();
+}
+
+/// True when the listener has a pending connection or any live SSH
+/// session has receive data ready, so the service thread can skip
+/// a park and make progress immediately.
+fn has_pending_work() -> bool {
+    let listen_id = super::state_snapshot().listening_socket_id;
+    let accept_pending = match listen_id {
+        Some(id) => socket::is_read_ready(id),
+        None => false,
+    };
+    accept_pending || session::has_ready_session()
+}
+
+/// Bounded park for the sshd service thread, in milliseconds. Long
+/// enough to amortize wakeups, short enough to cover the interval
+/// before a TCP arrival races the readiness clear.
+const SSHD_SERVICE_WAIT_MS: u32 = 200;
+
+/// Dedicated sshd service thread. Drives listener accepts and session
+/// I/O by parking on the socket readiness event between rounds of
+/// work, instead of relying on the scheduler tick to poll. Mirrors
+/// the csrss server-thread entry model.
+pub extern "C" fn service_thread_entry(_context: u64) {
+    loop {
+        poll_once();
+        socket::clear_readiness();
+        if !has_pending_work() {
+            socket::wait_readiness(SSHD_SERVICE_WAIT_MS);
+        }
+    }
 }
 
 /// AF_INET value used by the socket layer.
