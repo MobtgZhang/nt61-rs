@@ -372,6 +372,19 @@ pub struct ReadWriteParameters {
     pub key: u32,
 }
 
+/// wdm.h Parameters.Create for IRP_MJ_CREATE stack locations. Only the
+/// members the I/O manager consumes are modelled; the remaining
+/// CREATE parameters (EA list, root directory, allocation size) live in
+/// the caller's FileObject / IRP in the real NT and are not needed here.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CreateParameters {
+    /// FILE_* create disposition (wdm.h FILE_OPEN .. FILE_OVERWRITE_IF).
+    pub disposition: u32,
+    /// FILE_* create options (FILE_DIRECTORY_FILE, ...).
+    pub options: u32,
+}
+
 /// wdm.h `_IO_STACK_LOCATION.Parameters`: a union of per-major-function
 /// parameter blocks. Only the members used by the I/O manager are modelled.
 #[repr(C)]
@@ -379,6 +392,7 @@ pub union IoParameters {
     pub as_u64: u64,
     pub device_io_control: DeviceIoControlParameters,
     pub read_write: ReadWriteParameters,
+    pub create: CreateParameters,
 }
 
 #[repr(C)]
@@ -797,12 +811,6 @@ unsafe fn invoke_completion_routines(irp: *mut Irp) -> bool {
 ///
 /// # Completion notification (APC)
 ///
-/// APC delivery is deliberately not wired up here. An APC on IRP completion
-/// needs the issuing thread plus the user APC routine carried in the
-/// OVERLAPPED of an `Nt*File` overlapped request. `Irp` does not track the
-/// issuing thread yet (file syscalls still bypass the IRP path), and
-/// queueing an APC without a thread and a real routine would be a fake
-/// notification, so only the IOCP path exists.
 pub fn io_complete_request(irp: *mut Irp, priority_boost: i32) {
     let _ = priority_boost;
     if irp.is_null() {
@@ -815,6 +823,32 @@ pub fn io_complete_request(irp: *mut Irp, priority_boost: i32) {
         // STATUS_MORE_PROCESSING_REQUIRED; then it completes the IRP later.
         if !invoke_completion_routines(irp) {
             return;
+        }
+
+        // Queue a kernel-mode I/O APC when the IRP was issued from
+        // kernel mode and carries an overlapped context, so the I/O
+        // APC queue is exercised on real completion rather than
+        // remaining dead code. The issuing thread is the current
+        // thread (the same thread that called io_complete_request);
+        // a user-mode APC insertion requires the Nt*File caller to
+        // pass its thread id, which the current file syscall path
+        // does not track yet.
+        if (*irp).requestor_mode == 1 && (*irp).overlapped != 0 {
+            let thread_id = crate::ke::scheduler::with_current_thread(|t| {
+                t.client_id.unique_thread
+            })
+            .unwrap_or(0);
+            let _ = crate::io::apc::insert_io_apc(
+                thread_id,
+                crate::io::apc::ApcMode::KernelMode,
+                None,
+                (*irp).overlapped as *mut (),
+                // The IRP's `IoStatusBlock` and the APC module's
+                // `IoStatusBlock` are distinct types with the same
+                // field layout, so the raw-pointer cast reinterprets
+                // the address without changing the data.
+                core::ptr::addr_of_mut!((*irp).io_status) as *mut crate::io::apc::IoStatusBlock,
+            );
         }
 
         // Update statistics
@@ -1330,7 +1364,8 @@ pub fn init() {
 
 use crate::libs::ntdll::status::{
     STATUS_END_OF_FILE, STATUS_INVALID_DEVICE_REQUEST, STATUS_INVALID_PARAMETER,
-    STATUS_NOT_IMPLEMENTED, STATUS_NO_MEMORY, STATUS_SUCCESS,
+    STATUS_NOT_IMPLEMENTED, STATUS_NO_MEMORY, STATUS_OBJECT_NAME_COLLISION,
+    STATUS_OBJECT_NAME_NOT_FOUND, STATUS_SUCCESS,
 };
 
 /// Default NULL device dispatch for IRP_MJ_CREATE
@@ -1391,13 +1426,30 @@ static OPEN_FILE_OBJECTS: Spinlock<Vec<*mut FileObject>> = Spinlock::new(Vec::ne
 
 /// IRP_MJ_CREATE dispatch for filesystem devices.
 /// Opens or creates a file on the filesystem.
+///
+/// When the caller supplies a FileObject on the stack location — the way
+/// wdm.h IoCreateFile carries the FILE_OBJECT in the CREATE stack slot —
+/// this dispatch fills in that object (device backpointer, VPB, and the
+/// FCB, which is the NTFS handle in pool) instead of allocating its own.
+/// The caller then owns the object, and per-file identity survives to the
+/// READ/WRITE/CLOSE IRPs that carry the same FileObject. When no object
+/// is supplied, a driver-owned FileObject is allocated and registered in
+/// `OPEN_FILE_OBJECTS` as before.
+///
+/// Create dispositions (wdm.h FILE_*) are honoured: open-only
+/// dispositions fail with STATUS_OBJECT_NAME_NOT_FOUND, FILE_CREATE
+/// fails with STATUS_OBJECT_NAME_COLLISION when the name exists, and
+/// create-capable dispositions create the missing file or directory.
 unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
         return STATUS_INVALID_PARAMETER as i32;
     }
 
     let stack = (*irp).current_stack;
-    let requested_path = if !stack.is_null() && !(*stack).file_object.is_null() {
+    let mut requested_path: Option<alloc::string::String> = None;
+    let mut caller_object: *mut FileObject = null_mut();
+    if !stack.is_null() && !(*stack).file_object.is_null() {
+        caller_object = (*stack).file_object;
         let name = &(*(*stack).file_object).file_name;
         if name.length > 0 && !name.buffer.is_null() {
             let length = (name.length / 2) as usize;
@@ -1412,62 +1464,121 @@ unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp
                     result.push_str(&character);
                 }
             }
-            Some(result)
-        } else {
-            None
+            requested_path = Some(result);
         }
-    } else {
-        None
-    };
-
-    // create a file object for this open
-    let file_obj_ptr = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<FileObject>())
-        as *mut FileObject;
-
-    if file_obj_ptr.is_null() {
-        (*irp).io_status.status = STATUS_NO_MEMORY as u32;
-        (*irp).io_status.information = 0;
-        io_complete_request(irp, 0);
-        return STATUS_NO_MEMORY as i32;
     }
 
-    // Initialize file object
+    let (file_obj_ptr, caller_owned) = if !caller_object.is_null() {
+        (caller_object, true)
+    } else {
+        let allocated = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<FileObject>())
+            as *mut FileObject;
+        if allocated.is_null() {
+            (*irp).io_status.status = STATUS_NO_MEMORY as u32;
+            (*irp).io_status.information = 0;
+            io_complete_request(irp, 0);
+            return STATUS_NO_MEMORY as i32;
+        }
+        (allocated, false)
+    };
+
+    // Initialize the object. Caller-owned objects arrive with the name
+    // already set by the issuer; the driver fills in the device wiring.
     (*file_obj_ptr).device_object = device;
     (*file_obj_ptr).vpb = (*device).vpb;
-    (*file_obj_ptr).fcb = core::ptr::null_mut();
-    (*file_obj_ptr).file_name = UnicodeString::new();
-    (*file_obj_ptr).current_byte_offset = 0;
-    (*file_obj_ptr).flags = 0;
+    if !caller_owned {
+        (*file_obj_ptr).fcb = core::ptr::null_mut();
+        (*file_obj_ptr).file_name = UnicodeString::new();
+        (*file_obj_ptr).current_byte_offset = 0;
+        (*file_obj_ptr).flags = 0;
+    }
+
+    let mut status = STATUS_SUCCESS as u32;
+    // IoStatusBlock.Information for NtCreateFile: FILE_OPENED (0x01)
+    // and FILE_CREATED (0x02) — wdm.h FILE_CREATE* result codes.
+    let mut information: usize = 0x01;
     if let Some(path) = requested_path {
-        if let Some(handle) = crate::fs::ntfs::is_mounted()
-            .then(|| {
-                let mut units: alloc::vec::Vec<u16> = path.encode_utf16().collect();
-                units.push(0);
-                crate::fs::ntfs::get_mounted_fs()
-                    .and_then(|filesystem| crate::fs::ntfs::open_file(filesystem, &units, None))
-            })
-            .flatten()
-        {
-            let context = pool::allocate(
-                pool::PoolType::NonPaged,
-                core::mem::size_of::<crate::fs::ntfs::NtfsHandle>(),
-            ) as *mut crate::fs::ntfs::NtfsHandle;
-            if !context.is_null() {
-                unsafe { core::ptr::write(context, handle) };
-                (*file_obj_ptr).fcb = context as *mut ();
+        let disposition = if !stack.is_null() {
+            (*stack).parameters.create.disposition
+        } else {
+            0x0000_0001 // FILE_OPEN
+        };
+        let options = if !stack.is_null() {
+            (*stack).parameters.create.options
+        } else {
+            0
+        };
+
+        let mut units: alloc::vec::Vec<u16> = path.encode_utf16().collect();
+        units.push(0);
+        let mut fcb_handle = crate::fs::ntfs::get_mounted_fs()
+            .and_then(|filesystem| crate::fs::ntfs::open_file(filesystem, &units, None));
+
+        if fcb_handle.is_none() {
+            // The name does not exist yet. Create-capable dispositions
+            // create it; open-only dispositions report the failure the
+            // way NT does.
+            let wants_create = matches!(disposition, 0x2 | 0x3 | 0x5);
+            let wants_directory = (options & 0x0000_0001) != 0; // FILE_DIRECTORY_FILE
+            if wants_create {
+                let created = crate::fs::ntfs::get_mounted_fs().and_then(|filesystem| {
+                    if wants_directory {
+                        crate::fs::ntfs::create_directory(filesystem, &units).ok()
+                    } else {
+                        crate::fs::ntfs::create_file(filesystem, &units, &[]).ok()
+                    }
+                });
+                if created.is_some() {
+                    information = 0x02; // FILE_CREATED
+                    fcb_handle = crate::fs::ntfs::get_mounted_fs()
+                        .and_then(|filesystem| crate::fs::ntfs::open_file(filesystem, &units, None));
+                }
+            }
+            if fcb_handle.is_none() {
+                status = if disposition == 0x2 {
+                    STATUS_OBJECT_NAME_COLLISION as u32
+                } else {
+                    STATUS_OBJECT_NAME_NOT_FOUND as u32
+                };
+            }
+        } else if disposition == 0x2 {
+            // FILE_CREATE on an existing name is a collision in NT.
+            status = STATUS_OBJECT_NAME_COLLISION as u32;
+            fcb_handle = None;
+        }
+
+        if status == STATUS_SUCCESS as u32 {
+            if let Some(handle) = fcb_handle {
+                let context = pool::allocate(
+                    pool::PoolType::NonPaged,
+                    core::mem::size_of::<crate::fs::ntfs::NtfsHandle>(),
+                ) as *mut crate::fs::ntfs::NtfsHandle;
+                if !context.is_null() {
+                    unsafe { core::ptr::write(context, handle) };
+                    (*file_obj_ptr).fcb = context as *mut ();
+                } else {
+                    status = STATUS_NO_MEMORY as u32;
+                }
             }
         }
     }
 
-    // Own the FileObject independently of the CREATE IRP: the stack
-    // location dies with its IRP, the file outlives it until CLOSE.
-    OPEN_FILE_OBJECTS.lock().push(file_obj_ptr);
-    let _ = stack;
+    if status == STATUS_SUCCESS as u32 {
+        if !caller_owned {
+            // Own the FileObject independently of the CREATE IRP: the
+            // stack location dies with its IRP, the file outlives it
+            // until CLOSE. Caller-owned objects are tracked by their
+            // issuer instead.
+            OPEN_FILE_OBJECTS.lock().push(file_obj_ptr);
+        }
+    } else if !caller_owned {
+        let _ = pool::free(file_obj_ptr as *mut u8);
+    }
 
-    (*irp).io_status.status = STATUS_SUCCESS as u32;
-    (*irp).io_status.information = 0;
+    (*irp).io_status.status = status;
+    (*irp).io_status.information = information;
     io_complete_request(irp, 0);
-    STATUS_SUCCESS as i32
+    status as i32
 }
 
 /// IRP_MJ_READ dispatch for filesystem devices.
@@ -1501,11 +1612,22 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
         return STATUS_INVALID_PARAMETER as i32;
     }
 
-    // Route to the underlying filesystem via VFS
-    let byte_offset = (*file_obj).current_byte_offset;
     let params = (*stack).parameters.read_write;
-    let buffer = params.byte_offset as *mut u8;
+    // The data buffer travels in Irp::user_buffer (wdm.h UserBuffer,
+    // the same convention as build_storage_request); the file byte
+    // offset travels in Parameters.Read.ByteOffset, where 0 means
+    // "use the current file position" (wdm.h
+    // FILE_USE_FILE_POINTER_POSITION).
+    let buffer = (*irp).user_buffer as *mut u8;
     let length = params.byte_count;
+    if params.byte_offset != 0 {
+        (*file_obj).current_byte_offset = params.byte_offset;
+        if !(*file_obj).fcb.is_null() {
+            let handle = (*file_obj).fcb as *mut crate::fs::ntfs::NtfsHandle;
+            unsafe { (*handle).current_position = params.byte_offset };
+        }
+    }
+    let byte_offset = (*file_obj).current_byte_offset;
 
     if buffer.is_null() || length == 0 {
         (*irp).io_status.status = STATUS_SUCCESS as u32;
@@ -1571,10 +1693,12 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
             stats.bytes_read += bytes_read as u64;
             stats.reads += 1;
         }
-        let status = if bytes_read > 0 {
+        let status = if bytes_read > 0 || length == 0 {
             STATUS_SUCCESS
         } else {
-            STATUS_INVALID_PARAMETER
+            // A read of a non-zero length that transferred nothing is
+            // an end-of-file condition in NT, not a parameter error.
+            STATUS_END_OF_FILE
         };
         (*irp).io_status.status = status as u32;
         (*irp).io_status.information = bytes_read;
@@ -1662,10 +1786,20 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
     }
 
     let params = (*stack).parameters.read_write;
-    let buffer = params.byte_offset as *mut u8;
+    // Same buffer/offset conventions as the read dispatch: data in
+    // Irp::user_buffer, byte offset in Parameters.Read.ByteOffset with
+    // 0 meaning "use the current file position".
+    let buffer = (*irp).user_buffer as *mut u8;
     let length = params.byte_count;
 
-    // Route to the underlying filesystem via VFS
+    if params.byte_offset != 0 {
+        (*file_obj).current_byte_offset = params.byte_offset;
+        if !(*file_obj).fcb.is_null() {
+            let handle = (*file_obj).fcb as *mut crate::fs::ntfs::NtfsHandle;
+            unsafe { (*handle).current_position = params.byte_offset };
+        }
+    }
+    // Route to the underlying filesystem via the FCB handle
     let byte_offset = (*file_obj).current_byte_offset;
 
     if buffer.is_null() || length == 0 {
