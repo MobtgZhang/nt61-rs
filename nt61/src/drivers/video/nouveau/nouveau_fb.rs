@@ -60,8 +60,6 @@ pub struct NouveauDevice {
 }
 
 impl NouveauDevice {
-    /// create a new Nouveau device
-    #[cfg(target_arch = "x86_64")]
     pub fn new(pci_dev: &PciDevice) -> Self {
         let arch = pci_ids::architecture_from_device_id(pci_dev.device_id);
         let device_name = pci_ids::device_name(pci_dev.device_id);
@@ -79,24 +77,6 @@ impl NouveauDevice {
             revision: 0,
             vram_size: 0,
             device_name: alloc::string::String::from(device_name),
-        }
-    }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    pub fn new() -> Self {
-        Self {
-            arch: NouveauArchitecture::Unknown,
-            mmio_base: 0,
-            fb_phys: 0,
-            fb_size: 0,
-            fb_virt: 0,
-            width: 0,
-            height: 0,
-            pitch: 0,
-            format: PixelFormat::Bgra8888,
-            revision: 0,
-            vram_size: 0,
-            device_name: alloc::string::String::from("Unknown"),
         }
     }
 
@@ -188,7 +168,6 @@ impl GpuDriver for NouveauDevice {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
     fn init(&mut self) -> Result<(), GpuError> {
         use crate::hal::common::pci;
 
@@ -213,11 +192,6 @@ impl GpuDriver for NouveauDevice {
         // read VRAM size from PFB
         self.vram_size = pci::read_bar(&self.pci_dev, 1) & !0xF;
 
-        Ok(())
-    }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    fn init(&mut self) -> Result<(), GpuError> {
         Ok(())
     }
 
@@ -322,14 +296,10 @@ impl GpuDriver for NouveauDevice {
         })
     }
 
-    #[cfg(target_arch = "x86_64")]
     fn enable_bus_mastering(&mut self) {
         use crate::hal::common::pci;
         pci::enable_bus_mastering(&self.pci_dev);
     }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    fn enable_bus_mastering(&mut self) {}
 
     fn shutdown(&mut self) {
         // Disable display
@@ -461,8 +431,6 @@ pub fn nv110_init(dev: &mut NouveauDevice) -> Result<(), GpuError> {
 // Probe and Init Functions
 // =====================================================================
 
-/// Probe for NVIDIA GPU
-#[cfg(target_arch = "x86_64")]
 pub fn probe() -> bool {
     use super::pci_ids::NVIDIA_VENDOR_ID;
     use crate::hal::common::pci;
@@ -476,8 +444,6 @@ pub fn probe() -> bool {
     false
 }
 
-/// Initialize NVIDIA GPU
-#[cfg(target_arch = "x86_64")]
 pub fn init() -> Option<NouveauDevice> {
     use super::pci_ids::NVIDIA_VENDOR_ID;
     use crate::hal::common::pci;
@@ -514,14 +480,3 @@ pub fn init() -> Option<NouveauDevice> {
     None
 }
 
-/// Probe function stub for non-x86_64
-#[cfg(not(target_arch = "x86_64"))]
-pub fn probe() -> bool {
-    false
-}
-
-/// Init function stub for non-x86_64
-#[cfg(not(target_arch = "x86_64"))]
-pub fn init() -> Option<NouveauDevice> {
-    None
-}
