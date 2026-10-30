@@ -792,7 +792,9 @@ pub unsafe extern "C" fn rename(old: *const CChar, new: *const CChar) -> CInt {
 
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn tmpfile() -> *mut FILE {
-    let temp_name = b"/tmp/tmpXXXXXX\0";
+    // Windows NT 6.1 places temp files in the system temp directory
+    // (%TEMP%), not a POSIX /tmp path.
+    let temp_name = b"C:\\Windows\\Temp\\tmpXXXXXX\0";
     fopen(
         temp_name.as_ptr() as *const CChar,
         b"w+b\0".as_ptr() as *const CChar,
@@ -802,11 +804,21 @@ pub unsafe extern "C" fn tmpfile() -> *mut FILE {
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn tmpnam(s: *mut CChar) -> *mut CChar {
     static TMP_COUNTER: AtomicU32 = AtomicU32::new(0);
-    TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
 
-    let template = b"/tmp/tmp00000000\0";
+    let template = b"C:\\Windows\\Temp\\tmp00000000\0";
+    // Generate a unique suffix from the counter (6 decimal digits
+    // into the last 6 bytes of "tmp00000000").
+    let counter = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let suffix = alloc::format!("{:06}", counter & 0xFFFFF);
+    let suffix_bytes = suffix.as_bytes();
     for i in 0..template.len() {
-        *s.add(i) = template[i] as CChar;
+        // Replace the six zero bytes at positions 20..=25 with the
+        // counter digits.
+        if i >= 21 && i <= 26 && (i - 21) < suffix_bytes.len() {
+            *s.add(i) = suffix_bytes[i - 21] as CChar;
+        } else {
+            *s.add(i) = template[i] as CChar;
+        }
     }
     s
 }
