@@ -4,12 +4,60 @@
 //
 //! Clean-room implementation.
 
-use crate::ke::sync::Spinlock;
+use crate::ke::sync::{DispatcherHeader, Event, EventType, Spinlock};
 use crate::netstack::ipif;
 use crate::netstack::tcp;
 use crate::netstack::udp;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
+
+/// Readiness event for waitable socket I/O. Listeners signal it when
+/// a connection is enqueued for accept and TCP streams signal it
+/// when data lands in the RX buffer, so server threads can park on
+/// the dispatcher instead of spinning on poll loops.
+static READINESS_EVENT: Spinlock<Option<Event>> = Spinlock::new(None);
+
+/// Thread-safe access to the readiness event header. The event is
+/// created on first use so no init-order dependency exists.
+fn readiness_event_header() -> &'static mut DispatcherHeader {
+    let mut guard = READINESS_EVENT.lock();
+    if guard.is_none() {
+        *guard = Some(Event::new(EventType::Notification));
+    }
+    // SAFETY: the Event is stored behind a static Spinlock, so the
+    // DispatcherHeader outlives the guard. The caller uses the
+    // reference immediately to signal / clear / wait and never
+    // stores it.
+    let event = guard.as_mut().unwrap();
+    let header_ptr = &mut event.header as *mut DispatcherHeader;
+    drop(guard);
+    unsafe { &mut *header_ptr }
+}
+
+/// Wake every thread waiting for socket readiness. Called on the
+/// accept-queue insert path and on TCP RX-buffer appends.
+pub fn signal_readiness() {
+    let header = readiness_event_header();
+    header.signal_state = 1;
+    crate::ke::sync::wake(header, true);
+}
+
+/// Clear the readiness signal state. A server drains all ready
+/// sockets and then resets the event before parking on it, so an
+/// arrival that raced the drain re-signals and no wakeup is lost.
+pub fn clear_readiness() {
+    readiness_event_header().signal_state = 0;
+}
+
+/// Wait until the readiness event is signaled or the timeout (in
+/// ms) expires. Returns true when the event was signaled.
+pub fn wait_readiness(timeout_ms: u32) -> bool {
+    let header = readiness_event_header();
+    matches!(
+        crate::ke::sync::wait_single(header, timeout_ms),
+        crate::ke::sync::WaitResult::Success,
+    )
+}
 
 /// Socket types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -336,6 +384,8 @@ pub fn enqueue_accept(listen_socket_id: u32, peer_tcp_id: u32) -> bool {
         return false;
     }
     socket.accept_queue.push(peer_tcp_id);
+    drop(sockets);
+    signal_readiness();
     true
 }
 
