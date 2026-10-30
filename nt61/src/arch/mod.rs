@@ -974,6 +974,15 @@ pub fn interrupts_ready() -> bool {
     INTERRUPTS_READY.load(core::sync::atomic::Ordering::Acquire)
 }
 
+/// Returns true if maskable interrupts are currently enabled (the
+/// sti state mirrored by INTERRUPTS_ENABLED). Console readers use
+/// this to choose between parking on the input event (an
+/// interrupt-driven wait) and continuing the polled-IO loop (the
+/// masked-IRQ Safe Mode path has no wake source at all).
+pub fn interrupts_enabled() -> bool {
+    INTERRUPTS_ENABLED.load(core::sync::atomic::Ordering::Acquire)
+}
+
 /// CRITICAL-004: Enable interrupts, but only once.
 ///
 /// Returns `true` on the first call (when it actually executed
