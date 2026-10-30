@@ -5,6 +5,7 @@ pub fn smoke_test() -> bool {
     let mut ok = true;
     ok &= super::intel_hda::smoke_test();
     ok &= super::ac97::smoke_test();
+    ok &= super::uac::smoke_test();
     if ok {
         // kprintln!("  [AUDIO SMOKE] all audio checks passed");
     } else {
