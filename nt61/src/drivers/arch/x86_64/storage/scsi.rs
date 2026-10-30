@@ -114,7 +114,7 @@ pub fn init() {
 }
 
 /// SCSI CDB opcodes (from SPC-4)
-mod cdb_opcodes {
+pub mod cdb_opcodes {
     pub const TEST_UNIT_READY: u8 = 0x00;
     pub const REZERO: u8 = 0x01;
     pub const REQUEST_SENSE: u8 = 0x03;
