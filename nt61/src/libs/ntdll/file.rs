@@ -17,9 +17,12 @@
 //! `wdm.h` for the relevant information structures.
 
 use super::status::{
-    STATUS_ACCESS_VIOLATION, STATUS_BUFFER_TOO_SMALL, STATUS_DEVICE_NOT_READY,
-    STATUS_INVALID_DEVICE_REQUEST, STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER,
-    STATUS_NOT_A_DIRECTORY, STATUS_SUCCESS,
+    STATUS_ACCESS_DENIED, STATUS_ACCESS_VIOLATION, STATUS_BUFFER_TOO_SMALL,
+    STATUS_DEVICE_NOT_READY, STATUS_EA_LIST_INCONSISTENT, STATUS_EA_TOO_LARGE,
+    STATUS_EAS_NOT_SUPPORTED, STATUS_FILE_IS_A_DIRECTORY, STATUS_INVALID_DEVICE_REQUEST,
+    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NO_MEMORY,
+    STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_PATH_NOT_FOUND,
+    STATUS_SHARING_VIOLATION, STATUS_SUCCESS,
 };
 use super::types::{FileInformationClass, IoStatusBlock, UnicodeString, HANDLE, NTSTATUS, PVOID};
 use crate::fs::ntfs::RawDirEntry;
@@ -140,53 +143,266 @@ fn decode_handle(h: HANDLE) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// File-system routing
+// File-system routing through the I/O manager
 // ---------------------------------------------------------------------------
 
-/// Identifies which file-system driver owns a directory handle.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FsType {
-    Fat32,
-    Ntfs,
-    Unknown,
+/// wdm.h FILE_DIRECTORY_FILE create option, recorded on the FileObject at
+/// CREATE so directory enumeration can verify the handle kind.
+const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
+/// wdm.h FILE_NON_DIRECTORY_FILE create option.
+const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
+/// wdm.h FILE_SHARE_VALID_FLAGS: FILE_SHARE_READ | WRITE | DELETE.
+const FILE_SHARE_VALID_FLAGS: u32 = 0x0000_0007;
+
+/// Resolve a File handle's target to the caller-owned `io::FileObject`
+/// the CREATE IRP delivered to the filesystem driver. Per-file identity
+/// (FCB/NTFS handle, name, byte offset) lives inside the object, so the
+/// READ/WRITE/CLOSE IRPs carry the same object the CREATE used — the way
+/// IoCreateFile wires a FILE_OBJECT into the driver's stack location.
+fn file_object_of(target: u64) -> *mut crate::io::FileObject {
+    target as *mut crate::io::FileObject
 }
 
-/// Per-file context stored in the handle table's `target` field.
-/// The high 8 bits encode the `FsType` and flags; the remaining 56 bits are
-/// driver-specific (MFT record for NTFS, cluster number for FAT32).
-/// Layout: [63:56] = FsType, [55] = directory flag, [54:0] = fs_handle
-pub(crate) struct FileContext {
-    pub fs_type: FsType,
-    pub fs_handle: u64,
-    pub is_directory: bool,
-}
-
-impl FileContext {
-    /// Encode the context into a 64-bit value for handle storage.
-    pub fn encode(&self) -> u64 {
-        let fs_type_tag = match self.fs_type {
-            FsType::Fat32 => 0x01u64,
-            FsType::Ntfs => 0x02u64,
-            FsType::Unknown => 0x00u64,
-        };
-        let dir_flag = if self.is_directory { 0x20u64 } else { 0x00u64 };
-        (fs_type_tag << 56) | (dir_flag << 48) | (self.fs_handle & 0x00FF_FFFF_FFFF_FFFF)
+/// The filesystem device backing native file I/O: the `\\FileSystem\\Ntfs`
+/// driver object registered in `io::init`, whose device is `\\Device\\Fs`.
+fn fs_device() -> *mut crate::io::DeviceObject {
+    let driver = crate::io::find_registered_driver(b"\\FileSystem\\Ntfs");
+    if driver.is_null() {
+        return core::ptr::null_mut();
     }
+    unsafe { (*driver).device_object }
+}
 
-    /// Decode a 64-bit value into a FileContext.
-    pub fn decode(raw: u64) -> Self {
-        let fs_type_tag = ((raw >> 56) & 0xFF) as u8;
-        let dir_flag = ((raw >> 48) & 0x01) != 0;
-        let fs_type = match fs_type_tag {
-            0x01 => FsType::Fat32,
-            0x02 => FsType::Ntfs,
-            _ => FsType::Unknown,
-        };
-        Self {
-            fs_type,
-            fs_handle: raw & 0x00FF_FFFF_FFFF_FFFF,
-            is_directory: dir_flag,
+/// One entry in the share-access table: every successfully opened File
+/// handle records its normalized name, desired access and share mode so
+/// later opens of the same name can be arbitrated (wdm.h share modes,
+/// enforced by the I/O manager in NT).
+struct ShareEntry {
+    handle: HANDLE,
+    path: Vec<u16>,
+    access: u32,
+    share: u32,
+}
+
+static SHARE_TABLE: Spinlock<Vec<ShareEntry>> = Spinlock::new(Vec::new());
+
+/// Case-insensitive wide-string comparison, the OBJ_CASE_INSENSITIVE
+/// rule the object manager applies to file names.
+fn path_equal_ignorecase(a: &[u16], b: &[u16]) -> bool {
+    const fn lower(c: u16) -> u16 {
+        if c >= b'A' as u16 && c <= b'Z' as u16 {
+            c + 32
+        } else {
+            c
         }
+    }
+    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| lower(*x) == lower(*y))
+}
+
+/// Windows share-access arbitration (wdm.h RtlCheckShareAccess classes,
+/// the read/write/delete classes NTFS arbitrates on Windows 7). An open
+/// conflicts when either side requires a sharing mode the other did not
+/// grant: reads/execute need FILE_SHARE_READ, writes need
+/// FILE_SHARE_WRITE, and DELETE needs FILE_SHARE_DELETE.
+fn share_conflicts(existing_access: u32, existing_share: u32, access: u32, share: u32) -> bool {
+    const READ_BITS: u32 = 0x0000_0001 | 0x0000_0020; // FILE_READ_DATA | FILE_EXECUTE
+    const WRITE_BITS: u32 = 0x0000_0002 | 0x0000_0004; // FILE_WRITE_DATA | FILE_APPEND_DATA
+    const DELETE_BIT: u32 = 0x0001_0000; // DELETE
+    const SHARE_READ: u32 = 0x0000_0001;
+    const SHARE_WRITE: u32 = 0x0000_0002;
+    const SHARE_DELETE: u32 = 0x0000_0004;
+
+    let denied = |a_access: u32, b_share: u32, bits: u32, share_bit: u32| {
+        (a_access & bits) != 0 && (b_share & share_bit) == 0
+    };
+    denied(existing_access, share, READ_BITS, SHARE_READ)
+        || denied(access, existing_share, READ_BITS, SHARE_READ)
+        || denied(existing_access, share, WRITE_BITS, SHARE_WRITE)
+        || denied(access, existing_share, WRITE_BITS, SHARE_WRITE)
+        || denied(existing_access, share, DELETE_BIT, SHARE_DELETE)
+        || denied(access, existing_share, DELETE_BIT, SHARE_DELETE)
+}
+
+/// Check a new open of `path_u16` against every existing open with the
+/// same name. Returns false (STATUS_SHARING_VIOLATION) on conflict.
+fn check_share_access(path_u16: &[u16], access: u32, share: u32) -> bool {
+    let table = SHARE_TABLE.lock();
+    for entry in table.iter() {
+        if path_equal_ignorecase(&entry.path, path_u16)
+            && share_conflicts(entry.access, entry.share, access, share)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn record_share_entry(handle: HANDLE, path: Vec<u16>, access: u32, share: u32) {
+    SHARE_TABLE.lock().push(ShareEntry {
+        handle,
+        path,
+        access,
+        share,
+    });
+}
+
+fn remove_share_entry(handle: HANDLE) {
+    SHARE_TABLE.lock().retain(|entry| entry.handle != handle);
+}
+
+/// Resolve a File handle to the NtfsHandle FCB the CREATE IRP produced,
+/// if any. Directory and file metadata (size, position) live there.
+fn file_fcb_of(entry: HandleEntry) -> Option<*mut crate::fs::ntfs::NtfsHandle> {
+    if entry.kind != HandleKind::File {
+        return None;
+    }
+    let file_object = file_object_of(entry.target);
+    let fcb = unsafe { (*file_object).fcb };
+    if fcb.is_null() {
+        None
+    } else {
+        Some(fcb as *mut crate::fs::ntfs::NtfsHandle)
+    }
+}
+
+/// Context filled by `create_completion_capture` while the CREATE IRP
+/// unwinds, before IoCompleteRequest frees it.
+#[repr(C)]
+struct CreateIosbCapture {
+    status: i32,
+    information: usize,
+}
+
+/// Completion routine for the CREATE IRP: copies the filesystem driver's
+/// IoStatus (final status and FILE_OPENED/FILE_CREATED information code)
+/// out of the IRP into the issuer's context. It runs inside
+/// IoCompleteRequest while the IRP is still alive; returning
+/// STATUS_SUCCESS lets the I/O manager keep unwinding and free the IRP.
+unsafe extern "C" fn create_completion_capture(
+    _device: *mut crate::io::DeviceObject,
+    irp: *mut crate::io::Irp,
+    context: *mut (),
+) -> i32 {
+    if !context.is_null() && !irp.is_null() {
+        let capture = context as *mut CreateIosbCapture;
+        (*capture).status = (*irp).io_status.status as i32;
+        (*capture).information = (*irp).io_status.information;
+    }
+    STATUS_SUCCESS as i32
+}
+
+/// Issue an IRP_MJ_READ or IRP_MJ_WRITE against a File handle's
+/// FileObject through IoCallDriver. The data buffer travels in
+/// Irp::user_buffer (the same convention the storage stack uses) and
+/// the file byte offset in Parameters.Read/Write.ByteOffset, where 0
+/// means "use the current file position". Explicit offsets — including
+/// 0 — are pre-seeked into the FileObject, so an explicit seek to 0 is
+/// honoured while a null/absent offset leaves the position alone.
+/// Returns (status, bytes transferred), the latter derived from the
+/// FileObject's byte-offset delta as the I/O manager would report it.
+unsafe fn file_transfer_irp(
+    file_object: *mut crate::io::FileObject,
+    major: u8,
+    buffer: *mut u8,
+    length: usize,
+    byte_offset: Option<i64>,
+) -> (i32, usize) {
+    let device = (*file_object).device_object;
+    if device.is_null() {
+        return (STATUS_INVALID_DEVICE_REQUEST as i32, 0);
+    }
+    let irp = crate::io::allocate_irp(1);
+    if irp.is_null() {
+        return (STATUS_NO_MEMORY as i32, 0);
+    }
+    let stack = (*irp).current_stack;
+    (*stack).major_function = major;
+    (*stack).device_object = device;
+    (*stack).file_object = file_object;
+    (*stack).parameters.read_write = crate::io::ReadWriteParameters {
+        byte_offset: byte_offset.unwrap_or(0) as u64,
+        byte_count: length as u32,
+        key: 0,
+    };
+    (*irp).user_buffer = buffer as *mut ();
+    let previous = (*file_object).current_byte_offset;
+    if let Some(offset) = byte_offset {
+        (*file_object).current_byte_offset = if offset < 0 { 0 } else { offset as u64 };
+    }
+    let status = crate::io::io_call_driver(device, irp);
+    let transferred = (*file_object)
+        .current_byte_offset
+        .wrapping_sub(previous)
+        .min(length as u64) as usize;
+    (status, transferred)
+}
+
+/// Issue IRP_MJ_CLOSE for a File handle's FileObject, the way the I/O
+/// manager closes a file object when its last handle goes away.
+unsafe fn file_close_irp(file_object: *mut crate::io::FileObject) -> i32 {
+    let device = (*file_object).device_object;
+    if device.is_null() {
+        return STATUS_INVALID_DEVICE_REQUEST as i32;
+    }
+    let irp = crate::io::allocate_irp(1);
+    if irp.is_null() {
+        return STATUS_NO_MEMORY as i32;
+    }
+    let stack = (*irp).current_stack;
+    (*stack).major_function = crate::io::major::IRP_MJ_CLOSE;
+    (*stack).device_object = device;
+    (*stack).file_object = file_object;
+    crate::io::io_call_driver(device, irp)
+}
+
+/// Validate a caller-supplied extended-attribute list the way
+/// IopValidateEaList does on Windows 7: the buffer must carry
+/// FILE_FULL_EA_INFORMATION entries (8-byte header, name, value) whose
+/// offsets are LONG-aligned, each entry must fit, and the last entry
+/// must end exactly at EaLength. A syntactically valid non-empty list
+/// fails with STATUS_EAS_NOT_SUPPORTED because the mounted NTFS driver
+/// stores no extended attributes — an honest filesystem limitation, not
+/// a silent ignore. Buffers larger than the 64 KiB NTFS EA limit fail
+/// with STATUS_EA_TOO_LARGE.
+unsafe fn validate_ea_list(ea_buffer: PVOID, ea_length: u32) -> NTSTATUS {
+    if ea_buffer.is_null() {
+        return if ea_length != 0 {
+            STATUS_INVALID_PARAMETER
+        } else {
+            STATUS_SUCCESS
+        };
+    }
+    if ea_length == 0 {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if ea_length > 0xFFFF {
+        return STATUS_EA_TOO_LARGE;
+    }
+    let base = ea_buffer as *const u8;
+    let mut offset: u32 = 0;
+    loop {
+        if offset > ea_length || ea_length - offset < 8 {
+            return STATUS_EA_LIST_INCONSISTENT;
+        }
+        let entry = base.add(offset as usize);
+        let next = core::ptr::read_unaligned(entry as *const u32);
+        let name_len = *entry.add(5) as u32;
+        let value_len = core::ptr::read_unaligned(entry.add(6) as *const u16) as u32;
+        let entry_end = offset + 8 + name_len + value_len;
+        if entry_end > ea_length {
+            return STATUS_EA_LIST_INCONSISTENT;
+        }
+        if next == 0 {
+            // The list must terminate exactly at the buffer end.
+            if entry_end != ea_length {
+                return STATUS_EA_LIST_INCONSISTENT;
+            }
+            return STATUS_EAS_NOT_SUPPORTED;
+        }
+        if next & 0x3 != 0 || next <= offset {
+            return STATUS_EA_LIST_INCONSISTENT;
+        }
+        offset = next;
     }
 }
 
@@ -262,6 +478,19 @@ impl Default for FileRenameInformation {
     }
 }
 
+/// Release a caller-owned FileObject together with its name buffer and
+/// the driver-allocated FCB context after a failed open or at CLOSE.
+unsafe fn free_file_object(file_object: *mut crate::io::FileObject) {
+    let name = (*file_object).file_name;
+    if !name.buffer.is_null() {
+        let _ = crate::mm::pool::free(name.buffer as *mut u8);
+    }
+    if !(*file_object).fcb.is_null() {
+        let _ = crate::mm::pool::free((*file_object).fcb as *mut u8);
+    }
+    let _ = crate::mm::pool::free(file_object as *mut u8);
+}
+
 // ---------------------------------------------------------------------------
 // nt_create_file
 // ---------------------------------------------------------------------------
@@ -277,15 +506,21 @@ fn file_open_common(
     create_disposition: u32,
     create_options: u32,
 ) -> (NTSTATUS, Option<HANDLE>, usize) {
-    use super::status::{
-        STATUS_ACCESS_DENIED, STATUS_FILE_IS_A_DIRECTORY, STATUS_OBJECT_PATH_NOT_FOUND,
-        STATUS_SUCCESS,
-    };
+    if share_access & !FILE_SHARE_VALID_FLAGS != 0 {
+        return (STATUS_INVALID_PARAMETER, None, 0);
+    }
     if !check_file_access(name_chars, desired_access) {
         return (STATUS_ACCESS_DENIED, None, 0);
     }
-    let _ = share_access;
+    // wdm.h create dispositions run FILE_SUPERSEDE..FILE_OVERWRITE_IF
+    // (0..=5); anything else is a parameter error.
+    if create_disposition > 5 {
+        return (STATUS_INVALID_PARAMETER, None, 0);
+    }
 
+    // Normalize the NT path (the user-path prefix is stripped below);
+    // drive-letter paths are resolved by the NTFS layer the same way
+    // SMSS opens System32 files.
     let path = String::from_utf16_lossy(name_chars);
     let strip = path.as_bytes().len() >= 5
         && path.as_bytes()[0] == b'\\'
@@ -303,44 +538,110 @@ fn file_open_common(
         return (STATUS_OBJECT_PATH_NOT_FOUND, None, 0);
     }
 
-    let _create_opt = match create_disposition {
-        0x00000000 => 0,
-        0x00000001 => 1,
-        0x00000002 => 2,
-        0x00000003 => 3,
-        0x00000004 => 4,
-        0x00000005 => 5,
-        _ => 1,
-    };
-
-    let is_directory = (create_options & 0x00000001) != 0;
-    let is_non_directory = (create_options & 0x00000040) != 0;
+    let is_directory = (create_options & FILE_DIRECTORY_FILE) != 0;
+    let is_non_directory = (create_options & FILE_NON_DIRECTORY_FILE) != 0;
     let path_u16: Vec<u16> = path.encode_utf16().collect();
-    let existing_node = crate::fs::vfs::lookup_path(&path_u16);
+    if path_u16.len() >= 32768 {
+        return (STATUS_OBJECT_NAME_INVALID, None, 0);
+    }
 
-    if let Some(node) = &existing_node {
-        let node_is_dir = node.node_type == crate::fs::vfs::VfsNodeType::Directory;
-        if node_is_dir && is_non_directory {
+    let device = fs_device();
+    if device.is_null() {
+        return (STATUS_DEVICE_NOT_READY, None, 0);
+    }
+
+    // Share-mode arbitration against other opens of the same name.
+    // FILE_CREATE on a not-yet-existing name cannot conflict: a
+    // collision is reported instead (STATUS_OBJECT_NAME_COLLISION).
+    if create_disposition != 0x2 && !check_share_access(&path_u16, desired_access, share_access) {
+        return (STATUS_SHARING_VIOLATION, None, 0);
+    }
+
+    // Caller-owned FileObject carrying the name; the CREATE IRP hands
+    // it to the driver, which fills in the device wiring and the FCB.
+    let name_storage = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        (path_u16.len() + 1) * 2,
+    ) as *mut u16;
+    if name_storage.is_null() {
+        return (STATUS_NO_MEMORY, None, 0);
+    }
+    let file_object = crate::mm::pool::allocate(
+        crate::mm::pool::PoolType::NonPaged,
+        core::mem::size_of::<crate::io::FileObject>(),
+    ) as *mut crate::io::FileObject;
+    if file_object.is_null() {
+        let _ = crate::mm::pool::free(name_storage as *mut u8);
+        return (STATUS_NO_MEMORY, None, 0);
+    }
+    unsafe {
+        core::ptr::write(file_object, crate::io::FileObject::new());
+        core::ptr::copy_nonoverlapping(path_u16.as_ptr(), name_storage, path_u16.len());
+        *name_storage.add(path_u16.len()) = 0;
+        (*file_object).file_name = crate::io::UnicodeString {
+            length: (path_u16.len() * 2) as u16,
+            maximum_length: ((path_u16.len() + 1) * 2) as u16,
+            buffer: name_storage,
+        };
+    }
+
+    let irp = crate::io::allocate_irp(1);
+    if irp.is_null() {
+        unsafe { free_file_object(file_object) };
+        return (STATUS_NO_MEMORY, None, 0);
+    }
+    unsafe {
+        let stack = (*irp).current_stack;
+        (*stack).major_function = crate::io::major::IRP_MJ_CREATE;
+        (*stack).device_object = device;
+        (*stack).file_object = file_object;
+        (*stack).parameters.create = crate::io::CreateParameters {
+            disposition: create_disposition,
+            options: create_options,
+        };
+    }
+
+    // Capture the driver IoStatus while the IRP completes;
+    // IoCompleteRequest frees the IRP immediately afterwards.
+    let mut capture = CreateIosbCapture {
+        status: STATUS_SUCCESS as i32,
+        information: 0,
+    };
+    unsafe {
+        let stack = (*irp).current_stack;
+        (*stack).completion_routine = Some(create_completion_capture);
+        (*stack).completion_context = core::ptr::addr_of_mut!(capture) as *mut ();
+        (*stack).control = crate::io::irp_stack::SL_INVOKE_ON_SUCCESS;
+    }
+
+    let status = crate::io::io_call_driver(device, irp);
+    if status < 0 {
+        unsafe { free_file_object(file_object) };
+        return (status, None, 0);
+    }
+
+    // The filesystem enforces the directory/non-directory create
+    // options against the object it returned (wdm.h semantics).
+    if !unsafe { (*file_object).fcb }.is_null() {
+        let fcb = unsafe { (*file_object).fcb } as *mut crate::fs::ntfs::NtfsHandle;
+        let target_is_dir = unsafe { (*fcb).is_directory };
+        if is_directory && !target_is_dir {
+            unsafe { free_file_object(file_object) };
+            return (STATUS_NOT_A_DIRECTORY, None, 0);
+        }
+        if is_non_directory && target_is_dir {
+            unsafe { free_file_object(file_object) };
             return (STATUS_FILE_IS_A_DIRECTORY, None, 0);
         }
     }
 
-    static SECTOR_COUNTER: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
-    let node_ptr = if let Some(node) = existing_node {
-        node as *const _ as u64
-    } else {
-        SECTOR_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed)
-    };
-    let ctx = FileContext {
-        fs_type: FsType::Ntfs,
-        fs_handle: node_ptr,
-        is_directory,
-    };
-    let handle = alloc_handle(HandleKind::File, ctx.encode());
+    let handle = alloc_handle(HandleKind::File, file_object as u64);
     if handle.is_null() {
-        return (STATUS_ACCESS_DENIED, None, 0);
+        unsafe { free_file_object(file_object) };
+        return (STATUS_NO_MEMORY, None, 0);
     }
-    (STATUS_SUCCESS, Some(handle), create_disposition as usize)
+    record_share_entry(handle, path_u16, desired_access, share_access);
+    (STATUS_SUCCESS, Some(handle), capture.information)
 }
 
 /// `nt_create_file` — open or create a file with security access check.
@@ -350,7 +651,11 @@ fn file_open_common(
 /// `FILE_OPEN` / `FILE_CREATE` / `FILE_OPEN_IF` / etc.
 /// `create_options` is `FILE_NON_DIRECTORY_FILE | ...`.
 ///
-/// This implementation uses the kernel VFS to perform real file operations.
+/// The EA buffer is validated the way IopValidateEaList does; the
+/// mounted NTFS driver stores no extended attributes, so a non-empty
+/// EA list fails with STATUS_EAS_NOT_SUPPORTED instead of being
+/// silently dropped. The open itself travels through the IRP path
+/// (see file_open_common).
 pub unsafe extern "C" fn nt_create_file(
     file_handle: *mut HANDLE,
     desired_access: u32,
@@ -361,8 +666,8 @@ pub unsafe extern "C" fn nt_create_file(
     share_access: u32,
     create_disposition: u32,
     create_options: u32,
-    _ea_buffer: PVOID,
-    _ea_length: u32,
+    ea_buffer: PVOID,
+    ea_length: u32,
 ) -> NTSTATUS {
     use super::status::{
         STATUS_ACCESS_VIOLATION, STATUS_INVALID_PARAMETER, STATUS_OBJECT_NAME_INVALID,
@@ -398,6 +703,16 @@ pub unsafe extern "C" fn nt_create_file(
         Err(status) => return status,
     };
 
+    if !ea_buffer.is_null()
+        && crate::mm::user_copy::probe_user_read(ea_buffer as u64, ea_length as usize).is_err()
+    {
+        return STATUS_ACCESS_VIOLATION;
+    }
+    let ea_status = unsafe { validate_ea_list(ea_buffer, ea_length) };
+    if ea_status != STATUS_SUCCESS {
+        return ea_status;
+    }
+
     let (status, handle, information) = file_open_common(
         desired_access,
         &oa,
@@ -412,13 +727,15 @@ pub unsafe extern "C" fn nt_create_file(
                 return STATUS_ACCESS_VIOLATION;
             }
         }
-        let iosb = IoStatusBlock {
-            status,
-            information,
-        };
-        if crate::mm::user_copy::write_user_object(io_status_block as u64, &iosb).is_err() {
-            return STATUS_ACCESS_VIOLATION;
-        }
+    }
+    // NT reports the outcome through IoStatusBlock on success and
+    // failure alike.
+    let iosb = IoStatusBlock {
+        status,
+        information: if status == STATUS_SUCCESS { information } else { 0 },
+    };
+    if crate::mm::user_copy::write_user_object(io_status_block as u64, &iosb).is_err() {
+        return STATUS_ACCESS_VIOLATION;
     }
     status
 }
@@ -445,6 +762,10 @@ pub unsafe fn nt_create_file_kernel(
     }
     let name = &*name_ptr;
     let name_chars = name.as_slice();
+    let ea_status = unsafe { validate_ea_list(ea_buffer, ea_length) };
+    if ea_status != STATUS_SUCCESS {
+        return ea_status;
+    }
     let (status, handle, information) = file_open_common(
         desired_access,
         object_attributes,
@@ -460,7 +781,7 @@ pub unsafe fn nt_create_file_kernel(
         io_status_block.status = STATUS_SUCCESS;
         io_status_block.information = information;
     }
-    let _ = (allocation_size, file_attributes, ea_buffer, ea_length);
+    let _ = (allocation_size, file_attributes);
     status
 }
 
@@ -548,10 +869,10 @@ pub unsafe extern "C" fn nt_read_file(
 
     let mut kernel_buffer = alloc::vec![0u8; length as usize];
     let mut offset = if byte_offset.is_null() {
-        0
+        None
     } else {
         match crate::mm::user_copy::read_user_object(byte_offset as u64) {
-            Ok(v) => v,
+            Ok(v) => Some(v),
             Err(status) => return status,
         }
     };
@@ -560,7 +881,9 @@ pub unsafe extern "C" fn nt_read_file(
         return STATUS_ACCESS_VIOLATION;
     }
     if bytes > 0 {
-        offset += bytes as i64;
+        if let Some(value) = offset.as_mut() {
+            *value += bytes as i64;
+        }
     }
     let iosb = IoStatusBlock {
         status,
@@ -568,7 +891,8 @@ pub unsafe extern "C" fn nt_read_file(
     };
     if crate::mm::user_copy::write_user_object(io_status_block as u64, &iosb).is_err()
         || (!byte_offset.is_null()
-            && crate::mm::user_copy::write_user_object(byte_offset as u64, &offset).is_err())
+            && crate::mm::user_copy::write_user_object(byte_offset as u64, &offset.unwrap_or(0))
+                .is_err())
     {
         return STATUS_ACCESS_VIOLATION;
     }
@@ -610,16 +934,18 @@ pub unsafe extern "C" fn nt_write_file(
         return STATUS_ACCESS_VIOLATION;
     }
     let mut offset = if byte_offset.is_null() {
-        0
+        None
     } else {
         match crate::mm::user_copy::read_user_object(byte_offset as u64) {
-            Ok(v) => v,
+            Ok(v) => Some(v),
             Err(status) => return status,
         }
     };
     let (status, bytes) = write_file_common(file_handle, &kernel_buffer, offset);
     if bytes > 0 {
-        offset += bytes as i64;
+        if let Some(value) = offset.as_mut() {
+            *value += bytes as i64;
+        }
     }
     let iosb = IoStatusBlock {
         status,
@@ -627,7 +953,8 @@ pub unsafe extern "C" fn nt_write_file(
     };
     if crate::mm::user_copy::write_user_object(io_status_block as u64, &iosb).is_err()
         || (!byte_offset.is_null()
-            && crate::mm::user_copy::write_user_object(byte_offset as u64, &offset).is_err())
+            && crate::mm::user_copy::write_user_object(byte_offset as u64, &offset.unwrap_or(0))
+                .is_err())
     {
         return STATUS_ACCESS_VIOLATION;
     }
@@ -732,20 +1059,30 @@ pub unsafe fn nt_query_information_file_kernel(
             information[..bytes.len()].copy_from_slice(bytes);
         }
         5 => {
+            let (size, is_dir) = match lookup_handle(file_handle).and_then(file_fcb_of) {
+                Some(fcb) => ((*fcb).file_size, (*fcb).is_directory),
+                None => (0, false),
+            };
             let fsi = FileStandardInformation {
-                allocation_size: 0,
-                end_of_file: 0,
+                allocation_size: size as i64,
+                end_of_file: size as i64,
                 number_of_links: 1,
                 delete_pending: 0,
-                directory: 0,
+                directory: if is_dir { 1 } else { 0 },
                 _pad: 0,
             };
             let bytes = struct_bytes(&fsi);
             information[..bytes.len()].copy_from_slice(bytes);
         }
         14 => {
+            let position = match lookup_handle(file_handle) {
+                Some(entry) if entry.kind == HandleKind::File => {
+                    (*file_object_of(entry.target)).current_byte_offset as i64
+                }
+                _ => 0,
+            };
             let fpi = FilePositionInformation {
-                current_byte_offset: 0,
+                current_byte_offset: position,
             };
             let bytes = struct_bytes(&fpi);
             information[..bytes.len()].copy_from_slice(bytes);
@@ -862,6 +1199,20 @@ pub unsafe fn nt_set_information_file_kernel(
         14 => {
             if information.len() < core::mem::size_of::<FilePositionInformation>() {
                 STATUS_BUFFER_TOO_SMALL
+            } else if entry.kind == HandleKind::File {
+                // FilePositionInformation seeks: the new offset lands
+                // in FileObject->CurrentByteOffset, the same field the
+                // READ/WRITE IRPs consume.
+                let mut offset_bytes = [0u8; 8];
+                offset_bytes.copy_from_slice(&information[..8]);
+                let offset = i64::from_le_bytes(offset_bytes);
+                if offset < 0 {
+                    STATUS_INVALID_PARAMETER
+                } else {
+                    let file_object = file_object_of(entry.target);
+                    (*file_object).current_byte_offset = offset as u64;
+                    STATUS_SUCCESS
+                }
             } else {
                 STATUS_SUCCESS
             }
@@ -884,9 +1235,25 @@ pub unsafe fn nt_set_information_file_kernel(
 /// `nt_close` — release a handle and any associated resources.
 /// Closes the handle in both the ntdll table and the kernel's
 /// object manager (if ob integration is enabled).
+///
+/// File handles close through the I/O manager: an IRP_MJ_CLOSE is
+/// issued against the FileObject the CREATE IRP produced, the object
+/// and its buffers are released, and the share-mode record is removed.
 pub unsafe extern "C" fn nt_close(handle: HANDLE) -> NTSTATUS {
     if handle.is_null() {
         return STATUS_INVALID_HANDLE;
+    }
+
+    let entry = match lookup_handle(handle) {
+        Some(entry) => entry,
+        None => return STATUS_INVALID_HANDLE,
+    };
+
+    if entry.kind == HandleKind::File {
+        let file_object = file_object_of(entry.target);
+        let _ = file_close_irp(file_object);
+        free_file_object(file_object);
+        remove_share_entry(handle);
     }
 
     // First close in ob's global handle table (if integration enabled)
@@ -1128,62 +1495,29 @@ pub unsafe extern "C" fn nt_query_directory_file(
 
     // 2. Resolve the file handle.
     let entry = lookup_handle(file_handle);
-    let file_ctx = match entry {
-        Some(e) if e.kind == HandleKind::File => FileContext::decode(e.target),
+    let file_object = match entry {
+        Some(e) if e.kind == HandleKind::File => file_object_of(e.target),
         _ => return STATUS_INVALID_HANDLE,
     };
 
     // 3. Directory check.
-    if !file_ctx.is_directory {
+    if (*file_object).fcb.is_null() {
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+    let ntfs_handle = (*file_object).fcb as *mut crate::fs::ntfs::NtfsHandle;
+    if !(*ntfs_handle).is_directory {
         return STATUS_NOT_A_DIRECTORY;
     }
 
     // 4. Route to the appropriate filesystem driver.
     let mut raw_entries = [RawDirEntry::empty(); 64];
-    let n = match file_ctx.fs_type {
-        FsType::Ntfs => {
-            let fs_ptr = file_ctx.fs_handle as *const crate::fs::ntfs::NtfsFileSystem;
-            crate::fs::ntfs::list_ntfs_directory(
-                &*fs_ptr,
-                file_ctx.fs_handle & 0x00FF_FFFF_FFFF_FFFF,
-                &mut raw_entries,
-            )
-        }
-        FsType::Fat32 => {
-            let fs_ptr = file_ctx.fs_handle as *const crate::fs::fat32::Fat32FileSystem;
-            let fat_fs = unsafe { &*fs_ptr };
-            // The FAT32 handle's low bits carry the starting cluster
-            // (0 for the root directory, ≥2 for a subdirectory).
-            let start_cluster = (file_ctx.fs_handle & 0x00FF_FFFF_FFFF_FFFF) as u32;
-            let mut fat_entries = [crate::fs::fat32::FatDirEntry::new(); 64];
-            let count = if start_cluster == 0 {
-                crate::fs::fat32::list_root_directory(fat_fs, &mut fat_entries)
-            } else {
-                crate::fs::fat32::list_directory_cluster(fat_fs, start_cluster, &mut fat_entries)
-            };
-            // Convert FatDirEntry (8.3 names) to RawDirEntry (UTF-16).
-            for (i, entry) in fat_entries.iter().take(count).enumerate() {
-                let name_str = core::str::from_utf8(
-                    &entry.name[..entry
-                        .name
-                        .iter()
-                        .position(|&b| b == 0)
-                        .unwrap_or(entry.name.len())],
-                )
-                .unwrap_or("");
-                let name_u16: alloc::vec::Vec<u16> = name_str.encode_utf16().collect();
-                raw_entries[i].name_len = name_u16.len().min(255) as u16;
-                for (j, ch) in name_u16.iter().take(256).enumerate() {
-                    raw_entries[i].name[j] = *ch;
-                }
-                raw_entries[i].is_dir = entry.is_dir;
-                raw_entries[i].size = entry.size as u64;
-                raw_entries[i].alloc_size = entry.size as u64;
-                raw_entries[i].mft_ref = entry.cluster as u64;
-            }
-            count
-        }
-        _ => return STATUS_INVALID_DEVICE_REQUEST,
+    let n = match crate::fs::ntfs::get_mounted_fs() {
+        Some(fs) => crate::fs::ntfs::list_ntfs_directory(
+            fs,
+            (*ntfs_handle).mft_record,
+            &mut raw_entries,
+        ),
+        None => return STATUS_DEVICE_NOT_READY,
     };
 
     // 5. Serialize into the caller's buffer.
@@ -1346,57 +1680,41 @@ fn size_of_i64() -> usize {
     core::mem::size_of::<i64>()
 }
 
-// ---------------------------------------------------------------------------
-// Transitional direct-VFS file I/O
-// ---------------------------------------------------------------------------
-
-/// Transitional file I/O that bypasses the IRP/device stack.
-///
-/// Until the filesystem device object (`\\Device\\Fs`, see
-/// `io::create_fs_device` wiring in `io::init`) carries per-file context
-/// through the driver stack, the native file syscalls route File-handle
-/// sector requests straight to `fs::vfs`. These two helpers are the single
-/// choke point for that detour: when the IRP path lands, replacing these two
-/// functions switches every native file syscall over at once. The
-/// `SectorResult` → NTSTATUS mapping also lives here, so all callers
-/// translate errors the same way.
-///
-/// Known limitation: the sector context is currently the raw RAM-disk byte
-/// offset; per-file context from the handle's `FileContext` is not applied
-/// yet.
-fn transitional_vfs_read(buffer: &mut [u8], byte_offset: i64) -> (NTSTATUS, usize) {
-    use super::status::STATUS_SUCCESS;
-    let result = crate::fs::vfs::read_file_sectors_into(0, buffer, byte_offset as u64);
-    // SectorResult errors are already NTSTATUS values (e.g. 0xC000000D
-    // STATUS_DATA_ERROR); pass them through unchanged.
-    let status = if result.status == 0 {
-        STATUS_SUCCESS
-    } else {
-        result.status as i32
-    };
-    (status, result.bytes_read)
-}
-
-/// Transitional write counterpart of `transitional_vfs_read`.
-fn transitional_vfs_write(buffer: &[u8], byte_offset: i64) -> (NTSTATUS, usize) {
-    use super::status::STATUS_SUCCESS;
-    let result = crate::fs::vfs::write_file_sectors_from(0, buffer, byte_offset as u64);
-    let status = if result.status == 0 {
-        STATUS_SUCCESS
-    } else {
-        result.status as i32
-    };
-    (status, result.bytes_written)
-}
-
-fn read_file_common(file_handle: HANDLE, buffer: &mut [u8], byte_offset: i64) -> (NTSTATUS, usize) {
+/// Common read routing. File handles transfer through an IRP_MJ_READ
+/// issued with IoCallDriver against the FileObject the CREATE IRP
+/// produced (see file_transfer_irp); pipe handles keep using the pipe
+/// slots. `byte_offset` mirrors NtReadFile: None reads at the current
+/// file position, Some(offset) reads there.
+fn read_file_common(
+    file_handle: HANDLE,
+    buffer: &mut [u8],
+    byte_offset: Option<i64>,
+) -> (NTSTATUS, usize) {
     use super::status::{STATUS_END_OF_FILE, STATUS_INVALID_HANDLE};
     let entry = match lookup_handle(file_handle) {
         Some(entry) => entry,
         None => return (STATUS_INVALID_HANDLE, 0),
     };
     match entry.kind {
-        HandleKind::File => transitional_vfs_read(buffer, byte_offset),
+        HandleKind::File => {
+            let (status, bytes) = unsafe {
+                file_transfer_irp(
+                    file_object_of(entry.target),
+                    crate::io::major::IRP_MJ_READ,
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    byte_offset,
+                )
+            };
+            let status = if status >= 0 && bytes == 0 && !buffer.is_empty() {
+                // A read of a non-zero length that transferred nothing
+                // is an end-of-file condition in NT.
+                STATUS_END_OF_FILE
+            } else {
+                status
+            };
+            (status, bytes)
+        }
         HandleKind::Pipe => {
             if pipe_is_write(entry.target) {
                 return (STATUS_INVALID_HANDLE, 0);
@@ -1416,8 +1734,7 @@ pub unsafe fn nt_read_file_kernel(
     buffer: &mut [u8],
     byte_offset: Option<&mut i64>,
 ) -> NTSTATUS {
-    let offset = byte_offset.as_deref().copied().unwrap_or(0);
-    let (status, bytes) = read_file_common(file_handle, buffer, offset);
+    let (status, bytes) = read_file_common(file_handle, buffer, byte_offset.as_deref().copied());
     io_status_block.status = status;
     io_status_block.information = bytes;
     if bytes > 0 {
@@ -1428,14 +1745,31 @@ pub unsafe fn nt_read_file_kernel(
     status
 }
 
-fn write_file_common(file_handle: HANDLE, buffer: &[u8], byte_offset: i64) -> (NTSTATUS, usize) {
+/// Common write routing — IRP_MJ_WRITE for File handles, pipe slots for
+/// pipe ends. `byte_offset` mirrors NtWriteFile: None writes at the
+/// current file position, Some(offset) writes there.
+fn write_file_common(
+    file_handle: HANDLE,
+    buffer: &[u8],
+    byte_offset: Option<i64>,
+) -> (NTSTATUS, usize) {
     use super::status::{STATUS_INVALID_HANDLE, STATUS_SUCCESS};
     let entry = match lookup_handle(file_handle) {
         Some(entry) => entry,
         None => return (STATUS_INVALID_HANDLE, 0),
     };
     match entry.kind {
-        HandleKind::File => transitional_vfs_write(buffer, byte_offset),
+        HandleKind::File => {
+            unsafe {
+                file_transfer_irp(
+                    file_object_of(entry.target),
+                    crate::io::major::IRP_MJ_WRITE,
+                    buffer.as_ptr() as *mut u8,
+                    buffer.len(),
+                    byte_offset,
+                )
+            }
+        }
         HandleKind::Pipe => {
             if !pipe_is_write(entry.target) {
                 return (STATUS_INVALID_HANDLE, 0);
@@ -1454,8 +1788,7 @@ pub unsafe fn nt_write_file_kernel(
     buffer: &[u8],
     byte_offset: Option<&mut i64>,
 ) -> NTSTATUS {
-    let offset = byte_offset.as_deref().copied().unwrap_or(0);
-    let (status, bytes) = write_file_common(file_handle, buffer, offset);
+    let (status, bytes) = write_file_common(file_handle, buffer, byte_offset.as_deref().copied());
     io_status_block.status = status;
     io_status_block.information = bytes;
     if bytes > 0 {
