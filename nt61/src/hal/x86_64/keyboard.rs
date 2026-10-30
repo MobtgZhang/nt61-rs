@@ -114,6 +114,11 @@ fn push_byte(b: u8) {
     } // full
     BUF[head].store(b, Ordering::Relaxed);
     HEAD.store(next, Ordering::Relaxed);
+    // Wake console readers parked on the input event (NT 6.1:
+    // the console input queue signals its event on every input
+    // record). Safe from the IRQ handler - the wake path only
+    // touches dispatcher wait-list state.
+    crate::hal::common::keyboard_input::signal_input_available();
 }
 
 /// read a single decoded ASCII byte from the buffer. Returns
