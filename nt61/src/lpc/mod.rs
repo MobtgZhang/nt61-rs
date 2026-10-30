@@ -47,7 +47,7 @@
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use crate::ke::sync::Spinlock;
+use crate::ke::sync::{DispatcherHeader, Event, EventType, Spinlock};
 
 /// Maximum number of ALPC ports the bootstrap registry can hold.
 /// Real NT uses a hash table; 32 is plenty for the bootstrap
@@ -272,6 +272,56 @@ static CONNECT_COUNT: AtomicU64 = AtomicU64::new(0);
 static SEND_COUNT: AtomicU64 = AtomicU64::new(0);
 static RECV_COUNT: AtomicU64 = AtomicU64::new(0);
 static TOTAL_MESSAGES: AtomicU32 = AtomicU32::new(0);
+
+/// Notification event signaled whenever a message is enqueued onto
+/// a previously empty LPC port queue. Server threads wait on this
+/// event instead of polling their port queues: on NT 6.1 an ALPC
+/// receive attaches a wait to the port object and the senders
+/// message-delivery path completes it.
+static MESSAGE_EVENT: Spinlock<Option<Event>> = Spinlock::new(None);
+
+/// Thread-safe access to the message event header. The event is
+/// created on first use so no init-order dependency exists.
+fn message_event_header() -> &'static mut DispatcherHeader {
+    let mut guard = MESSAGE_EVENT.lock();
+    if guard.is_none() {
+        *guard = Some(Event::new(EventType::Notification));
+    }
+    // SAFETY: the Event is stored behind a static Spinlock, so the
+    // DispatcherHeader outlives the guard. The caller uses the
+    // reference immediately to signal / clear / wait and never
+    // stores it.
+    let event = guard.as_mut().unwrap();
+    let header_ptr = &mut event.header as *mut DispatcherHeader;
+    drop(guard);
+    unsafe { &mut *header_ptr }
+}
+
+/// Signal the message event: wake every thread waiting for LPC
+/// messages. Called from send when a port queue gains its first
+/// pending message.
+pub fn signal_message_event() {
+    let header = message_event_header();
+    header.signal_state = 1;
+    crate::ke::sync::wake(header, true);
+}
+
+/// Clear the message event signal state. A server drains its port
+/// queues and then resets the event before parking on it, so a send
+/// that raced the drain re-signals the event and no wakeup is lost.
+pub fn clear_message_event() {
+    message_event_header().signal_state = 0;
+}
+
+/// Wait until the message event is signaled or the timeout (in ms)
+/// expires. Returns true when the event was signaled.
+pub fn wait_message_event(timeout_ms: u32) -> bool {
+    let header = message_event_header();
+    matches!(
+        crate::ke::sync::wait_single(header, timeout_ms),
+        crate::ke::sync::WaitResult::Success
+    )
+}
 
 /// Initialize LPC subsystem.
 pub fn init() {
@@ -551,6 +601,14 @@ pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
     let p = &mut reg.ports[peer_index as usize];
     p.head = head.wrapping_add(1);
     p.pending = pending + 1;
+    // Wake ALPC receivers when the peer queue gained its first
+    // pending message; a queue that already had messages keeps its
+    // signal until the receiver resets it after draining.
+    let queue_was_empty = pending == 0;
+    drop(g);
+    if queue_was_empty {
+        signal_message_event();
+    }
     Some(copy_len)
 }
 
