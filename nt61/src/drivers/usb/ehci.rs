@@ -40,6 +40,8 @@ const HCCPARAMS: u32 = 0x08;
 /// EHCI operational register offsets (relative to `op_base`).
 const OP_USBCMD: u32 = 0x00;
 const OP_USBSTS: u32 = 0x04;
+const OP_ASYNCLISTADDR: u32 = 0x14;
+const OP_USBD: u32 = 0x08;
 const OP_CONFIGFLAG: u32 = 0x50;
 const OP_PORTSC: u32 = 0x44;
 
@@ -591,18 +593,211 @@ pub enum ControlResult {
     Error(u8),
 }
 
+/// Perform a control transfer through the async schedule (QH + qTD
+/// chain). Allocates a QH and three qTDs (setup, optional data,
+/// status), links them, programs ASYNCLISTADDR, rings the doorbell
+/// and polls for completion by checking the ACTIVE bit clear.
+pub fn control_transfer(
+    controller: usize,
+    _slot: u8,
+    setup: &UsbSetupPacket,
+    data: Option<(*mut u8, u32)>,
+) -> Result<u32, &'static str> {
+    unsafe {
+        let c = match (*core::ptr::addr_of_mut!(EHCI_CONTROLLERS)).get_mut(controller) {
+            Some(Some(c)) if c.initialised => c,
+            Some(Some(_)) => return Err("EHCI controller not initialised"),
+            _ => return Err("Invalid controller"),
+        };
+
+        let op_base = c.mmio_base + c.cap_length as u64;
+
+        // Allocate QH (64 bytes, 32-byte aligned).
+        let qh_mem = crate::mm::pool::allocate_aligned(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<EhciQh>(),
+            32,
+        ) as *mut EhciQh;
+        if qh_mem.is_null() {
+            return Err("EHCI: QH allocation failed");
+        }
+        core::ptr::write_bytes(qh_mem as *mut u8, 0, core::mem::size_of::<EhciQh>());
+
+        // Allocate three qTDs: setup, data, status.
+        const QTD_COUNT: usize = 3;
+        let qtd_mem = crate::mm::pool::allocate_aligned(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<EhciQtd>() * QTD_COUNT,
+            32,
+        ) as *mut EhciQtd;
+        if qtd_mem.is_null() {
+            return Err("EHCI: qTD allocation failed");
+        }
+        core::ptr::write_bytes(
+            qtd_mem as *mut u8,
+            0,
+            core::mem::size_of::<EhciQtd>() * QTD_COUNT,
+        );
+
+        let qh_phys = qh_mem as u64;
+        let qtd_phys = qtd_mem as u64;
+        let qtd_size = core::mem::size_of::<EhciQtd>() as u64;
+
+        // Setup qTD: embed the setup packet in the buffer (IDT).
+        // PID = 0x2 (SETUP), length = 8.
+        let setup_bytes: [u8; 8] = [
+            setup.request_type,
+            setup.request,
+            (setup.value & 0xFF) as u8,
+            (setup.value >> 8) as u8,
+            (setup.index & 0xFF) as u8,
+            (setup.index >> 8) as u8,
+            (setup.length & 0xFF) as u8,
+            (setup.length >> 8) as u8,
+        ];
+        // Allocate an 8-byte scratch buffer for the setup payload.
+        let setup_buf = crate::mm::pool::allocate_aligned(
+            crate::mm::pool::PoolType::NonPaged,
+            8,
+            8,
+        ) as *mut u8;
+        if setup_buf.is_null() {
+            return Err("EHCI: setup buffer allocation failed");
+        }
+        core::ptr::copy_nonoverlapping(
+            setup_bytes.as_ptr(),
+            setup_buf,
+            8,
+        );
+
+        // qTD 0: SETUP stage (PID 2), 8 bytes.
+        let setup_qtd = EhciQtd::new(setup_buf as u64, 8, 2);
+        // qTD 1: DATA stage (PID 3 for IN / PID 0 for OUT).
+        let has_data = data.is_some() && setup.length > 0;
+        let dir_in = (setup.request_type & 0x80) != 0;
+        let data_pid: u8 = if dir_in { 3 } else { 0 };
+        let data_qtd = if has_data {
+            let (buf, len) = data.unwrap();
+            EhciQtd::new(buf as u64, len as usize, data_pid)
+        } else {
+            EhciQtd::default()
+        };
+        // qTD 2: STATUS stage (PID opposite to data, or IN for no data).
+        let status_pid: u8 = if has_data {
+            if dir_in { 0 } else { 3 }
+        } else {
+            3 // IN status when no data phase (for reads)
+        };
+        let status_qtd = EhciQtd::new(0, 0, status_pid);
+
+        // Write the qTDs into the allocated memory.
+        core::ptr::write_volatile(qtd_mem.add(0), setup_qtd);
+        if has_data {
+            core::ptr::write_volatile(qtd_mem.add(1), data_qtd);
+        }
+        core::ptr::write_volatile(qtd_mem.add(2), status_qtd);
+
+        // Link the qTDs: setup → data → status.
+        if has_data {
+            core::ptr::write_volatile(
+                &mut (*qtd_mem.add(0)).next_qtd,
+                (qtd_phys + qtd_size) as u32,
+            );
+            core::ptr::write_volatile(
+                &mut (*qtd_mem.add(1)).next_qtd,
+                (qtd_phys + 2 * qtd_size) as u32,
+            );
+        } else {
+            core::ptr::write_volatile(
+                &mut (*qtd_mem.add(0)).next_qtd,
+                (qtd_phys + qtd_size) as u32,
+            );
+        }
+        // Last qTD terminates.
+        core::ptr::write_volatile(
+            &mut (*qtd_mem.add(if has_data { 2 } else { 1 })).next_qtd,
+            1u32,
+        );
+
+        // Program the QH to point at the setup qTD.
+        core::ptr::write_volatile(&mut (*qh_mem).current_qtd, qtd_phys as u32);
+        core::ptr::write_volatile(
+            &mut (*qh_mem).next_qtd,
+            qtd_phys as u32,
+        );
+
+        // Program ASYNCLISTADDR to the QH.
+        core::ptr::write_volatile((op_base + OP_ASYNCLISTADDR as u64) as *mut u32, qh_phys as u32);
+
+        // Ring the doorbell (USBD) to force the async schedule to
+        // advance.
+        core::ptr::write_volatile((op_base + OP_USBD as u64) as *mut u32, 0x20);
+
+        // Poll for completion: check the status qTD ACTIVE bit clear.
+        let status_qtd_mem = if has_data {
+            qtd_mem.add(2)
+        } else {
+            qtd_mem.add(1)
+        };
+        let mut iterations = 0usize;
+        let max_iterations = 500_000;
+        while iterations < max_iterations {
+            let token = core::ptr::read_volatile(&(*status_qtd_mem).token);
+            if (token & QTD_TOKEN_ACTIVE) == 0 {
+                break;
+            }
+            if (token & QTD_TOKEN_HALT) != 0 {
+                return Err("EHCI: transfer halted (stall or error)");
+            }
+            iterations += 1;
+            core::hint::spin_loop();
+        }
+        if iterations >= max_iterations {
+            return Err("EHCI: control transfer timeout");
+        }
+
+        // Read the status qTD's bytes_transferred for the data phase.
+        let bytes = if has_data {
+            core::ptr::read_volatile(&(*status_qtd_mem).bytes_transferred())
+        } else {
+            0
+        };
+
+        let _ = has_data;
+        Ok(bytes as u32)
+    }
+}
+
 /// Enumerate a device on a port
 pub fn enumerate_device(controller: usize, port: u8) -> Result<UsbDevice, &'static str> {
     // Reset port
     let _speed = reset_port(controller, port)?;
 
-    // Steps 2-4 (GET_DESCRIPTOR / SET_ADDRESS / SET_CONFIGURATION)
-    // require real control transfers through the async schedule
-    // (QH + qTD chain). That machinery is not wired up yet, so
-    // refuse to hand out a device claiming to be Configured with a
-    // default descriptor: the caller would trust data the hardware
-    // never returned.
-    Err("EHCI control transfer path (QH/qTD scheduling) not implemented")
+    // Step 2: GET_DESCRIPTOR (Device).
+    let mut buf = [0u8; 18];
+    let get_desc = UsbSetupPacket::get_descriptor(0x01, 0, 18);
+    let _ = control_transfer(controller, 1, &get_desc, Some((buf.as_mut_ptr(), 18)))?;
+
+    // Step 3: SET_ADDRESS.
+    let set_addr = UsbSetupPacket::set_address(1);
+    let _ = control_transfer(controller, 1, &set_addr, None)?;
+
+    // Step 4: SET_CONFIGURATION.
+    let set_cfg = UsbSetupPacket::set_configuration(1);
+    let _ = control_transfer(controller, 1, &set_cfg, None)?;
+
+    // Read the descriptor that the DMA wrote.
+    let descriptor = unsafe { core::ptr::read_volatile(buf.as_ptr() as *const UsbDeviceDescriptor) };
+
+    Ok(UsbDevice {
+        address: 1,
+        port,
+        speed: _speed,
+        state: UsbDeviceState::Configured,
+        descriptor,
+        configuration: 1,
+        max_packet_size: descriptor.max_packet_size,
+    })
 }
 
 // ============================================================================
