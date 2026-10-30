@@ -837,3 +837,13 @@ pub fn poll_sessions() -> usize {
 pub fn session_count() -> usize {
     SESSIONS.lock().len()
 }
+
+/// True when any live session has receive data pending on its TCP
+/// socket. The launcher uses this to decide whether its service
+/// thread can park on the socket readiness event.
+pub fn has_ready_session() -> bool {
+    SESSIONS
+        .lock()
+        .iter()
+        .any(|session| crate::netstack::socket::is_read_ready(session.socket_id))
+}
