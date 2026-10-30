@@ -747,6 +747,25 @@ pub fn create_directory(parent: *mut VfsNode, name: &[u16]) -> Option<&'static m
 /// Delete node
 pub fn delete_node(node: *mut VfsNode) {
     unsafe {
+        // Recursively delete all children first, so the parent does
+        // not hold dangling pointers after its own free.
+        let child_ptrs: alloc::vec::Vec<*mut VfsNode> = {
+            let mut children = alloc::vec::Vec::new();
+            let root = ROOT_DIR.lock();
+            for i in 0..root.node_count {
+                let child = root.nodes[i];
+                if child.is_null() || child == node {
+                    continue;
+                }
+                if (*child).parent == node {
+                    children.push(child);
+                }
+            }
+            children
+        };
+        for child in child_ptrs {
+            delete_node(child);
+        }
         (*node).reference_count -= 1;
         if (*node).reference_count == 0 {
             // Free resources
