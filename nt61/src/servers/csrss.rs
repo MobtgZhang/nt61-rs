@@ -675,11 +675,11 @@ fn dispatch_process_api(
     }
 }
 
-/// Poll all ALPC server communication ports owned by CSRSS, dispatch
-/// every pending message, and send replies back to the client. Returns
-/// the number of messages dispatched so callers can distinguish a
-/// drained port from real work.
-fn poll_alpc_messages() -> usize {
+/// Dispatch every pending ALPC message on the server communication
+/// ports owned by CSRSS and send replies back to the clients.
+/// Returns the number of messages dispatched so callers can
+/// distinguish a drained port from real work.
+fn dispatch_pending_alpc() -> usize {
     if ensure_api_port().is_none() {
         return 0;
     }
@@ -698,15 +698,30 @@ fn poll_alpc_messages() -> usize {
     dispatched
 }
 
+/// Idle wait for the CSRSS server loop.
+///
+/// The port queues signal the LPC message event when a client send
+/// enqueues the first pending message, so the idle period is
+/// event-driven rather than polled. The drain resets the event and
+/// re-checks once before parking: a client that sent between the
+/// drain and the reset re-signals the event, so no wakeup is lost.
+/// The bounded timeout also covers the window before the ApiPort
+/// has been created.
+const CSRSS_ALPC_WAIT_MS: u32 = 1000;
+
+fn wait_for_alpc_work() {
+    crate::lpc::clear_message_event();
+    if dispatch_pending_alpc() == 0 {
+        crate::lpc::wait_message_event(CSRSS_ALPC_WAIT_MS);
+    }
+}
+
 /// CSRSS server thread entry point.
 pub extern "C" fn csrss_server_thread_entry(_context: u64) {
     loop {
-        let dispatched = poll_alpc_messages();
+        let dispatched = dispatch_pending_alpc();
         if dispatched == 0 {
-            // No port-wait object exists yet; instead of busy-spinning
-            // through the scheduler, park on the next interrupt (timer
-            // or IPI) so idle periods stop burning the CPU.
-            crate::arch::wait_for_interrupt();
+            wait_for_alpc_work();
         }
         crate::ke::scheduler::yield_();
     }
@@ -839,9 +854,9 @@ pub fn init() {
 pub fn csrss_main() -> ! {
     // kprintln!("[CSRSS] Process started");
     loop {
-        let dispatched = poll_alpc_messages();
+        let dispatched = dispatch_pending_alpc();
         if dispatched == 0 {
-            crate::arch::wait_for_interrupt();
+            wait_for_alpc_work();
         }
         crate::ke::scheduler::yield_();
     }
