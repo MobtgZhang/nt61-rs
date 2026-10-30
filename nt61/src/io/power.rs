@@ -255,7 +255,7 @@ pub fn process_power_irp(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
                     "[IO-POWER] Unknown power IRP minor function: 0x{:02x}",
                     minor
                 );
-                -1 // STATUS_NOT_IMPLEMENTED
+                -1 // STATUS_NOT_SUPPORTED (NT 6.1 unknown minor)
             }
         }
     }
