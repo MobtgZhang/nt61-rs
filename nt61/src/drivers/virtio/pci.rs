@@ -5,8 +5,9 @@
 //! (include/hw/loongarch/virt.h), and virtio-pci modern devices expose
 //! their control structures through vendor-specific PCI capabilities
 //! (Linux include/uapi/linux/virtio_pci.h, VIRTIO_PCI_CAP_* family).
-//! Legacy virtio-pci BAR0 layout is not implemented here: QEMU
-//! virtio-pci devices are modern by default.
+//! Legacy (pre-VIRTIO_F_VERSION_1) virtio-pci BAR0 layout is also
+//! supported for transitional device ids (0x1000..=0x103f) that do
+//! not expose vendor-specific capabilities.
 
 use super::queue::QueueLayout;
 
@@ -37,6 +38,23 @@ pub const PCI_CAP_OFFSET: u64 = 8;
 /// virtio_pci_notify_cap: notify_off_multiplier follows the 16-byte
 /// virtio_pci_cap header.
 pub const PCI_CAP_NOTIFY_MULTIPLIER: u64 = 16;
+
+// ---------------------------------------------------------------------------
+// Legacy virtio-pci BAR0 register offsets (virtio_pci.h legacy layout).
+// ---------------------------------------------------------------------------
+
+pub const LEGACY_HOST_FEATURES: u64 = 0x00; // 32-bit RO
+pub const LEGACY_GUEST_FEATURES: u64 = 0x04; // 32-bit W
+pub const LEGACY_QUEUE_PFN: u64 = 0x08; // 32-bit RW
+pub const LEGACY_QUEUE_NUM: u64 = 0x0C; // 16-bit RO
+pub const LEGACY_QUEUE_SEL: u64 = 0x0E; // 16-bit RW
+pub const LEGACY_QUEUE_NOTIFY: u64 = 0x10; // 16-bit RW
+pub const LEGACY_STATUS: u64 = 0x12; // 8-bit RW
+pub const LEGACY_ISR: u64 = 0x13; // 8-bit RO
+pub const LEGACY_CONFIG_VECTOR: u64 = 0x14; // 16-bit RW
+/// Device-specific config starts at 0x14 + 2 + 2 = 0x18 (after
+/// CONFIG_VECTOR and the reserved padding at 0x16).
+pub const LEGACY_DEVICE_CONFIG: u64 = 0x18;
 
 /// Vendor-specific capability carries the virtio structures.
 pub const PCI_CAP_ID_VNDR: u8 = 9;
@@ -80,6 +98,9 @@ pub struct PciTransport {
     isr_base: u64,
     device_base: u64,
     device_id: u32,
+    /// True when the device uses the legacy BAR0 flat layout
+    /// (no vendor-specific capabilities; transitional device id).
+    legacy: bool,
 }
 
 impl PciTransport {
@@ -357,22 +378,20 @@ impl PciTransport {
             ) as u64;
         }
 
-        let common_base = common.or_else(|| {
-            crate::hal::serial::write_string_always("[VIRTIO-PCI] common missing\r\n");
-            None
-        })?;
-        let (notify_base, notify_multiplier) = notify.or_else(|| {
-            crate::hal::serial::write_string_always("[VIRTIO-PCI] notify missing\r\n");
-            None
-        })?;
-        let isr_base = isr.or_else(|| {
-            crate::hal::serial::write_string_always("[VIRTIO-PCI] isr missing\r\n");
-            None
-        })?;
-        let device_base = device_cfg.or_else(|| {
-            crate::hal::serial::write_string_always("[VIRTIO-PCI] device missing\r\n");
-            None
-        })?;
+        if common.is_none() {
+            // Transitional devices without vendor capabilities use
+            // the legacy BAR0 layout; fall back to that probe.
+            return Self::probe_legacy(bus, device, function);
+        }
+        if notify.is_none() || isr.is_none() || device_cfg.is_none() {
+            // Partial capabilities on a transitional device also
+            // fall back to the legacy BAR0 layout.
+            return Self::probe_legacy(bus, device, function);
+        }
+        let common_base = common.unwrap();
+        let (notify_base, notify_multiplier) = notify.unwrap();
+        let isr_base = isr.unwrap();
+        let device_base = device_cfg.unwrap();
 
         Some(PciTransport {
             config_base,
@@ -382,6 +401,7 @@ impl PciTransport {
             isr_base,
             device_base,
             device_id: device_id as u32,
+            legacy: false,
         })
     }
 
@@ -518,6 +538,127 @@ impl PciTransport {
         let low = self.config_read_u32(offset) as u64;
         let high = self.config_read_u32(offset + 4) as u64;
         (high << 32) | low
+    }
+
+    // -----------------------------------------------------------------------
+    // Legacy (pre-VIRTIO_F_VERSION_1) BAR0 flat-layout transport.
+    // -----------------------------------------------------------------------
+
+    /// Probe a legacy virtio-pci device that has no vendor-specific
+    /// capabilities. Uses the first non-I/O BAR as the legacy register
+    /// region.
+    pub unsafe fn probe_legacy(
+        bus: u8,
+        device: u8,
+        function: u8,
+    ) -> Option<PciTransport> {
+        let vendor = crate::hal::common::pci::read_config_word(
+            bus,
+            device,
+            function,
+            PCI_OFFSET_VENDOR_ID as u8,
+        );
+        if vendor != PCI_VENDOR_ID_REDHAT {
+            return None;
+        }
+        let device_id = crate::hal::common::pci::read_config_word(
+            bus,
+            device,
+            function,
+            PCI_OFFSET_DEVICE_ID as u8,
+        );
+        if !(PCI_DEVICE_ID_TRANSITIONAL_FIRST..=PCI_DEVICE_ID_TRANSITIONAL_LAST)
+            .contains(&device_id)
+        {
+            return None;
+        }
+        // Legacy devices use BAR0 as a flat register region.
+        let bar0 = crate::hal::common::pci::read_config_dword(
+            bus,
+            device,
+            function,
+            PCI_OFFSET_BAR as u8,
+        ) as u64;
+        // I/O BARs have bit 0 set; skip them.
+        if bar0 == 0 || (bar0 & 1) != 0 {
+            return None;
+        }
+        let bar_base = bar0 & !0xF;
+        if bar_base == 0 {
+            return None;
+        }
+        Some(PciTransport {
+            config_base: 0,
+            common_base: bar_base,
+            notify_base: bar_base + LEGACY_QUEUE_NOTIFY,
+            notify_multiplier: 0,
+            isr_base: bar_base + LEGACY_ISR,
+            device_base: bar_base + LEGACY_DEVICE_CONFIG,
+            device_id: device_id as u32,
+            legacy: true,
+        })
+    }
+
+    /// Returns true if this transport uses the legacy BAR0 layout.
+    pub fn is_legacy(&self) -> bool {
+        self.legacy
+    }
+
+    pub unsafe fn legacy_read_host_features(&self) -> u32 {
+        read_u32(self.common_base + LEGACY_HOST_FEATURES)
+    }
+
+    pub unsafe fn legacy_write_guest_features(&self, features: u32) {
+        write_u32(self.common_base + LEGACY_GUEST_FEATURES, features);
+    }
+
+    pub unsafe fn legacy_set_queue(&mut self, index: u16) {
+        write_u16(self.common_base + LEGACY_QUEUE_SEL, index);
+    }
+
+    pub unsafe fn legacy_queue_num(&self) -> u16 {
+        read_u16(self.common_base + LEGACY_QUEUE_NUM)
+    }
+
+    pub unsafe fn legacy_queue_pfn(&self) -> u32 {
+        read_u32(self.common_base + LEGACY_QUEUE_PFN)
+    }
+
+    pub unsafe fn legacy_set_queue_pfn(&self, pfn: u32) {
+        write_u32(self.common_base + LEGACY_QUEUE_PFN, pfn);
+    }
+
+    pub unsafe fn legacy_notify(&mut self, index: u16) {
+        write_u16(self.notify_base, index);
+    }
+
+    pub unsafe fn legacy_read_isr(&self) -> u8 {
+        read_u8(self.isr_base)
+    }
+
+    pub unsafe fn legacy_read_status(&self) -> u8 {
+        read_u8(self.common_base + LEGACY_STATUS)
+    }
+
+    pub unsafe fn legacy_write_status(&self, status: u8) {
+        write_u8(self.common_base + LEGACY_STATUS, status);
+    }
+
+    pub unsafe fn legacy_config_read_u8(&self, offset: u64) -> u8 {
+        read_u8(self.device_base + offset)
+    }
+
+    pub unsafe fn legacy_config_read_u16(&self, offset: u64) -> u16 {
+        read_u16(self.device_base + offset)
+    }
+
+    pub unsafe fn legacy_config_read_u32(&self, offset: u64) -> u32 {
+        read_u32(self.device_base + offset)
+    }
+
+    /// Reset a legacy device: clear status to 0 (virtio legacy spec).
+    pub unsafe fn legacy_reset(&self) {
+        write_u8(self.common_base + LEGACY_STATUS, 0);
     }
 }
 
