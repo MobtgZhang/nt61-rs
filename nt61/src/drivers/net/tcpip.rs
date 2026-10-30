@@ -961,7 +961,10 @@ pub unsafe extern "C" fn dispatch_device_control(_device: *mut DeviceObject, irp
             IOCTL_TDI_ACTION => handle_tdi_action(irp, stack),
             _ => {
                 (*irp).io_status.information = 0;
-                0xC0000002 // STATUS_NOT_IMPLEMENTED
+                // NT 6.1 convention: an unrecognized IOCTL is completed
+                // with STATUS_INVALID_DEVICE_REQUEST, not
+                // STATUS_NOT_IMPLEMENTED.
+                0xC0000010 // STATUS_INVALID_DEVICE_REQUEST
             }
         };
 
@@ -995,7 +998,9 @@ pub unsafe extern "C" fn dispatch_internal_device_control(
             IOCTL_TDI_INTERNAL_RECEIVE => handle_tdi_receive(irp, stack),
             IOCTL_TDI_INTERNAL_CONNECT => handle_tdi_connect(irp, stack),
             IOCTL_TDI_INTERNAL_DISCONNECT => handle_tdi_disconnect(irp, stack),
-            _ => 0xC0000002, // STATUS_NOT_IMPLEMENTED
+            // NT 6.1 convention: an unrecognized internal device
+            // control completes with STATUS_INVALID_DEVICE_REQUEST.
+            _ => 0xC0000010, // STATUS_INVALID_DEVICE_REQUEST
         };
 
         (*irp).io_status.status = status;
