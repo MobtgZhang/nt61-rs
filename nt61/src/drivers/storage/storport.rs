@@ -337,27 +337,16 @@ pub fn stats() -> (u32, u32) {
 }
 
 /// `init` — storport is a framework, so it does not enumerate
-/// hardware itself; the storage driver calls `stor_port_initialize`
-/// to bind its miniport. The `init` here is a no-op that
-/// signals readiness and installs a built-in test miniport so
-/// the smoke test exercises a real `HwStartIo` path.
+/// hardware itself; miniport drivers (storahci, stornvme, ...)
+/// call `stor_port_initialize` to bind themselves at device
+/// start. `init` only signals framework readiness: no adapter
+/// is registered until a real miniport binds one.
 pub fn init() {
-    // Install a stub miniport so downstream tests have a callable
-    // adapter without requiring a real miniport driver.
-    let stub_hw = HwInitData {
-        length: core::mem::size_of::<HwInitData>() as u32,
-        adapter_initialize: Some(stub_init),
-        adapter_start_io: Some(stub_start_io),
-        adapter_interrupt: Some(stub_int),
-        adapter_reset_bus: Some(stub_reset),
-        adapter_find_adapter: Some(stub_find),
-    };
-    // The adapter name used to be a heap String, which forced this
-    // bring-up call to be skipped during early boot. The name is a
-    // fixed-size buffer now, so register the stub miniport for real.
-    let r = stor_port_initialize("storport-stub", stub_hw);
-    // Pin the return value so `init` has an observable effect.
-    STORPORT_INIT_RESULT.store(r as u32, Ordering::Relaxed);
+    // No test adapter is registered: the adapter slot stays free
+    // until a real miniport driver binds through
+    // `stor_port_initialize`. The readiness flag is still published
+    // so `init_status()` observes the framework state.
+    STORPORT_INIT_RESULT.store(STORPORT_SUCCESS, Ordering::Relaxed);
 }
 
 /// Last return code from `init()` (used by `init_status()`).
@@ -368,12 +357,12 @@ pub fn init_status() -> u32 {
     STORPORT_INIT_RESULT.load(Ordering::Relaxed)
 }
 
-/// Smoke test: simplified to just verify the module loads and the
-/// test miniport installed by `init()` is present.
+/// Smoke test: verify the framework bookkeeping is consistent.
+/// With no miniport bound (the normal boot state until a real
+/// miniport registers) the adapter list is simply empty.
 pub fn smoke_test() -> bool {
     let count = adapter_count();
     if count == 0 {
-        // No adapter installed by init() yet; stub the path.
         return true;
     }
     let (submitted, completed) = stats();
@@ -386,32 +375,3 @@ pub fn smoke_test() -> bool {
     true
 }
 
-unsafe extern "C" fn stub_init(de: *mut ()) -> u32 {
-    // Store the device extension pointer so the miniport can later
-    // identify its private state. We don't yet allocate one but
-    // we plumb the value through so downstream call-sites see it.
-    STUB_DEVICE_EXT = de as usize;
-    0
-}
-unsafe extern "C" fn stub_start_io(_de: *mut (), srb: *mut Srb) -> u32 {
-    // Mark the request complete synchronously.
-    stor_port_notification(2, core::ptr::null_mut(), srb);
-    0
-}
-unsafe extern "C" fn stub_int(_de: *mut ()) {}
-unsafe extern "C" fn stub_reset(_de: *mut (), _p: u8) -> u32 {
-    0
-}
-unsafe extern "C" fn stub_find(_de: *mut (), _c: *mut PortConfig, _o: *mut u32) -> u32 {
-    0
-}
-
-/// Bookkeeping for the stub miniport's most recent device
-/// extension pointer. Used only inside this module.
-static mut STUB_DEVICE_EXT: usize = 0;
-
-/// Return the device extension pointer last observed by the stub
-/// miniport. Helpful for tests that want to verify wiring.
-pub fn stub_device_ext() -> usize {
-    unsafe { STUB_DEVICE_EXT }
-}
