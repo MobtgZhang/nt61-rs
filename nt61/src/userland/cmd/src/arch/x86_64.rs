@@ -1,4 +1,5 @@
 pub const SYS_PUTCHAR: u32 = 0x0202;
+pub const SYS_CLEARSCREEN: u32 = 0x0205;
 pub const SYS_RETURN_TO_FIRMWARE: u32 = 0x0214;
 pub const SYS_READ_LINE: u32 = 0x0211;
 pub const SYS_CMD_EXECUTE: u32 = 0x0215;
@@ -38,6 +39,13 @@ pub fn syscall5(
 #[inline(always)]
 pub fn put_char(byte: u8) {
     syscall5(SYS_PUTCHAR, byte as usize, 0, 0, 0, 0);
+}
+
+/// Clear the text console (the console ABI's SYS_CLEARSCREEN; the
+/// kernel routes it through the HAL text console and bootvid).
+#[inline(always)]
+pub fn clear_screen() {
+    syscall5(SYS_CLEARSCREEN, 0, 0, 0, 0, 0);
 }
 
 #[inline(always)]
