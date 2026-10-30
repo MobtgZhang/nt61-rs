@@ -14,9 +14,11 @@
 //!   keeps a 64-line `LOG_RING_LINES` ring that back-scrolling
 //!   commands can dump to the user via `LOGS`.
 //!
-//! Uses the real FAT32 filesystem and the architecture's polled
-//! input backend (PS/2 8042 on x86_64, UART FIFO on the others) so
-//! the bring-up never depends on a working interrupt controller.
+//! Uses the real FAT32 filesystem and the unified `hal::keyboard_input`
+//! backend (PS/2 8042 on x86_64, UART FIFO on the others). Console
+//! readers park on the keyboard input event and are woken by the
+//! IRQ producers; the polled-IO discipline only survives as the
+//! fallback for the masked-IRQ Safe Mode boot path.
 
 use crate::fs;
 use crate::fs::fat32;
@@ -206,9 +208,11 @@ impl Cwd {
 ///     the fallback when `cmd.exe` cannot be launched.
 ///
 /// Both modes share the same line-editing, history, FAT32
-/// command lookup, and tab-completion infrastructure. The
-/// shell runs with interrupts masked and uses POLLED input
-/// from the unified `hal::keyboard_input` abstraction.
+/// command lookup, and tab-completion infrastructure. Input
+/// follows the console wait/notification model of NT 6.1: the
+/// reader parks on the keyboard input event and the IRQ
+/// producers signal it, with a bounded timeout re-polling the
+/// polled-only serial fallback.
 pub fn run_shell(mode: ShellMode) -> ! {
     let prompt_bytes = mode.prompt();
     let mut cwd = Cwd::new();
@@ -285,6 +289,32 @@ fn serial_print_u32(mut n: u32) {
     while i > 0 {
         i -= 1;
         dual_put_byte(tmp[i]);
+    }
+}
+
+/// Park the shell thread until console input arrives.
+///
+/// NT 6.1 console readers wait on the console input queue event and
+/// are released when an input record is queued. The same model
+/// applies here: the keyboard / UART IRQ producers signal the
+/// hal::keyboard_input event, so the wait returns as soon as a
+/// keystroke is decoded. The bounded timeout re-polls the serial
+/// fallback, which has no RX interrupt on every architecture. In
+/// masked-IRQ Safe Mode no wake source exists, so the loop keeps
+/// the polled-IO discipline and relaxes the CPU between polls.
+const CMD_INPUT_WAIT_MS: u32 = 100;
+
+fn wait_console_input() {
+    if crate::arch::interrupts_enabled() {
+        crate::hal::keyboard_input::clear_input_event();
+        // Close the reset/produce race: a keystroke between the
+        // drained check in the caller and the reset re-signals the
+        // event, so this re-check keeps the wait lossless.
+        if crate::hal::keyboard_input::try_read_byte().is_none() {
+            crate::hal::keyboard_input::wait_input_event(CMD_INPUT_WAIT_MS);
+        }
+    } else {
+        crate::arch::cpu_relax();
     }
 }
 
@@ -492,10 +522,10 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
                 }
             }
         } else {
-            // No data available: park on the next interrupt (serial or
-            // keyboard IRQ, timer) instead of busy-spinning the CPU in
-            // the kernel.
-            crate::arch::wait_for_interrupt();
+            // No data available: park on the console-input event
+            // (or keep the polled-IO loop alive in masked-IRQ
+            // Safe Mode) instead of busy-spinning the CPU.
+            wait_console_input();
         }
     }
 
@@ -2254,6 +2284,7 @@ fn confirm_delete(pathname: &str) -> bool {
             serial_print(b"\r\n");
             return byte == b'Y';
         }
+        wait_console_input();
     }
 }
 
