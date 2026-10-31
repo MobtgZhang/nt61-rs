@@ -308,6 +308,12 @@ impl NotificationEvent {
     }
 }
 
+impl Default for NotificationEvent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Synchronization event - acts like a "gate", only one waiter is
 /// released per set, and it stays signalled until manually cleared.
 pub struct SynchronizationEvent {
@@ -325,6 +331,12 @@ impl SynchronizationEvent {
     }
     pub fn clear(&mut self) {
         self.header.signal_state = 0;
+    }
+}
+
+impl Default for SynchronizationEvent {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -399,6 +411,12 @@ impl Mutex {
             self.header.signal_state = 0; // un-signal
         }
         true
+    }
+}
+
+impl Default for Mutex {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

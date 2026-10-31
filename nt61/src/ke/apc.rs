@@ -8,9 +8,9 @@
 //!   * **User APCs** — delivered in the thread's user context; only
 //!     fire when the thread is in an alertable wait.
 //
-//! Each thread has two APC queues: one for kernel-mode APCs and
-//! one for user-mode APCs. The kernel queues kernel-mode APCs
-//! directly; the user-mode queue is exposed via `nt_queue_apc_thread`.
+//!     Each thread has two APC queues: one for kernel-mode APCs and
+//!     one for user-mode APCs. The kernel queues kernel-mode APCs
+//!     directly; the user-mode queue is exposed via `nt_queue_apc_thread`.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -94,6 +94,12 @@ impl Apc {
     }
 }
 
+impl Default for Apc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApcKind {
     Kernel = 0,
@@ -116,6 +122,12 @@ impl ThreadApcState {
             kernel_apc_pending: false,
             user_apc_pending: false,
         }
+    }
+}
+
+impl Default for ThreadApcState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -284,7 +296,7 @@ pub unsafe fn ki_deliver_apc(current_thread: *mut Ethread, delivery_mode: ApcMod
                 let apc_ptr =
                     unsafe { (entry as *mut u8).sub(core::mem::offset_of!(Apc, list_entry)) }
                         as *mut Apc;
-                let routine_addr = (*apc_ptr).routine.map(|r| r as u64).unwrap_or(0);
+                let routine_addr = (*apc_ptr).routine.map(|r| r as usize).unwrap_or(0);
                 let arg1 = (*apc_ptr).system_argument1;
                 let arg2 = (*apc_ptr).system_argument2;
                 let ctx = (*apc_ptr).normal_context;
@@ -337,8 +349,11 @@ pub unsafe fn ki_deliver_apc(current_thread: *mut Ethread, delivery_mode: ApcMod
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if APCs should be delivered before returning to user mode.
-pub fn should_deliver_user_apc(thread: *mut Ethread) -> bool {
+pub unsafe fn should_deliver_user_apc(thread: *mut Ethread) -> bool {
     if thread.is_null() {
         return false;
     }
@@ -348,8 +363,11 @@ pub fn should_deliver_user_apc(thread: *mut Ethread) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if a thread has kernel APCs pending.
-pub fn has_kernel_apc_pending(thread: *mut Ethread) -> bool {
+pub unsafe fn has_kernel_apc_pending(thread: *mut Ethread) -> bool {
     if thread.is_null() {
         return false;
     }
@@ -412,6 +430,9 @@ pub fn dequeue_count() -> u32 {
     DEQUEUE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe extern "system" fn smoke_apc_routine(ctx: *mut u8) {
     // No-op: we only need an `ApcRoutine` for the smoke test.
     let _ = ctx;
@@ -438,14 +459,19 @@ pub fn allocate_apc() -> *mut Apc {
 
 /// Free an APC object.
 pub fn free_apc(apc: *mut Apc) {
-    if !apc.is_null() {
-        let _ = crate::mm::pool::free(apc as *mut u8);
+    unsafe {
+        if !apc.is_null() {
+            let _ = crate::mm::pool::free(apc as *mut u8);
+        }
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Insert an APC into a thread's queue.
 /// Returns true on success.
-pub fn queue_thread_apc(
+pub unsafe fn queue_thread_apc(
     thread: *mut Ethread,
     kind: ApcKind,
     routine: ApcRoutine,
@@ -488,8 +514,11 @@ pub fn queue_thread_apc(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if a thread has pending APCs of the given kind.
-pub fn has_pending_apc(thread: *mut Ethread, kind: ApcKind) -> bool {
+pub unsafe fn has_pending_apc(thread: *mut Ethread, kind: ApcKind) -> bool {
     if thread.is_null() {
         return false;
     }
@@ -504,8 +533,11 @@ pub fn has_pending_apc(thread: *mut Ethread, kind: ApcKind) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Dequeue and execute the next APC from a thread's queue.
-pub fn deliver_thread_apc(thread: *mut Ethread, kind: ApcKind) -> bool {
+pub unsafe fn deliver_thread_apc(thread: *mut Ethread, kind: ApcKind) -> bool {
     if thread.is_null() {
         return false;
     }
@@ -535,6 +567,9 @@ pub fn deliver_thread_apc(thread: *mut Ethread, kind: ApcKind) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_queue_apc_thread - user-mode API to queue an APC to a thread.
 pub unsafe extern "C" fn nt_queue_apc_thread(
     thread_handle: crate::libs::ntdll::types::HANDLE,
@@ -593,6 +628,9 @@ pub unsafe extern "C" fn nt_queue_apc_thread(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Kernel routine for user APC delivery.
 /// This is called in kernel context before returning to user mode.
 /// Note: ke_initialize_apc expects a kernel routine with signature `fn(*mut u8)`

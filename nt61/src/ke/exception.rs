@@ -7,6 +7,7 @@
 //!   - Unwinding support
 //!   - RUNTIME_FUNCTION table parsing
 //!   - Hardware exception handling (breakpoints, single step, etc.)
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -218,9 +219,7 @@ impl ExceptionRecord {
         let mut rec = Self::new(code, address);
         let count = info.len().min(15);
         rec.number_parameters = count as u32;
-        for i in 0..count {
-            rec.exception_information[i] = info[i];
-        }
+        rec.exception_information[..count].copy_from_slice(&info[..count]);
         rec
     }
 }
@@ -238,8 +237,11 @@ pub fn init() {
     // Exception handling is ready
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Set up the initial exception handlers for a thread
-pub fn setup_handlers(ethread: *mut crate::ps::thread::Ethread) {
+pub unsafe fn setup_handlers(ethread: *mut crate::ps::thread::Ethread) {
     if ethread.is_null() {
         return;
     }
@@ -319,7 +321,7 @@ pub(crate) fn is_user_mode_exception(exception_record: &ExceptionRecord) -> bool
     let addr = exception_record.exception_address;
     // User mode: not in kernel address space
     // Kernel addresses on x64 Windows typically start at 0xFFFF800000000000
-    addr < 0xFFFF800000000000 && addr >= 0x1000
+    (0x1000..0xFFFF800000000000).contains(&addr)
 }
 
 /// Terminate the current process after an unhandled user-mode exception.
@@ -327,33 +329,33 @@ pub(crate) fn is_user_mode_exception(exception_record: &ExceptionRecord) -> bool
 /// This function deliberately never returns. If another ready thread can be
 /// dispatched, the scheduler switches to it; otherwise the faulting CPU parks.
 fn terminate_current_user_process(exception_code: u32) -> ! {
-    let current_thread = crate::arch::common::percpu::get_current_thread();
-    let current_process = if current_thread.is_null() {
-        crate::arch::common::percpu::get_current_process()
-    } else {
-        unsafe { (*current_thread).threads_process }
-    };
+    unsafe {
+        let current_thread = crate::arch::common::percpu::get_current_thread();
+        let current_process = if current_thread.is_null() {
+            crate::arch::common::percpu::get_current_process()
+        } else {
+            (*current_thread).threads_process
+        };
 
-    if !current_process.is_null() {
-        unsafe {
+        if !current_process.is_null() {
             (*current_process).exit_status = exception_code as i32;
         }
-    }
 
-    if !current_thread.is_null() {
-        crate::ps::thread::terminate(current_thread, exception_code);
-    }
+        if !current_thread.is_null() {
+            crate::ps::thread::terminate(current_thread, exception_code);
+        }
 
-    if !current_process.is_null() {
-        let pid = unsafe { (*current_process).unique_process_id };
-        let _ = crate::ps::process_mgmt::terminate_process_by_pid(pid, false);
-    }
+        if !current_process.is_null() {
+            let pid = (*current_process).unique_process_id;
+            let _ = crate::ps::process_mgmt::terminate_process_by_pid(pid, false);
+        }
 
-    crate::arch::common::percpu::set_current_process(core::ptr::null_mut());
-    crate::ke::scheduler::schedule();
+        crate::arch::common::percpu::set_current_process(core::ptr::null_mut());
+        crate::ke::scheduler::schedule();
 
-    loop {
-        crate::arch::halt();
+        loop {
+            crate::arch::halt();
+        }
     }
 }
 
@@ -367,7 +369,7 @@ fn try_current_thread_handler(
     // handler with the standard x64 calling convention.
     // SAFETY: exception_record is read-only here; walk_teb_exception_list
     // requires a mutable reference because handlers may update the record.
-    let mut record = exception_record.clone();
+    let mut record = *exception_record;
     walk_teb_exception_list(&mut record, context_frame)
 }
 
@@ -472,7 +474,7 @@ fn call_exception_handler(
 
     let result = unsafe {
         let handler_fn = core::mem::transmute::<u64, HandlerFn>(handler_addr);
-        let mut record = exception_record.clone();
+        let mut record = *exception_record;
         handler_fn(
             &mut record as *mut ExceptionRecord,
             0,
@@ -499,7 +501,7 @@ fn call_exception_handler(
 /// `ntdll::rtl_unwind_ex`'s documented limitation). The returned context is
 /// the restored state at the target frame, ready for the caller to resume.
 ///
-/// Returns `Err(())` when the walk cannot reach `target_frame`: unknown
+/// Returns `Err(STATUS_UNSUCCESSFUL)` when the walk cannot reach `target_frame`: unknown
 /// instruction pointer, missing unwind metadata, unreadable return address,
 /// or the frame-count guard tripping. Callers must not treat a fabricated
 /// context as an unwind result.
@@ -507,7 +509,7 @@ pub fn unwind(
     start_context: &ContextFrame,
     target_frame: u64,
     _exception_record: Option<&ExceptionRecord>,
-) -> Result<ContextFrame, ()> {
+) -> Result<ContextFrame, NTSTATUS> {
     let mut context = start_context.clone();
     const MAX_UNWIND_FRAMES: usize = 100;
 
@@ -517,11 +519,11 @@ pub fn unwind(
         // effects are not reversed here.
         let function_entry = match find_runtime_function_for_ip(context.rip) {
             Some(entry) => entry,
-            None => return Err(()),
+            None => return Err(STATUS_UNSUCCESSFUL),
         };
         let image_base = match get_image_base_for_ip(context.rip) {
             Some(base) => base,
-            None => return Err(()),
+            None => return Err(STATUS_UNSUCCESSFUL),
         };
 
         let mut handler_data: *const u8 = core::ptr::null();
@@ -535,7 +537,7 @@ pub fn unwind(
             &mut establisher_frame,
         );
         if return_pc == 0 {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         context.rip = return_pc;
 
@@ -544,7 +546,7 @@ pub fn unwind(
         }
     }
 
-    Err(())
+    Err(STATUS_UNSUCCESSFUL)
 }
 
 /// Continue searching for an exception handler
@@ -637,6 +639,12 @@ impl ContextFrame {
     }
 }
 
+impl Default for ContextFrame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Raise a software exception
 pub fn raise_exception(_code: u32, _address: u64) {
     // _code and _address are intentionally unused - reserved for future implementation
@@ -709,9 +717,9 @@ pub fn register_handler(handler: ExceptionHandler) {
 /// Unregister an exception handler
 pub fn unregister_handler(handler: ExceptionHandler) {
     let mut handlers = KERNEL_EXCEPTION_HANDLERS.lock();
-    handlers.retain(|r| {
-        !matches!(r.handler, Some(existing) if core::ptr::fn_addr_eq(existing, handler))
-    });
+    handlers.retain(
+        |r| !matches!(r.handler, Some(existing) if core::ptr::fn_addr_eq(existing, handler)),
+    );
     // // kprintln!("[EXCEPTION] Unregistered exception handler");
 }
 
@@ -950,10 +958,10 @@ fn get_handler_data(unwind_info_ptr: *const UnwindInfo) -> *const u8 {
         // Handler data comes after the UNWIND_CODE array
         // UNWIND_CODE is 2 bytes each, array is count_of_codes long
         let codes_size = (unwind_info.count_of_codes as usize) * 2;
-        let data_ptr = (unwind_info_ptr as *const u8)
+
+        (unwind_info_ptr as *const u8)
             .add(core::mem::size_of::<UnwindInfo>())
-            .add(codes_size);
-        data_ptr
+            .add(codes_size)
     }
 }
 
@@ -1571,7 +1579,15 @@ pub fn walk_exception_list(
         ) -> ExceptionDisposition;
 
         let result = unsafe {
-            let handler_fn = core::mem::transmute::<_, HandlerFn>(handler);
+            let handler_fn = core::mem::transmute::<
+                u64,
+                extern "C" fn(
+                    *mut crate::ke::exception::ExceptionRecord,
+                    u64,
+                    *mut crate::ke::exception::ContextFrame,
+                    u64,
+                ) -> crate::ke::exception::ExceptionDisposition,
+            >(handler);
             handler_fn(record, current, ctx, 0)
         };
 

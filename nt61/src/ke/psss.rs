@@ -12,11 +12,11 @@
 //!   - **MiModifiedPageWriter** — pops modified pages and
 //!     writes them to the page file.
 //
-//! In the bootstrap these are not actual kernel threads
-//! (creating a thread is expensive and the kernel doesn't
-//! have a full scheduler yet).  Instead we expose a single
-//! `psss_tick()` function that runs all three on the BSP
-//! whenever the timer interrupt fires.
+//!     In the bootstrap these are not actual kernel threads
+//!     (creating a thread is expensive and the kernel doesn't
+//!     have a full scheduler yet).  Instead we expose a single
+//!     `psss_tick()` function that runs all three on the BSP
+//!     whenever the timer interrupt fires.
 
 use crate::ke::dispatch;
 use crate::mm::{working_set, writer, zeropage};

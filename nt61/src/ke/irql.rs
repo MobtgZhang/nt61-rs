@@ -204,7 +204,7 @@ pub fn tpr_to_irql(tpr: u8) -> Irql {
 
 /// CR8 task priority for an IRQL (AMD64: the 4-bit priority nibble).
 pub fn irql_to_cr8_priority(irql: Irql) -> u8 {
-    ((irql_to_tpr(irql) >> 4) & 0xF) as u8
+    (irql_to_tpr(irql) >> 4) & 0xF
 }
 
 /// Push the software IRQL into the interrupt controller.

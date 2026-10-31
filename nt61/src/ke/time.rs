@@ -11,8 +11,8 @@
 //!   * **Interrupt time** — 100-ns intervals since boot, used by
 //!     ISR-time code that needs a fast monotonic clock.
 //
-//! On x86_64 we prefer the HPET (`hal::x86_64::hpet::ticks()`)
-//! and fall back to the TSC if the HPET is not present.
+//!     On x86_64 we prefer the HPET (`hal::x86_64::hpet::ticks()`)
+//!     and fall back to the TSC if the HPET is not present.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 

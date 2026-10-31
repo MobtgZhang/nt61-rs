@@ -28,7 +28,6 @@ pub fn test_cpu_c_states() -> bool {
 }
 
 /// Test CPU P-state transitions
-
 pub fn test_cpu_p_states() -> bool {
     kprintln!("[POWER-TEST] Testing CPU P-state transitions...");
 

@@ -96,7 +96,6 @@ pub struct ThreadQuantum {
 // =============================================================================
 // Extended PRCB structures for Windows 7 x64 compatibility (P2-3)
 // =============================================================================
-
 /// Processor information structure
 #[repr(C)]
 pub struct ProcessorInfo {
@@ -133,6 +132,12 @@ impl ProcessorInfo {
             processor_number: 0,
             reserved: 0,
         }
+    }
+}
+
+impl Default for ProcessorInfo {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -197,6 +202,12 @@ impl DpcData {
     }
 }
 
+impl Default for DpcData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Per-priority ready queue head - 16 bytes to match Windows 7 x64 offsets.
 /// Windows 7 x64 KPRCB ready queues are at offset 0x0D0, each is 16 bytes.
 /// Uses the standard doubly-linked list pattern: head+tail, no count field.
@@ -224,7 +235,10 @@ impl ListHead {
         self.head.is_null() && self.blink.is_null()
     }
 
-    pub fn add_tail(&mut self, entry: *mut ListEntry) {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+    pub unsafe fn add_tail(&mut self, entry: *mut ListEntry) {
         unsafe {
             (*entry).blink = self.blink;
             (*entry).flink = core::ptr::null_mut();
@@ -253,6 +267,12 @@ impl ListHead {
             }
             Some(entry)
         }
+    }
+}
+
+impl Default for ListHead {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -285,6 +305,12 @@ impl ListEntry {
             flink: core::ptr::null_mut(),
             blink: core::ptr::null_mut(),
         }
+    }
+}
+
+impl Default for ListEntry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -810,6 +836,12 @@ impl Scheduler {
     }
 }
 
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Scheduler {
     /// Read-only access to a registered PRCB while holding the scheduler lock.
     fn prcb(&self, cpu: usize) -> Option<&Prcb> {
@@ -1006,10 +1038,13 @@ pub fn init() {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Install a thread as the BSP's current thread. The BSP PRCB is
 /// allocated on first call; subsequent calls replace the current
 /// thread. Returns true if the BSP PRCB was newly created.
-pub fn setup_bsp(thread: *mut Ethread) -> bool {
+pub unsafe fn setup_bsp(thread: *mut Ethread) -> bool {
     // // kprintln!("  [SCHED] setup_bsp: enter thread=0x{:x}", thread as u64);
     let mut sched = SCHEDULER.lock();
     let newly_created = sched.prcb(0).is_none();
@@ -1137,6 +1172,9 @@ pub fn init_smp(cpu_count: u32) {
     // // kprintln!("      SMP initialized with multiple CPUs");
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Add thread to ready queue.
 ///
 /// For SMP with per-CPU queues, the thread is added to:
@@ -1145,7 +1183,7 @@ pub fn init_smp(cpu_count: u32) {
 ///
 /// This implements true per-CPU scheduling where threads run on their
 /// preferred CPU for cache locality, but can be migrated if needed.
-pub fn add_ready(thread: *mut Ethread, priority: u8) {
+pub unsafe fn add_ready(thread: *mut Ethread, priority: u8) {
     if thread.is_null() {
         return;
     }
@@ -1227,6 +1265,9 @@ pub fn add_ready(thread: *mut Ethread, priority: u8) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Remove thread from ready queue.
 ///
 /// This is called when a thread is blocked, terminated, or
@@ -1238,7 +1279,7 @@ pub fn add_ready(thread: *mut Ethread, priority: u8) {
 /// used, because the thread may have been enqueued with a boosted
 /// priority — deriving the queue from `base_priority` looked in the
 /// wrong queue and silently left the thread runnable.
-pub fn remove_ready(thread: *mut Ethread) -> bool {
+pub unsafe fn remove_ready(thread: *mut Ethread) -> bool {
     if thread.is_null() {
         return false;
     }
@@ -1257,7 +1298,7 @@ pub fn remove_ready(thread: *mut Ethread) -> bool {
     let mut scheduler = SCHEDULER.lock();
 
     // Same lock protocol as `add_ready` and `ki_balance_processor`.
-    let _queue_guard = match lock_ready_queue(target_cpu, priority as usize) {
+    let _queue_guard = match lock_ready_queue(target_cpu, priority) {
         Some(g) => g,
         None => return false,
     };
@@ -1265,7 +1306,7 @@ pub fn remove_ready(thread: *mut Ethread) -> bool {
     // Search for the thread in the target CPU's ready queue
     if target_cpu < MAX_CPUS {
         if let Some(ref mut prcb) = scheduler.prcb_mut(target_cpu) {
-            let queue = &mut prcb.ready_queues[priority as usize];
+            let queue = &mut prcb.ready_queues[priority];
             let mut entry_ptr = queue.head;
 
             while !entry_ptr.is_null() {
@@ -1473,11 +1514,9 @@ pub fn schedule() -> bool {
                 crate::hal::serial::write_string_always("[SCHED-SWITCH] n=");
                 crate::hal::serial::write_hex_u64_always(diag_index as u64);
                 crate::hal::serial::write_string_always(" cur=");
-                crate::hal::serial::write_hex_u64_always(
-                    current.map_or(0, |thread| thread as *mut Ethread as u64),
-                );
+                crate::hal::serial::write_hex_u64_always(current.map_or(0, |thread| thread as u64));
                 crate::hal::serial::write_string_always(" next=");
-                crate::hal::serial::write_hex_u64_always(next_thread as *mut Ethread as u64);
+                crate::hal::serial::write_hex_u64_always(next_thread as u64);
                 crate::hal::serial::write_string_always(" nrsp=");
                 crate::hal::serial::write_hex_u64_always(unsafe {
                     (*next_thread).kthread.context.kernel_rsp
@@ -1557,56 +1596,58 @@ pub fn schedule() -> bool {
 /// triggers a reschedule.
 /// Also implements priority decay mechanism (P2 Enhancement).
 pub fn tick() {
-    // The clock ISR runs at CLOCK_LEVEL (28). A context switch is only
-    // legal at DISPATCH_LEVEL, so the ISR records a reschedule request
-    // and the dispatcher performs the swap once IRQL has been lowered
-    // (`dispatch_pending_reschedule`, called from the ISR exit path).
-    let previous_irql = irql::raise_irql(Irql::ClockLevel);
+    unsafe {
+        // The clock ISR runs at CLOCK_LEVEL (28). A context switch is only
+        // legal at DISPATCH_LEVEL, so the ISR records a reschedule request
+        // and the dispatcher performs the swap once IRQL has been lowered
+        // (`dispatch_pending_reschedule`, called from the ISR exit path).
+        let previous_irql = irql::raise_irql(Irql::ClockLevel);
 
-    // Advance the authoritative clock once per tick.
-    crate::ke::time::advance_tick();
+        // Advance the authoritative clock once per tick.
+        crate::ke::time::advance_tick();
 
-    let mut scheduler = SCHEDULER.lock();
-    // Use get_current_cpu() to get the real CPU ID from GS base
-    let cpu = get_current_cpu();
+        let mut scheduler = SCHEDULER.lock();
+        // Use get_current_cpu() to get the real CPU ID from GS base
+        let cpu = get_current_cpu();
 
-    // Get per-CPU PRCB
-    if let Some(ref mut prcb) = scheduler.prcb_mut(cpu) {
-        let remaining = prcb.quantum_remaining;
+        // Get per-CPU PRCB
+        if let Some(ref mut prcb) = scheduler.prcb_mut(cpu) {
+            let remaining = prcb.quantum_remaining;
 
-        if remaining > 0 {
-            prcb.quantum_remaining = remaining - 1;
+            if remaining > 0 {
+                prcb.quantum_remaining = remaining - 1;
 
-            // When quantum reaches zero, trigger reschedule
-            if prcb.quantum_remaining == 0 {
-                // // kprintln!("[SCHED] tick: quantum expired");
+                // When quantum reaches zero, trigger reschedule
+                if prcb.quantum_remaining == 0 {
+                    // // kprintln!("[SCHED] tick: quantum expired");
 
-                // Unboost current thread's priority if boost has expired
-                // This starts the decay process instead of instant drop
-                if !prcb.current_thread.is_null() {
-                    ki_unboost_thread(prcb.current_thread);
-                }
+                    // Unboost current thread's priority if boost has expired
+                    // This starts the decay process instead of instant drop
+                    if !prcb.current_thread.is_null() {
+                        ki_unboost_thread(prcb.current_thread);
+                    }
 
-                // Reset quantum for next thread
-                prcb.quantum_remaining = QUANTUM_DEFAULT;
-                prcb.quantum_initial = QUANTUM_DEFAULT;
-                // Do not swap context from the ISR: request a reschedule
-                // and let the dispatcher run it at DISPATCH_LEVEL.
-                drop(scheduler);
-                request_reschedule(cpu);
-            } else {
-                // Check for priority decay even when quantum hasn't expired.
-                // This allows gradual decay during the thread's quantum.
-                if !prcb.current_thread.is_null() {
-                    check_and_decay_priority(prcb.current_thread);
+                    // Reset quantum for next thread
+                    prcb.quantum_remaining = QUANTUM_DEFAULT;
+                    prcb.quantum_initial = QUANTUM_DEFAULT;
+                    // Do not swap context from the ISR: request a reschedule
+                    // and let the dispatcher run it at DISPATCH_LEVEL.
+                    drop(scheduler);
+                    request_reschedule(cpu);
+                } else {
+                    // Check for priority decay even when quantum hasn't expired.
+                    // This allows gradual decay during the thread's quantum.
+                    if !prcb.current_thread.is_null() {
+                        check_and_decay_priority(prcb.current_thread);
+                    }
                 }
             }
         }
+
+        irql::lower_irql(previous_irql);
+
+        poll_services();
     }
-
-    irql::lower_irql(previous_irql);
-
-    poll_services();
 }
 
 /// Drain network RX and advance long-lived kernel services.
@@ -1670,7 +1711,7 @@ fn get_ticks() -> u64 {
 
 /// Convert milliseconds to timer ticks
 fn ms_to_ticks(ms: u32) -> u64 {
-    ((ms as u64) + (TICK_MS as u64) - 1) / (TICK_MS as u64)
+    (ms as u64).div_ceil(TICK_MS as u64)
 }
 
 /// Idle loop (called when no threads are ready).
@@ -1725,8 +1766,11 @@ pub fn create_idle_thread() {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Set thread priority.
-pub fn set_priority(thread: *mut Ethread, priority: i8) {
+pub unsafe fn set_priority(thread: *mut Ethread, priority: i8) {
     unsafe {
         (*thread).kthread.base_priority = priority;
         (*thread).kthread.priority = priority;
@@ -1906,13 +1950,16 @@ pub fn get_current_cpu_id() -> u32 {
     crate::arch::common::percpu::get_current_cpu_id()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Set thread affinity - which CPUs the thread can run on.
 /// Returns true if successful, false if invalid parameters.
 ///
 /// FIX 2.8: Added bounds checking for trailing_zeros() overflow.
 /// trailing_zeros() returns 64 for affinity_mask=0, which would
 /// truncate to 0 when cast to u8, causing incorrect home_cpu assignment.
-pub fn set_thread_affinity(thread: *mut Ethread, affinity_mask: u64) -> bool {
+pub unsafe fn set_thread_affinity(thread: *mut Ethread, affinity_mask: u64) -> bool {
     if thread.is_null() || affinity_mask == 0 {
         return false;
     }
@@ -1936,8 +1983,11 @@ pub fn set_thread_affinity(thread: *mut Ethread, affinity_mask: u64) -> bool {
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get thread affinity mask
-pub fn get_thread_affinity(thread: *mut Ethread) -> u64 {
+pub unsafe fn get_thread_affinity(thread: *mut Ethread) -> u64 {
     if thread.is_null() {
         return 0;
     }
@@ -2009,99 +2059,99 @@ fn find_migratable_thread(prcb: &Prcb) -> Option<(*mut Ethread, u8)> {
 /// This implements the BALANCE_APC mechanism for cross-CPU load balancing.
 /// When called on a target CPU, it triggers that CPU to perform load balancing.
 pub fn ki_balance_processor(target_cpu: u32) {
-    if !SMP_INITIALIZED.load(Ordering::SeqCst) {
-        return;
-    }
+    unsafe {
+        if !SMP_INITIALIZED.load(Ordering::SeqCst) {
+            return;
+        }
 
-    let mut scheduler = SCHEDULER.lock();
-    let num_cpus = scheduler.num_cpus as u32;
+        let mut scheduler = SCHEDULER.lock();
+        let num_cpus = scheduler.num_cpus as u32;
 
-    if target_cpu >= num_cpus || num_cpus <= 1 {
-        return;
-    }
+        if target_cpu >= num_cpus || num_cpus <= 1 {
+            return;
+        }
 
-    // // kprintln!("[SCHED] KiBalanceProcessor: balancing for CPU {}", target_cpu);
+        // // kprintln!("[SCHED] KiBalanceProcessor: balancing for CPU {}", target_cpu);
 
-    // Perform load balancing for the target CPU
-    let _cpu_idx = target_cpu as usize;
+        // Perform load balancing for the target CPU
+        let _cpu_idx = target_cpu as usize;
 
-    let mut max_load = 0usize;
-    let mut min_load = usize::MAX;
-    let mut max_cpu = 0usize;
-    let mut min_cpu = 0usize;
+        let mut max_load = 0usize;
+        let mut min_load = usize::MAX;
+        let mut max_cpu = 0usize;
+        let mut min_cpu = 0usize;
 
-    // Calculate loads for all CPUs
-    let mut total_load = 0usize;
-    for i in 0..num_cpus as usize {
-        if let Some(prcb) = scheduler.prcb(i) {
-            let load = calculate_cpu_load(prcb);
-            total_load += load;
-            if load > max_load {
-                max_load = load;
-                max_cpu = i;
-            }
-            if load < min_load {
-                min_load = load;
-                min_cpu = i;
+        // Calculate loads for all CPUs
+        let mut total_load = 0usize;
+        for i in 0..num_cpus as usize {
+            if let Some(prcb) = scheduler.prcb(i) {
+                let load = calculate_cpu_load(prcb);
+                total_load += load;
+                if load > max_load {
+                    max_load = load;
+                    max_cpu = i;
+                }
+                if load < min_load {
+                    min_load = load;
+                    min_cpu = i;
+                }
             }
         }
-    }
 
-    let avg_load = if num_cpus > 0 {
-        total_load / num_cpus as usize
-    } else {
-        0
-    };
-    let threshold = calculate_balance_threshold(avg_load);
+        let avg_load = if num_cpus > 0 {
+            total_load / num_cpus as usize
+        } else {
+            0
+        };
+        let threshold = calculate_balance_threshold(avg_load);
 
-    // Only migrate if load difference exceeds threshold
-    if max_load > min_load + threshold && max_load > 0 {
-        // // kprintln!(
-        // //             "[SCHED] KiBalanceProcessor: CPU {} (load={}) -> CPU {} (load={}), threshold={}",
-        // //             max_cpu, max_load, min_cpu, min_load, threshold
-        // //         );
+        // Only migrate if load difference exceeds threshold
+        if max_load > min_load + threshold && max_load > 0 {
+            // // kprintln!(
+            // //             "[SCHED] KiBalanceProcessor: CPU {} (load={}) -> CPU {} (load={}), threshold={}",
+            // //             max_cpu, max_load, min_cpu, min_load, threshold
+            // //         );
 
-        // Attempt to migrate a thread from the most loaded CPU to the least loaded.
-        // Use fine-grained per-queue locking to reduce contention.
-        if let Some(ref mut max_prcb) = scheduler.prcb_mut(max_cpu) {
-            if let Some((thread, priority)) = find_migratable_thread(max_prcb) {
-                let priority_idx = priority as usize;
+            // Attempt to migrate a thread from the most loaded CPU to the least loaded.
+            // Use fine-grained per-queue locking to reduce contention.
+            if let Some(ref mut max_prcb) = scheduler.prcb_mut(max_cpu) {
+                if let Some((thread, priority)) = find_migratable_thread(max_prcb) {
+                    let priority_idx = priority as usize;
 
-                // Lock the source queue first, then the target queue
-                // to avoid deadlocks (always lock in same order: lower CPU first)
-                let (first_cpu, first_priority, second_cpu, second_priority) = if max_cpu <= min_cpu
-                {
-                    (max_cpu, priority_idx, min_cpu, priority_idx)
-                } else {
-                    (min_cpu, priority_idx, max_cpu, priority_idx)
-                };
+                    // Lock the source queue first, then the target queue
+                    // to avoid deadlocks (always lock in same order: lower CPU first)
+                    let (first_cpu, first_priority, second_cpu, second_priority) =
+                        if max_cpu <= min_cpu {
+                            (max_cpu, priority_idx, min_cpu, priority_idx)
+                        } else {
+                            (min_cpu, priority_idx, max_cpu, priority_idx)
+                        };
 
-                // Scope for the locks - both locks must be held during migration
-                // FIX 2.9: Using RAII pattern - locks auto-release on drop
-                {
-                    // Acquire both locks. Both are held while the scheduler
-                    // lock is held, so the lock order is always
-                    // dispatcher lock -> scheduler lock -> queue lock.
-                    let guard1 = match lock_ready_queue(first_cpu, first_priority) {
-                        Some(g) => g,
-                        None => return,
-                    };
-                    let guard2 = match lock_ready_queue(second_cpu, second_priority) {
-                        Some(g) => g,
-                        None => return,
-                    };
-                    let _ = (&guard1, &guard2);
+                    // Scope for the locks - both locks must be held during migration
+                    // FIX 2.9: Using RAII pattern - locks auto-release on drop
+                    {
+                        // Acquire both locks. Both are held while the scheduler
+                        // lock is held, so the lock order is always
+                        // dispatcher lock -> scheduler lock -> queue lock.
+                        let guard1 = match lock_ready_queue(first_cpu, first_priority) {
+                            Some(g) => g,
+                            None => return,
+                        };
+                        let guard2 = match lock_ready_queue(second_cpu, second_priority) {
+                            Some(g) => g,
+                            None => return,
+                        };
+                        let _ = (&guard1, &guard2);
 
-                    // Now perform the migration under the queue locks
-                    // Locks are automatically released when guards go out of scope
-                    let queue = &mut max_prcb.ready_queues[priority_idx];
-                    let entry_ptr = unsafe {
-                        core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
-                            as *mut ListEntry
-                    };
+                        // Now perform the migration under the queue locks
+                        // Locks are automatically released when guards go out of scope
+                        let queue = &mut max_prcb.ready_queues[priority_idx];
+                        let entry_ptr = unsafe {
+                            core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
+                                as *mut ListEntry
+                        };
 
-                    // Remove from source CPU queue
-                    unsafe {
+                        // Remove from source CPU queue
                         let prev = (*entry_ptr).blink;
                         let next = (*entry_ptr).flink;
 
@@ -2126,34 +2176,31 @@ pub fn ki_balance_processor(target_cpu: u32) {
                                 .ready_summary
                                 .fetch_and(!(1u32 << priority), Ordering::AcqRel);
                         }
-                    }
 
-                    // Update thread's home CPU
-                    unsafe {
+                        // Update thread's home CPU
                         (*thread).kthread.home_cpu = min_cpu as u8;
+
+                        // Add to target CPU queue
+                        if let Some(ref mut min_prcb) = scheduler.prcb_mut(min_cpu) {
+                            let new_entry_ptr =
+                                core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
+                                    as *mut ListEntry;
+                            min_prcb.ready_queues[priority_idx].add_tail(new_entry_ptr);
+                            // Update ready_summary atomically
+                            min_prcb
+                                .ready_summary
+                                .fetch_or(1u32 << priority, Ordering::AcqRel);
+
+                            let _tid = (*thread).client_id.unique_thread;
+                            // _tid is intentionally unused - reserved for future logging
+                            // // kprintln!(
+                            // //                             "[SCHED] KiBalanceProcessor: TID {} migrated from CPU {} to CPU {}",
+                            // //                             _tid, max_cpu, min_cpu
+                            // //                         );
+                        }
+
+                        // FIX 2.9: No explicit release needed - RAII guards auto-release on drop
                     }
-
-                    // Add to target CPU queue
-                    if let Some(ref mut min_prcb) = scheduler.prcb_mut(min_cpu) {
-                        let new_entry_ptr = unsafe {
-                            core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
-                                as *mut ListEntry
-                        };
-                        min_prcb.ready_queues[priority_idx].add_tail(new_entry_ptr);
-                        // Update ready_summary atomically
-                        min_prcb
-                            .ready_summary
-                            .fetch_or(1u32 << priority, Ordering::AcqRel);
-
-                        let _tid = unsafe { (*thread).client_id.unique_thread };
-                        // _tid is intentionally unused - reserved for future logging
-                        // // kprintln!(
-                        // //                             "[SCHED] KiBalanceProcessor: TID {} migrated from CPU {} to CPU {}",
-                        // //                             _tid, max_cpu, min_cpu
-                        // //                         );
-                    }
-
-                    // FIX 2.9: No explicit release needed - RAII guards auto-release on drop
                 }
             }
         }
@@ -2161,12 +2208,7 @@ pub fn ki_balance_processor(target_cpu: u32) {
 }
 
 /// Migrate a thread from one CPU to another (complete implementation)
-fn migrate_thread_locked(
-    thread: *mut Ethread,
-    from_cpu: usize,
-    to_cpu: usize,
-    _priority: u8,
-) {
+fn migrate_thread_locked(thread: *mut Ethread, from_cpu: usize, to_cpu: usize, _priority: u8) {
     if thread.is_null() || from_cpu >= MAX_CPUS {
         return;
     }
@@ -2203,71 +2245,71 @@ fn migrate_thread_locked(
 /// Balance load across CPUs by migrating threads
 /// Uses improved load calculation and dynamic threshold (P2 Enhancement)
 pub fn balance_load() {
-    if !SMP_INITIALIZED.load(Ordering::SeqCst) {
-        return;
-    }
+    unsafe {
+        if !SMP_INITIALIZED.load(Ordering::SeqCst) {
+            return;
+        }
 
-    let mut scheduler = SCHEDULER.lock();
-    let num_cpus = scheduler.num_cpus;
+        let mut scheduler = SCHEDULER.lock();
+        let num_cpus = scheduler.num_cpus;
 
-    if num_cpus <= 1 {
-        return;
-    }
+        if num_cpus <= 1 {
+            return;
+        }
 
-    let mut max_load = 0usize;
-    let mut min_load = usize::MAX;
-    let mut max_cpu = 0usize;
-    let mut min_cpu = 0usize;
-    let mut total_load = 0usize;
+        let mut max_load = 0usize;
+        let mut min_load = usize::MAX;
+        let mut max_cpu = 0usize;
+        let mut min_cpu = 0usize;
+        let mut total_load = 0usize;
 
-    // Calculate exact loads for all CPUs
-    for i in 0..num_cpus {
-        if let Some(prcb) = scheduler.prcb(i) {
-            let load = calculate_cpu_load(prcb);
-            total_load += load;
-            if load > max_load {
-                max_load = load;
-                max_cpu = i;
-            }
-            if load < min_load {
-                min_load = load;
-                min_cpu = i;
+        // Calculate exact loads for all CPUs
+        for i in 0..num_cpus {
+            if let Some(prcb) = scheduler.prcb(i) {
+                let load = calculate_cpu_load(prcb);
+                total_load += load;
+                if load > max_load {
+                    max_load = load;
+                    max_cpu = i;
+                }
+                if load < min_load {
+                    min_load = load;
+                    min_cpu = i;
+                }
             }
         }
-    }
 
-    let avg_load = total_load / num_cpus;
-    let threshold = calculate_balance_threshold(avg_load);
+        let avg_load = total_load / num_cpus;
+        let threshold = calculate_balance_threshold(avg_load);
 
-    // Only migrate if load difference exceeds threshold
-    if max_load > min_load + threshold && max_load > 0 {
-        // // kprintln!(
-        // //             "[SCHED] balance_load: CPU {} (load={}) -> CPU {} (load={}), threshold={}, avg={}",
-        // //             max_cpu, max_load, min_cpu, min_load, threshold, avg_load
-        // //         );
+        // Only migrate if load difference exceeds threshold
+        if max_load > min_load + threshold && max_load > 0 {
+            // // kprintln!(
+            // //             "[SCHED] balance_load: CPU {} (load={}) -> CPU {} (load={}), threshold={}, avg={}",
+            // //             max_cpu, max_load, min_cpu, min_load, threshold, avg_load
+            // //         );
 
-        if let Some(ref mut max_prcb) = scheduler.prcb_mut(max_cpu) {
-            if let Some((thread, priority)) = find_migratable_thread(max_prcb) {
-                // ke_sched P0-4: the per-CPU ready queues are guarded by
-                // lock_ready_queue everywhere else (add_ready, remove_ready,
-                // schedule, ki_balance_processor); balance_load mutated
-                // them with only the global scheduler lock held. Take the
-                // same guards — source queue first, then destination.
-                let (_src_guard, _dst_guard) = match (
-                    lock_ready_queue(max_cpu, priority as usize),
-                    lock_ready_queue(min_cpu, priority as usize),
-                ) {
-                    (Some(src), Some(dst)) => (src, dst),
-                    _ => return,
-                };
-                let queue = &mut max_prcb.ready_queues[priority as usize];
-                let entry_ptr = unsafe {
-                    core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
-                        as *mut ListEntry
-                };
+            if let Some(ref mut max_prcb) = scheduler.prcb_mut(max_cpu) {
+                if let Some((thread, priority)) = find_migratable_thread(max_prcb) {
+                    // ke_sched P0-4: the per-CPU ready queues are guarded by
+                    // lock_ready_queue everywhere else (add_ready, remove_ready,
+                    // schedule, ki_balance_processor); balance_load mutated
+                    // them with only the global scheduler lock held. Take the
+                    // same guards — source queue first, then destination.
+                    let (_src_guard, _dst_guard) = match (
+                        lock_ready_queue(max_cpu, priority as usize),
+                        lock_ready_queue(min_cpu, priority as usize),
+                    ) {
+                        (Some(src), Some(dst)) => (src, dst),
+                        _ => return,
+                    };
+                    let queue = &mut max_prcb.ready_queues[priority as usize];
+                    let entry_ptr = unsafe {
+                        core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
+                            as *mut ListEntry
+                    };
 
-                // Remove from source CPU queue
-                unsafe {
+                    // Remove from source CPU queue
                     let prev = (*entry_ptr).blink;
                     let next = (*entry_ptr).flink;
 
@@ -2292,36 +2334,33 @@ pub fn balance_load() {
                             .ready_summary
                             .fetch_and(!(1u32 << priority), Ordering::AcqRel);
                     }
-                }
 
-                // Complete migration (update home_cpu)
-                migrate_thread_locked(thread, max_cpu, min_cpu, priority);
+                    // Complete migration (update home_cpu)
+                    migrate_thread_locked(thread, max_cpu, min_cpu, priority);
 
-                // Add to target CPU queue
-                if let Some(ref mut min_prcb) = scheduler.prcb_mut(min_cpu) {
-                    let new_entry_ptr = unsafe {
-                        core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
-                            as *mut ListEntry
-                    };
-                    min_prcb.ready_queues[priority as usize].add_tail(new_entry_ptr);
-                    // Update ready_summary atomically
-                    min_prcb
-                        .ready_summary
-                        .fetch_or(1u32 << priority, Ordering::AcqRel);
-                    // Keep the queue-location tracking in sync with the
-                    // manual migration (ke_sched P0-4).
-                    unsafe {
+                    // Add to target CPU queue
+                    if let Some(ref mut min_prcb) = scheduler.prcb_mut(min_cpu) {
+                        let new_entry_ptr =
+                            core::ptr::addr_of_mut!((*thread).kthread.global_thread_list_entry)
+                                as *mut ListEntry;
+                        min_prcb.ready_queues[priority as usize].add_tail(new_entry_ptr);
+                        // Update ready_summary atomically
+                        min_prcb
+                            .ready_summary
+                            .fetch_or(1u32 << priority, Ordering::AcqRel);
+                        // Keep the queue-location tracking in sync with the
+                        // manual migration (ke_sched P0-4).
                         (*thread).kthread.queued_priority = priority;
                         (*thread).kthread.queued_cpu = min_cpu as u16;
-                    }
 
-                    let _tid = unsafe { (*thread).client_id.unique_thread };
-                    // _tid is intentionally unused - reserved for future logging
-                    // // kprintln!("[SCHED] balance_load: TID {} migrated from CPU {} to CPU {}",
-                    // //                              _tid, max_cpu, min_cpu);
+                        let _tid = (*thread).client_id.unique_thread;
+                        // _tid is intentionally unused - reserved for future logging
+                        // // kprintln!("[SCHED] balance_load: TID {} migrated from CPU {} to CPU {}",
+                        // //                              _tid, max_cpu, min_cpu);
+                    }
+                } else {
+                    // // kprintln!("[SCHED] balance_load: no migratable thread found on CPU {}", max_cpu);
                 }
-            } else {
-                // // kprintln!("[SCHED] balance_load: no migratable thread found on CPU {}", max_cpu);
             }
         }
     }
@@ -2351,9 +2390,12 @@ pub fn has_work() -> bool {
 // Priority Boost and Decay Implementation (P2 Enhancement)
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// KiBoostThread - Boost thread priority when waiting object becomes signaled
 /// Also records boost timestamp for decay mechanism
-pub fn ki_boost_thread(thread: *mut Ethread, boost_type: PriorityBoostType) -> i8 {
+pub unsafe fn ki_boost_thread(thread: *mut Ethread, boost_type: PriorityBoostType) -> i8 {
     unsafe {
         let kthread = &mut (*thread).kthread;
         let base = kthread.base_priority;
@@ -2398,8 +2440,11 @@ pub fn ki_boost_thread(thread: *mut Ethread, boost_type: PriorityBoostType) -> i
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// KiUnboostThread - Remove priority boost when quantum expires
-pub fn ki_unboost_thread(thread: *mut Ethread) {
+pub unsafe fn ki_unboost_thread(thread: *mut Ethread) {
     unsafe {
         let kthread = &mut (*thread).kthread;
         let current = kthread.priority;
@@ -2423,12 +2468,15 @@ pub fn ki_unboost_thread(thread: *mut Ethread) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// KiDecayPriority - Gradual priority decay over time (P2 Enhancement)
 ///
 /// Implements priority decay mechanism: when a thread's priority has been
 /// boosted for longer than DECAY_TIME_MS, it gradually returns to base
 /// priority instead of an instant drop.
-pub fn ki_decay_priority(thread: *mut Ethread) {
+pub unsafe fn ki_decay_priority(thread: *mut Ethread) {
     unsafe {
         let kthread = &mut (*thread).kthread;
         let current = kthread.priority;
@@ -2465,9 +2513,12 @@ pub fn ki_decay_priority(thread: *mut Ethread) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// CheckAndDecayPriority - Called periodically to check if decay is needed
 /// Returns true if decay was performed
-pub fn check_and_decay_priority(thread: *mut Ethread) -> bool {
+pub unsafe fn check_and_decay_priority(thread: *mut Ethread) -> bool {
     if thread.is_null() {
         return false;
     }
@@ -2492,19 +2543,34 @@ pub fn check_and_decay_priority(thread: *mut Ethread) -> bool {
     false
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Boost thread priority for I/O completion
-pub fn boost_for_io(thread: *mut Ethread) {
-    ki_boost_thread(thread, PriorityBoostType::IoCompletion);
+pub unsafe fn boost_for_io(thread: *mut Ethread) {
+    unsafe {
+        ki_boost_thread(thread, PriorityBoostType::IoCompletion);
+    }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Boost thread priority for event signaling
-pub fn boost_for_event(thread: *mut Ethread) {
-    ki_boost_thread(thread, PriorityBoostType::EventSet);
+pub unsafe fn boost_for_event(thread: *mut Ethread) {
+    unsafe {
+        ki_boost_thread(thread, PriorityBoostType::EventSet);
+    }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Boost thread priority for mutex release
-pub fn boost_for_mutex(thread: *mut Ethread) {
-    ki_boost_thread(thread, PriorityBoostType::MutantRelease);
+pub unsafe fn boost_for_mutex(thread: *mut Ethread) {
+    unsafe {
+        ki_boost_thread(thread, PriorityBoostType::MutantRelease);
+    }
 }
 
 // =============================================================================
@@ -2531,6 +2597,12 @@ impl DispatcherLock {
     }
 }
 
+impl Default for DispatcherLock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Timer table entry for per-CPU timer management
 /// Windows 7 x64 uses 256 timer buckets
 pub const TIMER_TABLE_SIZE: usize = 256;
@@ -2547,6 +2619,12 @@ impl TimerTableEntry {
             list_head: ListEntry::new(),
             entry: core::ptr::null_mut(),
         }
+    }
+}
+
+impl Default for TimerTableEntry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -2567,6 +2645,12 @@ impl TimerTable {
         // Hash the due time to a bucket index
         // Windows uses a rotating table scheme
         ((due_time >> 8) as usize) & (TIMER_TABLE_SIZE - 1)
+    }
+}
+
+impl Default for TimerTable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -2836,15 +2920,23 @@ mod multicore_contention_tests {
             blink: core::ptr::null_mut(),
         };
 
-        q.add_tail(&mut a);
-        q.add_tail(&mut b);
-        q.add_tail(&mut c);
+        unsafe {
+            q.add_tail(&mut a);
+        }
+        unsafe {
+            q.add_tail(&mut b);
+        }
+        unsafe {
+            q.add_tail(&mut c);
+        }
 
         // Pop the head of a three-element list, then push a new tail.
         let popped = q.remove_head().expect("list not empty");
         assert_eq!(popped, &mut a as *mut ListEntry);
         let new_tail = &mut d as *mut ListEntry;
-        q.add_tail(new_tail);
+        unsafe {
+            q.add_tail(new_tail);
+        }
 
         // Tail pointer must still be valid: the queue is non-empty and
         // add_tail must not have re-rooted the list at `d`.
@@ -2864,7 +2956,9 @@ mod multicore_contention_tests {
         assert!(q.head.is_null() && q.blink.is_null());
 
         // The list still accepts pushes after a full drain.
-        q.add_tail(&mut a);
+        unsafe {
+            q.add_tail(&mut a);
+        }
         assert!(!q.head.is_null() && !q.blink.is_null());
         assert_eq!(q.head, &mut a as *mut ListEntry);
         assert_eq!(q.blink, &mut a as *mut ListEntry);

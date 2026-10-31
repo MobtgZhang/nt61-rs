@@ -6,6 +6,7 @@
 //! the scheduler. The bootstrap exposes a similar surface
 //! area: a small set of fixed-vector handlers plus a
 //! dynamically-allocated vector range.
+use crate::libs::ntdll::status::STATUS_UNSUCCESSFUL;
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -38,7 +39,7 @@ pub fn allocate_ipi_vector(handler: IpiHandler) -> Option<u8> {
 
 /// Free a previously-allocated IPI vector.
 pub fn free_ipi_vector(vector: u8) {
-    if vector < IPI_DYNAMIC_BASE || vector > IPI_DYNAMIC_END {
+    if !(IPI_DYNAMIC_BASE..=IPI_DYNAMIC_END).contains(&vector) {
         return;
     }
     unsafe {
@@ -91,7 +92,7 @@ pub fn handle_ipi_panic_stop() {
 }
 
 pub fn handle_ipi_dynamic(vector: u8) {
-    if vector < IPI_DYNAMIC_BASE || vector > IPI_DYNAMIC_END {
+    if !(IPI_DYNAMIC_BASE..=IPI_DYNAMIC_END).contains(&vector) {
         return;
     }
     let idx = (vector - IPI_DYNAMIC_BASE) as usize;
@@ -213,11 +214,11 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
                 // is alive so no reference escapes the scheduling boundary.
                 let slot = match find_free_slot() {
                     Some(slot) => slot,
-                    None => return Err(()),
+                    None => return Err(STATUS_UNSUCCESSFUL),
                 };
                 let entry = match get_wait_entry(slot) {
                     Some(entry) => entry,
-                    None => return Err(()),
+                    None => return Err(STATUS_UNSUCCESSFUL),
                 };
                 let current = thread as *mut Ethread;
                 entry.thread = current;
@@ -245,7 +246,7 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
                 Ok((e_ptr, entry.deadline_ticks))
             }) {
                 Some(Ok(current)) => current,
-                Some(Err(())) => return WaitResult::Error,
+                Some(Err(_)) => return WaitResult::Error,
                 None => return WaitResult::Error,
             };
             (current.0, current.1)
@@ -263,7 +264,7 @@ pub fn wait_on(object: &DispatcherHeader, timeout_ms: u32) -> WaitResult {
     let signalled = unsafe {
         for index in 0..WAIT_LIST_TOTAL {
             if let Some(entry) = get_wait_entry(index) {
-                if entry.thread == current && entry.object == object as *const DispatcherHeader {
+                if entry.thread == current && core::ptr::eq(entry.object, object) {
                     let result = if entry.signalled {
                         WaitResult::Success
                     } else {
@@ -305,10 +306,7 @@ pub fn wake(object: &DispatcherHeader, all: bool) -> u32 {
                 let Some(entry) = get_wait_entry(i) else {
                     continue;
                 };
-                if entry.in_use
-                    && entry.thread == ethread
-                    && entry.object == object as *const DispatcherHeader
-                {
+                if entry.in_use && entry.thread == ethread && core::ptr::eq(entry.object, object) {
                     // Mark the slot free and signal the entry before the
                     // thread becomes runnable. The result remains owned by
                     // the waiter until `wait_on` consumes it, preventing the
@@ -329,7 +327,8 @@ pub fn wake(object: &DispatcherHeader, all: bool) -> u32 {
                     };
 
                     // Apply priority boost and get new priority
-                    let new_priority = crate::ke::scheduler::ki_boost_thread(ethread, boost_type);
+                    let new_priority =
+                        unsafe { crate::ke::scheduler::ki_boost_thread(ethread, boost_type) };
                     let priority = new_priority as u8;
 
                     crate::ke::scheduler::add_ready(ethread, priority);
@@ -372,6 +371,9 @@ fn find_free_slot() -> Option<usize> {
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get a reference to a wait entry by index.
 /// Index 0..WAIT_LIST_MAX-1 is in primary pool, WAIT_LIST_MAX..WAIT_LIST_TOTAL-1 is in extra pool.
 unsafe fn get_wait_entry(index: usize) -> Option<&'static mut WaitEntry> {
@@ -411,7 +413,7 @@ pub fn tick_wait_list() {
                         // Apply priority boost for timeout wake
                         let boost_type = crate::ke::scheduler::PriorityBoostType::Special;
                         let new_priority =
-                            crate::ke::scheduler::ki_boost_thread(ethread, boost_type);
+                            unsafe { crate::ke::scheduler::ki_boost_thread(ethread, boost_type) };
                         let priority = new_priority as u8;
 
                         crate::ke::scheduler::add_ready(ethread, priority);

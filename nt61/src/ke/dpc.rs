@@ -85,9 +85,16 @@ impl Dpc {
     }
 }
 
+impl Default for Dpc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Dispatcher header for DPC (partial implementation).
 #[derive(Clone)]
 #[repr(C)]
+#[derive(Default)]
 pub struct DispatcherHeader {
     pub type_: u8,
     pub signal_state: u8,
@@ -111,18 +118,6 @@ impl DispatcherHeader {
         self.type_ = 0x13; // DpcObject = 0x13
         self.signal_state = 0;
         self.inserted = 0;
-    }
-}
-
-impl Default for DispatcherHeader {
-    fn default() -> Self {
-        Self {
-            type_: 0,
-            signal_state: 0,
-            size: 0,
-            inserted: 0,
-            spare: [0; 3],
-        }
     }
 }
 
@@ -162,7 +157,7 @@ fn dpc_array() -> &'static mut [Dpc; MAX_DPCS] {
         let bytes = pool::allocate(pool::PoolType::NonPaged, MAX_DPCS * DPC_SIZE) as *mut Dpc;
         if bytes.is_null() {
             static mut FALLBACK: [Dpc; MAX_DPCS] = [const { Dpc::new() }; MAX_DPCS];
-            return unsafe { &mut *(&raw mut FALLBACK) };
+            return unsafe { &mut *core::ptr::addr_of_mut!(FALLBACK) };
         }
         unsafe {
             core::ptr::write_bytes(bytes as *mut u8, 0u8, MAX_DPCS * DPC_SIZE);
@@ -174,6 +169,9 @@ fn dpc_array() -> &'static mut [Dpc; MAX_DPCS] {
     unsafe { &mut *arr_ptr }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// True iff every byte of `slot` is zero. Used to detect an
 /// empty DPC slot without depending on `Option::is_none`.
 unsafe fn is_all_zero(slot: *const Dpc) -> bool {
@@ -191,6 +189,9 @@ pub fn init() {
     // // kprintln!("      DPC vector: 0x{:02x} (software interrupt)", DPC_VECTOR);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialize a DPC object. This is `ke_initialize_dpc` in Windows.
 pub unsafe fn ke_initialize_dpc(dpc: *mut Dpc, routine: DpcRoutine, context: *mut u8) {
     if dpc.is_null() {
@@ -207,6 +208,9 @@ pub unsafe fn ke_initialize_dpc(dpc: *mut Dpc, routine: DpcRoutine, context: *mu
     (*dpc).name = "<dpc>";
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Insert a DPC into the queue. This is `ke_insert_queue_dpc` in Windows.
 ///
 /// Returns true if the DPC was successfully queued.
@@ -503,11 +507,14 @@ pub fn is_dpc_routine_active() -> bool {
     DPC_ROUTINE_ACTIVE.load(Ordering::Acquire)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Queue a DPC to a specific CPU (for SMP) (P2 Enhancement)
 ///
 /// In a full SMP implementation, this would queue the DPC to the
 /// target CPU's DPC queue and trigger an IPI.
-pub fn queue_dpc_to_cpu(
+pub unsafe fn queue_dpc_to_cpu(
     dpc: *mut Dpc,
     cpu_number: u32,
     system_argument1: *mut u8,
@@ -545,11 +552,14 @@ fn get_current_cpu_number() -> u32 {
     crate::ke::scheduler::get_current_cpu() as u32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Remove a DPC from the queue (P2 Enhancement)
 ///
 /// Returns true if the DPC was found and removed.
 #[allow(unpredictable_function_pointer_comparisons)]
-pub fn remove_dpc(dpc: *mut Dpc) -> bool {
+pub unsafe fn remove_dpc(dpc: *mut Dpc) -> bool {
     if dpc.is_null() {
         return false;
     }

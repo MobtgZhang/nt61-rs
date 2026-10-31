@@ -224,11 +224,6 @@ pub fn smoke_test() -> bool {
     // empty because native dispatch lives in ssdt_common + the arch
     // trap layer.
     let table = get_service_descriptor_table();
-    let shadow_ok = !table.shadow.service_table.is_null() && !table.shadow.argument_table.is_null();
-    let shadow_arg_size_ok = {
-        // Win32k services carry their argument size only in the shadow
-        // argument table; verify the delegation path returns sane data.
-        get_shadow_argument_size(0x1000) <= u8::MAX
-    };
-    shadow_ok && shadow_arg_size_ok
+
+    !table.shadow.service_table.is_null() && !table.shadow.argument_table.is_null()
 }

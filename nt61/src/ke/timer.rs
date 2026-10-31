@@ -88,7 +88,7 @@ fn timer_array() -> &'static mut [Ktimer; MAX_TIMERS] {
         if bytes.is_null() {
             crate::hal::serial::write_string("[ke.timer] ta:fb\r\n");
             static mut FALLBACK: [Ktimer; MAX_TIMERS] = [const { Ktimer::new("<fb>") }; MAX_TIMERS];
-            return unsafe { &mut *(&raw mut FALLBACK) };
+            return unsafe { &mut *core::ptr::addr_of_mut!(FALLBACK) };
         }
         unsafe {
             core::ptr::write_bytes(bytes as *mut u8, 0u8, MAX_TIMERS * TIMER_SIZE);
@@ -136,6 +136,9 @@ pub fn create_timer(name: &'static str) -> Option<usize> {
     Some(idx)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Field-by-field copy of a Ktimer into raw memory. We can't use
 /// `core::ptr::write` here because the compiler lowers an
 /// aggregate write to a SSE/memcpy sequence that uses *non-temporal*

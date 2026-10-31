@@ -70,7 +70,6 @@ pub struct SsdtEntry {
 
 impl SsdtEntry {
     /// create a new SSDT entry
-
     pub const fn new(handler: SyscallHandler, arg_count: u8, name: &str) -> Self {
         let mut name_bytes = [0u8; 64];
         let bytes = name.as_bytes();
@@ -170,6 +169,12 @@ impl Ssdt {
     pub fn get_info(&self, syscall_number: usize) -> Option<SsdtEntry> {
         let entries = self.entries.lock();
         entries.get(syscall_number).and_then(|e| *e)
+    }
+}
+
+impl Default for Ssdt {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
