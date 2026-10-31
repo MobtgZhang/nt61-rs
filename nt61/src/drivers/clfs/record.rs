@@ -7,7 +7,7 @@
 //! - Block offset (bits 9-31): byte offset / 512 within the container
 //! - Record index (bits 0-8): record number within the block (0-511)
 //
-//! LSN Layout (big-endian u64):
+//!   LSN Layout (big-endian u64):
 //!   bits 63-32: Container ID (32 bits)
 //!   bits 31-9:  Block offset in sectors (23 bits, byte offset / 512)
 //!   bits 8-0:   Record index within block (9 bits, 0-511)
@@ -98,7 +98,7 @@ impl ClfsLsn {
     #[inline]
     pub fn next_block(&self) -> ClfsLsn {
         ClfsLsn(
-            (self.0 & !0x3FF_FFFF_E00) // Clear block_offset and record_index
+            (self.0 & !0x003F_FFFF_FE00) // Clear block_offset and record_index
                 | (((self.block_offset() as u64) + 1) << 9),
         )
     }

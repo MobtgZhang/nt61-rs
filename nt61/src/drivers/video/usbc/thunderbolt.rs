@@ -12,8 +12,8 @@
 //! - USB power Delivery (PD) negotiation
 //! - USB4/TBT4 discovery and initialization
 //
-//! Clean-room implementation based on USB-C, USB power Delivery,
-//! DisplayPort, and Thunderbolt specifications.
+//!   Clean-room implementation based on USB-C, USB power Delivery,
+//!   DisplayPort, and Thunderbolt specifications.
 
 use crate::drivers::video::log;
 use crate::ke::sync::Spinlock;

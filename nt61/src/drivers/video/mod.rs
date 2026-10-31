@@ -8,25 +8,25 @@
 //! * `efifb` - EFI framebuffer from UEFI firmware
 //! * `bochs_vbe` - Bochs / QEMU emulated VBE display
 //
-//! GPU Drivers (P0 Priority):
+//!   GPU Drivers (P0 Priority):
 //! * `loongson` - Loongson LSDC (LoongArch64)
 //! * `intel` - Intel i915/iGPU (x86_64)
 //! * `amd` - AMD Radeon (x86_64)
 //
-//! GPU Drivers (P1 Priority):
+//!   GPU Drivers (P1 Priority):
 //! * `zhaoxin` - Zhaoxin ZX-D/KX-7000 (x86_64)
 //! * `nouveau` - NVIDIA Nouveau (x86_64)
 //! * `rockchip` - Rockchip VOP (aarch64)
 //! * `qualcomm` - Qualcomm Adreno (aarch64)
 //! * `sun4i` - Allwinner DEBE (ARM/aarch64)
 //
-//! GPU Drivers (P2 Priority):
+//!   GPU Drivers (P2 Priority):
 //! * `riscv` - RISC-V GPU drivers (StarFive/Allwinner D1/virtio-gpu) (riscv64)
 //
-//! GPU Core Infrastructure:
+//!   GPU Core Infrastructure:
 //! * `core` - Shared GPU infrastructure (vram, irq, dpc, power)
 //
-//! Clean-room implementation based on industry standards.
+//!   Clean-room implementation based on industry standards.
 
 extern crate alloc;
 
@@ -291,7 +291,7 @@ pub fn init() {
     // allocations inside `UsbCManager::new()` are safe. The previous
     // skip was a workaround for an uninitialised heap; that no longer
     // applies.
-    let _ = usbc::init();
+    usbc::init();
     #[cfg(target_arch = "x86_64")]
     crate::hal::serial::write_string("V:usbc_done\r\n");
 

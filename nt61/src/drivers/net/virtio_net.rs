@@ -123,6 +123,9 @@ pub fn init() {
     crate::hal::serial::write_string("NET:virtio_done\r\n");
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn init_nic(mut transport: PciTransport) -> Option<Nic> {
     transport.reset();
     transport.write_status(status::ACKNOWLEDGE);
@@ -216,8 +219,11 @@ unsafe fn init_nic(mut transport: PciTransport) -> Option<Nic> {
     })
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn alloc_dma_buffer(size: usize) -> *mut u8 {
-    let page_count = ((size + 4095) / 4096) as u64;
+    let page_count = size.div_ceil(4096) as u64;
     let Some(mem_phys) = crate::mm::allocate_pages(page_count) else {
         return core::ptr::null_mut();
     };
@@ -280,9 +286,7 @@ pub fn send_async(nic_idx: usize, data: &[u8]) -> bool {
 
 pub fn receive(nic_idx: usize, buffer: &mut [u8]) -> Option<usize> {
     let nics = get_nics();
-    let Some(nic) = nics.get_mut(nic_idx).and_then(|slot| slot.as_mut()) else {
-        return None;
-    };
+    let nic = nics.get_mut(nic_idx).and_then(|slot| slot.as_mut())?;
 
     let (head, written) = nic.rx_queue.pop_used()?;
     let slot = (head as usize) / 2;

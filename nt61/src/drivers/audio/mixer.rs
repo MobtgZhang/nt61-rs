@@ -44,9 +44,9 @@ pub const fn apply_gain_i16(sample: i16, gain: i32) -> i32 {
 #[inline]
 pub const fn clamp_i16(sample: i32) -> i16 {
     if sample > i16::MAX as i32 {
-        i16::MAX as i16
+        i16::MAX
     } else if sample < i16::MIN as i32 {
-        i16::MIN as i16
+        i16::MIN
     } else {
         sample as i16
     }

@@ -11,7 +11,7 @@
 //!    screens (the four-corner progress bar, the rotating
 //!    spinner, the "Setup is loading..." banner).
 //
-//! In our environment we have two backends:
+//!    In our environment we have two backends:
 //
 //! * The UEFI GOP linear framebuffer (preferred). winload
 //!   publishes the LFB address, width, height, pitch, and
@@ -21,10 +21,10 @@
 //! * The legacy VGA text buffer at 0xB8000 (fallback). Used
 //!   only when no GOP framebuffer is available.
 //
-//! BOOTVID itself is hardware-agnostic: the public API is the
-//! same (`inbv_display_string`, `inbv_set_progress_bar_subset`,
-//! `inbv_rotate_waiting_spinner`, `vid_clean_up`, ...) and only the
-//! pixel-write layer changes when the backend switches.
+//!   BOOTVID itself is hardware-agnostic: the public API is the
+//!   same (`inbv_display_string`, `inbv_set_progress_bar_subset`,
+//!   `inbv_rotate_waiting_spinner`, `vid_clean_up`, ...) and only the
+//!   pixel-write layer changes when the backend switches.
 //
 //! # Windows 7 Boot Display Modes
 //
@@ -35,20 +35,15 @@
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 /// Boot display mode (Windows 7 behavior)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BootDisplayMode {
     /// Normal boot - Windows logo, progress bar only (no scrolling logs)
+    #[default]
     Normal,
     /// BootLog mode - minimal screen output, logging to ntbtlog.txt
     BootLog,
     /// SOS/Verbose mode - shows driver loading messages
     Sos,
-}
-
-impl Default for BootDisplayMode {
-    fn default() -> Self {
-        BootDisplayMode::Normal
-    }
 }
 
 const VGA_TEXT_BASE: u64 = 0xB8000;
@@ -82,7 +77,7 @@ static SAVED_Y: AtomicU32 = AtomicU32::new(0);
 static SPINNER_TICK: AtomicU32 = AtomicU32::new(0);
 static ATTR: AtomicU8 = AtomicU8::new(ATTR_DEFAULT);
 
-const SPINNER: [u8; 4] = [b'|', b'/', b'-', b'\\'];
+const SPINNER: [u8; 4] = *b"|/-\\";
 
 /// Height of one BOOTVID glyph in pixels.
 const FONT_HEIGHT: u32 = 16;
@@ -137,9 +132,7 @@ fn font_face_parsed() -> Option<&'static nt61_fonts::FontFace> {
     // The global allocator is the kernel heap, so its configuration
     // (not the mm init-state machine, which no production path
     // advances) is the authoritative signal that fontdue can allocate.
-    if crate::mm::heap::KERNEL_HEAP.configured_region().is_none() {
-        return None;
-    }
+    crate::mm::heap::KERNEL_HEAP.configured_region()?;
     if FONT_PARSE_IN_PROGRESS.swap(true, Ordering::AcqRel) {
         return None;
     }
@@ -694,7 +687,7 @@ pub fn inbv_set_progress_bar_subset(count: u32) {
         let pitch = FB_PITCH.load(Ordering::Acquire);
         let cell = glyph_cell_width();
         let total = (width / cell).max(1);
-        let filled = (count as u32).min(total);
+        let filled = count.min(total);
         // Empty bar (dark grey on black).
         for row in 0..bar_h {
             for col in 0..width {
@@ -732,7 +725,7 @@ pub fn inbv_set_progress_bar_subset(count: u32) {
     SAVED_Y.store(CURSOR_Y.load(Ordering::Acquire), Ordering::Release);
     CURSOR_X.store(0, Ordering::Release);
     CURSOR_Y.store(VGA_ROWS - 1, Ordering::Release);
-    let blocks = (count as u32).min(VGA_COLS);
+    let blocks = count.min(VGA_COLS);
     for c in 0..VGA_COLS as usize {
         let ch = if (c as u32) < blocks { 0xDB } else { 0xB0 };
         write_cell_vga(
@@ -801,9 +794,7 @@ pub fn vid_reset_display(bios: bool) {
 
 /// `vid_clean_up` — disable the cursor and leave the screen alone.
 pub fn vid_clean_up() {
-    if !INITIALISED.load(Ordering::Acquire) {
-        return;
-    }
+    if !INITIALISED.load(Ordering::Acquire) {}
     // No-op for the LFB path. On the VGA path this would disable
     // the cursor via the CRTC index port, which is unsafe in
     // long mode.

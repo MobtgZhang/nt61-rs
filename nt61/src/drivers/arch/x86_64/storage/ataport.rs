@@ -68,6 +68,12 @@ impl AtaAdapter {
     }
 }
 
+impl Default for AtaAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 const MAX_ADAPTERS: usize = 2;
 static mut ADAPTERS: [AtaAdapter; MAX_ADAPTERS] = [const { AtaAdapter::new() }; MAX_ADAPTERS];
 static ADAPTER_LOCK: Spinlock<()> = Spinlock::new(());
@@ -211,7 +217,7 @@ pub fn smoke_test() -> bool {
     let n = ata_port_start_io(0, &req, &mut buf);
     // Store the return value so callers can observe smoke-test status
     // without re-running the IDENTIFY command.
-    LAST_SMOKE_BYTES.store(n as u32, core::sync::atomic::Ordering::Relaxed);
+    LAST_SMOKE_BYTES.store(n, core::sync::atomic::Ordering::Relaxed);
     let adapter_count_val = adapter_count();
     let io_count_val = io_count();
     let _ = (adapter_count_val, io_count_val);

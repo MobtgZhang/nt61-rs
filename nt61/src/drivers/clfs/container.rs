@@ -57,7 +57,7 @@ pub fn add_container(vcb: &mut ClfsVcb, size: usize, name: &[u8]) -> Result<u32,
 
     // write the header to the container
     let mut mutable_container = container;
-    mutable_container.write_sector(0, &mut header)?;
+    mutable_container.write_sector(0, &header)?;
 
     crate::kprintln_info!(
         "CLFS",

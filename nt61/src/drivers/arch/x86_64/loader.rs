@@ -48,8 +48,8 @@
 //!   - writing its MajorFunction[IRP_MJ_CREATE] pointer into
 //!     `DriverObject + 0x40`;
 //!   - writing its driver_unload pointer into `DriverObject + 0x28`.
-//! Failure to follow that contract causes the dispatch table to
-//! remain zero and downstream `IopCallDriver` to no-op.
+//!     Failure to follow that contract causes the dispatch table to
+//!     remain zero and downstream `IopCallDriver` to no-op.
 //!
 //! # Win7 boot sequence parity
 //!
@@ -158,7 +158,7 @@ pub fn load_and_init_boot_start_drivers() {
 
         let _bytes = match smss::read_pe_from_disk(path) {
             Some(data) => {
-                let v: &Vec<u8> = &*data;
+                let v: &Vec<u8> = &data;
                 Some(v.clone())
             }
             None => None,
@@ -225,9 +225,9 @@ pub fn load_and_init_boot_start_drivers() {
             }
             "mssmbios.sys" => {
                 serial::write_string(
-                    "[K07]   dispatching to drivers::storage::ramdisk::init()\r\n",
+                    "[K07]   dispatching to drivers::platform::mssmbios::init()\r\n",
                 );
-                crate::drivers::storage::ramdisk::init();
+                crate::drivers::platform::mssmbios::init();
             }
             "classpnp.sys" => {
                 serial::write_string("[K07]   dispatching to drivers::storage::ata::init()\r\n");

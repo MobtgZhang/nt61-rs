@@ -42,7 +42,7 @@ impl RamDisk {
         }
 
         // Allocate from kernel pool
-        let data = pool::allocate(pool::PoolType::NonPaged, total_size) as *mut u8;
+        let data = pool::allocate(pool::PoolType::NonPaged, total_size);
         if data.is_null() {
             return None;
         }
@@ -76,9 +76,9 @@ impl RamDisk {
         // Try progressively larger sizes: 128KB -> 256KB -> 512KB
         // Start very small to conserve pool memory for system_image::build_all()
         let sizes = [
-            256,      // 128 KB - minimum
-            512,      // 256 KB
-            1 * 1024, // 512 KB - maximum
+            256,  // 128 KB - minimum
+            512,  // 256 KB
+            1024, // 512 KB - maximum
         ];
 
         for &sectors in &sizes {
@@ -210,13 +210,16 @@ impl RamDisk {
 
 impl Drop for RamDisk {
     fn drop(&mut self) {
-        if self.owns_data && !self.data.is_null() {
-            let total_size = self.sector_count * self.sector_size;
-            // Track how many bytes the ramdisk owned at drop time so
-            // that diagnostics can verify the lifetime of allocations.
-            LAST_RAMDISK_DROP_BYTES.store(total_size as u32, core::sync::atomic::Ordering::Relaxed);
-            {
-                let _ = pool::free(self.data);
+        unsafe {
+            if self.owns_data && !self.data.is_null() {
+                let total_size = self.sector_count * self.sector_size;
+                // Track how many bytes the ramdisk owned at drop time so
+                // that diagnostics can verify the lifetime of allocations.
+                LAST_RAMDISK_DROP_BYTES
+                    .store(total_size as u32, core::sync::atomic::Ordering::Relaxed);
+                {
+                    let _ = pool::free(self.data);
+                }
             }
         }
     }

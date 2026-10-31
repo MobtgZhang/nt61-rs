@@ -9,9 +9,9 @@
 //! - NVD0 (Kepler): Improved power management
 //! - NV110+ (Maxwell/Pascal/Turing): Modern register layout
 //
-//! Reference: Nouveau project, Linux nouveau driver
+//!   Reference: Nouveau project, Linux nouveau driver
 //
-//! Clean-room implementation based on public specifications.
+//!   Clean-room implementation based on public specifications.
 
 use super::pci_ids::NouveauArchitecture;
 

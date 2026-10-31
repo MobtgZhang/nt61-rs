@@ -255,7 +255,7 @@ impl PlaybackEngine {
             for ch in 0..out_ch {
                 let a = channel_converted[n * out_ch + ch] as i32;
                 let b = channel_converted[(n + 1) * out_ch + ch] as i32;
-                let v = a + ((b - a) * frac_int >> 16);
+                let v = a + (((b - a) * frac_int) >> 16);
                 out.push(clamp_i16(v));
             }
         }

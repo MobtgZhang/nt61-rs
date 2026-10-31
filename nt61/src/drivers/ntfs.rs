@@ -55,6 +55,12 @@ impl NtfsVolume {
     }
 }
 
+impl Default for NtfsVolume {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static mut VOLUMES: [NtfsVolume; MAX_VOLUMES] = [const { NtfsVolume::new() }; MAX_VOLUMES];
 static VOLUME_LOCK: Spinlock<()> = Spinlock::new(());
 static MOUNT_COUNT: AtomicU32 = AtomicU32::new(0);

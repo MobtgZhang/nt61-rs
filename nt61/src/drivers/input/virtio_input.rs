@@ -141,26 +141,28 @@ impl Queue {
 }
 
 fn add_event_buffer(queue: &mut Queue) -> Option<u16> {
-    let buffer = pool::allocate_tagged(PoolType::NonPaged, EVENT_SIZE, EVENT_BUFFER_TAG);
-    if buffer.is_null() {
-        return None;
-    }
-    let Some(address) = translate(buffer as u64) else {
-        pool::free(buffer);
-        return None;
-    };
-    let Some(index) = queue.next_descriptor() else {
-        pool::free(buffer);
-        return None;
-    };
     unsafe {
-        core::ptr::write_bytes(buffer, 0, EVENT_SIZE);
-        (*queue.descriptors.add(usize::from(index))).address = address;
-        (*queue.descriptors.add(usize::from(index))).length = EVENT_SIZE as u32;
-        (*queue.descriptors.add(usize::from(index))).flags = DESC_F_WRITE;
+        let buffer = pool::allocate_tagged(PoolType::NonPaged, EVENT_SIZE, EVENT_BUFFER_TAG);
+        if buffer.is_null() {
+            return None;
+        }
+        let Some(address) = translate(buffer as u64) else {
+            pool::free(buffer);
+            return None;
+        };
+        let Some(index) = queue.next_descriptor() else {
+            pool::free(buffer);
+            return None;
+        };
+        unsafe {
+            core::ptr::write_bytes(buffer, 0, EVENT_SIZE);
+            (*queue.descriptors.add(usize::from(index))).address = address;
+            (*queue.descriptors.add(usize::from(index))).length = EVENT_SIZE as u32;
+            (*queue.descriptors.add(usize::from(index))).flags = DESC_F_WRITE;
+        }
+        queue.buffers[usize::from(index)] = buffer;
+        Some(index)
     }
-    queue.buffers[usize::from(index)] = buffer;
-    Some(index)
 }
 
 fn push_available(queue: &Queue, index: u16) {
@@ -654,10 +656,8 @@ fn decode_pci_caps(dev: &pci::PciDevice) -> Option<(CapRegion, CapRegion, CapReg
                         multiplier = pcicfg::read_config_dword(bus, slot, func, ptr + 16);
                     }
                 }
-                CAP_ISR_CFG => {
-                    if isr.is_none() {
-                        isr = Some(region);
-                    }
+                CAP_ISR_CFG if isr.is_none() => {
+                    isr = Some(region);
                 }
                 _ => {}
             }
@@ -680,7 +680,7 @@ fn map_region(dev: &pci::PciDevice, region: &CapRegion) -> Option<*mut u8> {
     #[cfg(target_arch = "x86_64")]
     {
         let mapped = crate::mm::syspte::map_io_space(bar_base + region.offset, pages)?;
-        return Some(mapped as *mut u8);
+        Some(mapped as *mut u8)
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
@@ -719,21 +719,21 @@ pub fn init() {
             continue;
         }
         // Memory/BAR access must be enabled before any BAR read.
-        enable_pci_decode(&pci_dev);
+        enable_pci_decode(pci_dev);
 
-        let Some((common_cap, notify_cap, isr_cap, multiplier)) = decode_pci_caps(&pci_dev) else {
+        let Some((common_cap, notify_cap, isr_cap, multiplier)) = decode_pci_caps(pci_dev) else {
             trace("virtio-input: cap decode FAILED\r\n");
             continue;
         };
-        let Some(common) = map_region(&pci_dev, &common_cap) else {
+        let Some(common) = map_region(pci_dev, &common_cap) else {
             trace("virtio-input: common cfg map FAILED\r\n");
             continue;
         };
-        let Some(notify) = map_region(&pci_dev, &notify_cap) else {
+        let Some(notify) = map_region(pci_dev, &notify_cap) else {
             trace("virtio-input: notify map FAILED\r\n");
             continue;
         };
-        let Some(isr) = map_region(&pci_dev, &isr_cap) else {
+        let Some(isr) = map_region(pci_dev, &isr_cap) else {
             trace("virtio-input: isr map FAILED\r\n");
             continue;
         };

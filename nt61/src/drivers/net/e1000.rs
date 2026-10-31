@@ -228,11 +228,11 @@ fn init_nic(n: &mut Nic) -> bool {
         // read MAC from the device's Receive Address registers
         let ral = core::ptr::read_volatile((mmio as *const u32).add(0x5400 / 4));
         let rah = core::ptr::read_volatile((mmio as *const u32).add(0x5404 / 4));
-        n.mac[0] = (ral >> 0) as u8;
+        n.mac[0] = ral as u8;
         n.mac[1] = (ral >> 8) as u8;
         n.mac[2] = (ral >> 16) as u8;
         n.mac[3] = (ral >> 24) as u8;
-        n.mac[4] = (rah >> 0) as u8;
+        n.mac[4] = rah as u8;
         n.mac[5] = (rah >> 8) as u8;
         n.link_up = (core::ptr::read_volatile((mmio as *const u32).add((REG_STATUS / 4) as usize))
             & 2)
@@ -413,10 +413,7 @@ pub fn send(nic_idx: usize, data: &[u8]) -> bool {
 /// Receive a packet from the e1000 NIC
 pub fn receive(nic_idx: usize, buffer: &mut [u8]) -> Option<usize> {
     let nics = get_nics();
-    let n = match nics[nic_idx].as_mut() {
-        Some(n) => n,
-        None => return None,
-    };
+    let n = nics[nic_idx].as_mut()?;
 
     if !n.initialised {
         return None;

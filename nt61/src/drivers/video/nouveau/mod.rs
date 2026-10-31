@@ -10,7 +10,7 @@
 //! - NV120 (Pascal): GeForce GTX 1000
 //! - NV140 (Turing): GeForce RTX 2000
 //
-//! Legacy GPU support:
+//!   Legacy GPU support:
 //! - Curie/G70 (GeForce 6xxx/7xxx)
 
 pub mod nouveau_fb;
@@ -94,7 +94,7 @@ pub fn init() -> Option<NouveauDevice> {
     let devices = pci::enumerate();
     for dev in devices {
         if dev.vendor_id == NVIDIA_VENDOR_ID && dev.class_code == 0x03 {
-            let mut device = NouveauDevice::new(&dev);
+            let mut device = NouveauDevice::new(dev);
 
             if device.init().is_ok() {
                 return Some(device);
@@ -103,4 +103,3 @@ pub fn init() -> Option<NouveauDevice> {
     }
     None
 }
-

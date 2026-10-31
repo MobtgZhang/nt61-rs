@@ -16,7 +16,7 @@
 //! - RDNA 2 (RX 6000 series)
 //! - RDNA 3 (RX 7000 series)
 //
-//! Reference: AMD GPU programmer manuals and Linux amdgpu driver
+//!   Reference: AMD GPU programmer manuals and Linux amdgpu driver
 
 use crate::drivers::video::amd::radeon_reg::*;
 use crate::drivers::video::core::gpu_common::AmdFamily;

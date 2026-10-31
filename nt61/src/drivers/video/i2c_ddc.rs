@@ -10,7 +10,7 @@
 //! - **x86_64 with Intel GPU**: GPIO bit-bang I2C via super-I/O port registers
 //! - **x86_64 with VGA**: Standard VGA DDC via I2C-over-GPIO
 //
-//! Clean-room implementation based on VESA DDC2B standard.
+//!   Clean-room implementation based on VESA DDC2B standard.
 
 use crate::drivers::video::log;
 use alloc::boxed::Box;
@@ -47,7 +47,7 @@ pub trait I2cMaster {
     /// Start an I2C transaction.
     /// - `addr`: 7-bit I2C slave address (shifted, not shifted)
     /// - `read`: true for read transaction, false for write
-    /// Returns true if the slave acknowledged.
+    ///   Returns true if the slave acknowledged.
     fn start(&mut self, addr: u8, read: bool) -> bool;
 
     /// write a byte and check for acknowledgment.
@@ -667,7 +667,7 @@ pub fn probe_displays() -> Vec<crate::drivers::video::edid::DisplayInfo> {
                             .map(|(i, b)| (*b as u16) << (8 * (2 - i) as u32))
                             .fold(0u16, |a, b| a.wrapping_add(b));
                         let product_id = info.product_id;
-                        let manufacturer = info.manufacturer.clone();
+                        let manufacturer = info.manufacturer;
                         let packed = ((mfr_hash as u32) << 16) | (product_id as u32 & 0xFFFF);
                         LAST_DISPLAY_INFO.store(packed, core::sync::atomic::Ordering::Relaxed);
                         LAST_DISPLAY_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);

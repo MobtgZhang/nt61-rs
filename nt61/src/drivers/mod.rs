@@ -41,7 +41,7 @@
 //! 7. `video::init()`      - start VGA / EfiFb / Bochs VBE
 //! 8. `timer::init()`      - start HPET / ACPI PM timer
 //
-//! `smoke_test()` runs every driver's post-init self-check.
+//!    `smoke_test()` runs every driver's post-init self-check.
 
 // The drivers below carry the register/IOCTL surface of their
 // real-world NT 6.1 counterparts; the unused_imports / dead_code
@@ -74,6 +74,7 @@ pub mod fltmgr;
 pub mod ksec;
 pub mod partmgr;
 pub mod pcw;
+pub mod platform;
 pub mod spldr;
 pub mod volmgr;
 pub mod volsnap;

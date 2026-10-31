@@ -15,11 +15,11 @@
 //!   * `PshedAcquireBugCheckData` / `PshedReleaseBugCheckData` —
 //!     claim bugcheck data during crash dump
 //
-//! On x86_64, the PSHED manages Machine Check Architecture (MCA) registers:
-//!   IA32_MCi_CTL, IA32_MCi_STATUS, IA32_MCi_ADDR, IA32_MCi_MISC
+//!     On x86_64, the PSHED manages Machine Check Architecture (MCA) registers:
+//!     IA32_MCi_CTL, IA32_MCi_STATUS, IA32_MCi_ADDR, IA32_MCi_MISC
 //
-//! Clean-room implementation. Spec source: Windows Internals 6th ed.,
-//! ch.14 (Hardware Error Architecture), WDK pshed.h.
+//!     Clean-room implementation. Spec source: Windows Internals 6th ed.,
+//!     ch.14 (Hardware Error Architecture), WDK pshed.h.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -198,8 +198,7 @@ pub fn pshed_release_bugcheck_data() {
 
 /// `PshedQuerySystemErrorMaskData` — read the system error mask (MCE mask).
 pub fn pshed_query_error_mask() -> u64 {
-    let mcg_cap = rdmsr(IA32_MCG_CAP);
-    mcg_cap // Return the raw MCA capability register as status
+    rdmsr(IA32_MCG_CAP) // Return the raw MCA capability register as status
 }
 
 /// `PshedSetSystemErrorMaskData` — set the system error mask.

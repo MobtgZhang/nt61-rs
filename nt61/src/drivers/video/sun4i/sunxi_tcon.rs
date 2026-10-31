@@ -4,6 +4,8 @@
 //
 //! Clean-room implementation based on public specifications.
 
+use crate::libs::ntdll::types::NTSTATUS;
+
 /// TCON device
 pub struct TconDevice {}
 
@@ -14,12 +16,12 @@ impl TconDevice {
     }
 
     /// Initialize TCON
-    pub fn init(&mut self) -> Result<(), ()> {
+    pub fn init(&mut self) -> Result<(), NTSTATUS> {
         Ok(())
     }
 
     /// Configure TCON timing
-    pub fn configure(&mut self, width: u32, height: u32) -> Result<(), ()> {
+    pub fn configure(&mut self, width: u32, height: u32) -> Result<(), NTSTATUS> {
         let _ = (width, height);
         Ok(())
     }

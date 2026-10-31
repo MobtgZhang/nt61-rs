@@ -25,6 +25,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn read_device_features(&mut self) -> u64 {
         match self {
             AnyTransport::Pci(t) => PciTransport::read_device_features(t),
@@ -32,6 +35,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn write_driver_features(&mut self, features: u64) {
         match self {
             AnyTransport::Pci(t) => PciTransport::write_driver_features(t, features),
@@ -39,6 +45,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn setup_queue(
         &mut self,
         index: u16,
@@ -50,6 +59,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn max_queue_size(&mut self, index: u16) -> u32 {
         match self {
             AnyTransport::Pci(t) => PciTransport::max_queue_size(t, index),
@@ -57,6 +69,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn notify(&mut self, index: u16) {
         match self {
             AnyTransport::Pci(t) => PciTransport::notify(t, index),
@@ -64,6 +79,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn read_isr(&mut self) -> u32 {
         match self {
             AnyTransport::Pci(t) => PciTransport::read_isr(t),
@@ -71,6 +89,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn read_status(&mut self) -> u8 {
         match self {
             AnyTransport::Pci(t) => PciTransport::read_status(t),
@@ -78,6 +99,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn write_status(&mut self, status: u8) {
         match self {
             AnyTransport::Pci(t) => PciTransport::write_status(t, status),
@@ -85,6 +109,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn reset(&mut self) {
         match self {
             AnyTransport::Pci(t) => PciTransport::reset(t),
@@ -92,6 +119,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn config_read_u8(&self, offset: u64) -> u8 {
         match self {
             AnyTransport::Pci(t) => PciTransport::config_read_u8(t, offset),
@@ -99,6 +129,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn config_read_u16(&self, offset: u64) -> u16 {
         match self {
             AnyTransport::Pci(t) => PciTransport::config_read_u16(t, offset),
@@ -106,6 +139,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn config_read_u32(&self, offset: u64) -> u32 {
         match self {
             AnyTransport::Pci(t) => PciTransport::config_read_u32(t, offset),
@@ -113,6 +149,9 @@ impl Transport for AnyTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn config_read_u64(&self, offset: u64) -> u64 {
         match self {
             AnyTransport::Pci(t) => PciTransport::config_read_u64(t, offset),
@@ -155,6 +194,9 @@ fn virtio_type_from_pci_id(pci_id: u16) -> Option<u32> {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Bring one discovered device up over its transport and record it
 /// under the discovered index.
 unsafe fn attach_device(devices: &mut VirtioDevices, virtio_type: u32, transport: AnyTransport) {
@@ -200,6 +242,9 @@ use crate::ke::sync::Spinlock;
 
 static CACHED_DEVICES: Spinlock<Option<VirtioDevices>> = Spinlock::new(None);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_READ handler for virtio-blk devices.
 unsafe extern "C" fn virtio_blk_read(
     _device: *mut crate::io::DeviceObject,
@@ -227,6 +272,9 @@ unsafe extern "C" fn virtio_blk_read(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_WRITE handler for virtio-blk devices.
 unsafe extern "C" fn virtio_blk_write(
     _device: *mut crate::io::DeviceObject,
@@ -254,6 +302,9 @@ unsafe extern "C" fn virtio_blk_write(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Register virtio-blk devices into the storage dispatch registry.
 pub unsafe fn register_dispatch() {
     crate::hal::serial::write_string_always("[RVDRV] register_dispatch enter\r\n");
@@ -283,6 +334,9 @@ pub unsafe fn register_dispatch() {
     crate::hal::serial::write_string_always("[RVDRV] registered\r\n");
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Probe the PCIe root complex and the virtio-mmio slots, and
 /// initialise matching drivers on whichever transport carries them.
 pub unsafe fn probe_virtio_devices() -> VirtioDevices {

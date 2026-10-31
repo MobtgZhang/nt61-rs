@@ -62,8 +62,7 @@ const PORT_SERR: u32 = 0x2C;
 /// (Section 4.2: the command list has 32 slots and SAct has 32 bits).
 pub const AHCI_NCQ_MAX_TAGS: usize = 32;
 
-/// FIS type: NCQ DMA Setup (FIS type 0x41 per AHCI 1.3.1 Section 5.3.4)
-
+/// FIS type: NCQ DMA Setup (FIS type 0x41 per AHCI 1.3.1 Section 5.3.4)///
 /// ATA command: READ FPDMA QUEUED (AHCI 1.3.1 / SAT-3)
 const ATA_CMD_READ_FPDMA_QUEUED: u8 = 0x60;
 
@@ -257,7 +256,7 @@ static mut DISK_LOCATIONS: [Option<(usize, usize)>; 128] = [None; 128];
 /// - 1KB command list (32 command headers * 32 bytes each)
 /// - 2KB command table (one table with 16 PRDs = 32 bytes + 256 bytes PRD table)
 /// - 256 bytes FIS
-/// Total: 4096 bytes aligned
+///   Total: 4096 bytes aligned
 const AHCI_CMD_STRUCT_SIZE: usize = 4096;
 /// Command table region inside one `AHCI_CMD_STRUCT_SIZE` block.
 pub const AHCI_CMD_TABLE_SIZE: usize = 2048;
@@ -306,6 +305,9 @@ impl AhciDmaPool {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Allocate a DMA buffer from the pool. Returns None if all buffers are in use.
     unsafe fn allocate(&mut self) -> Option<&mut AhciDmaBuffer> {
         for i in 0..AHCI_CMD_STRUCTS_PER_CTRL {
@@ -317,6 +319,9 @@ impl AhciDmaPool {
         None
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Free a DMA buffer back to the pool.
     unsafe fn free(&mut self, buffer: &mut AhciDmaBuffer) {
         buffer.in_use = false;
@@ -326,6 +331,9 @@ impl AhciDmaPool {
 /// Global DMA pool for AHCI controllers
 static mut AHCI_DMA_POOLS: [Option<AhciDmaPool>; 4] = [None, None, None, None];
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialize the DMA pool for a controller. Must be called during init.
 unsafe fn init_dma_pool(controller_idx: usize) -> bool {
     if controller_idx >= 4 {
@@ -360,7 +368,7 @@ unsafe fn init_dma_pool(controller_idx: usize) -> bool {
             if phys > 0xFFFF_FFFF {
                 return false;
             }
-            if phys % 4 != 0 {
+            if !phys.is_multiple_of(4) {
                 return false;
             }
 
@@ -381,6 +389,9 @@ unsafe fn init_dma_pool(controller_idx: usize) -> bool {
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Allocate a DMA buffer for AHCI operations.
 unsafe fn allocate_ahci_dma(controller_idx: usize) -> Option<&'static mut AhciDmaBuffer> {
     if controller_idx >= 4 {
@@ -391,6 +402,9 @@ unsafe fn allocate_ahci_dma(controller_idx: usize) -> Option<&'static mut AhciDm
     pool.allocate()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Free a DMA buffer back to the pool.
 unsafe fn free_ahci_dma(controller_idx: usize, buffer: &mut AhciDmaBuffer) {
     if controller_idx < 4 {
@@ -400,6 +414,9 @@ unsafe fn free_ahci_dma(controller_idx: usize, buffer: &mut AhciDmaBuffer) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Release a DMA pool that was reserved by `init_dma_pool` but never
 /// successfully attached to a controller.
 unsafe fn release_dma_pool(controller_idx: usize) {
@@ -581,6 +598,9 @@ fn probe_port(base: u64, port: usize) -> Option<DiskInfo> {
     Some(info)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn record_disk_location(controller_idx: usize, port: usize) {
     if controller_idx < 4 && port < 32 {
         let slot = controller_idx * 32 + port;
@@ -588,6 +608,9 @@ unsafe fn record_disk_location(controller_idx: usize, port: usize) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn clear_disk_locations() {
     for location in (*core::ptr::addr_of_mut!(DISK_LOCATIONS)).iter_mut() {
         *location = None;
@@ -659,13 +682,11 @@ fn init_controller(c: &mut AhciController) -> bool {
             break;
         }
 
-        if c.pi & (1 << port) != 0 {
-            if probe_port(mmio, port).is_some() {
-                unsafe {
-                    record_disk_location(c.controller_idx as usize, port);
-                }
-                disks_found += 1;
+        if c.pi & (1 << port) != 0 && probe_port(mmio, port).is_some() {
+            unsafe {
+                record_disk_location(c.controller_idx as usize, port);
             }
+            disks_found += 1;
         }
     }
 
@@ -689,10 +710,8 @@ pub fn init() {
     for dev in devs.iter() {
         if (dev.class_code, dev.subclass, dev.prog_if) == AHCI_PCI_CLASS {
             // Initialize DMA pool for this controller.
-            if ctrl_idx < 4 {
-                if !unsafe { init_dma_pool(ctrl_idx) } {
-                    // DMA pool allocation failed, continue
-                }
+            if ctrl_idx < 4 && !unsafe { init_dma_pool(ctrl_idx) } {
+                // DMA pool allocation failed, continue
             }
 
             if let Some(info) =
@@ -724,6 +743,9 @@ pub fn init() {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_READ handler for AHCI controllers, called by the dispatcher.
 unsafe extern "C" fn ahci_read_dispatch(
     _device: *mut crate::io::DeviceObject,
@@ -739,6 +761,9 @@ unsafe extern "C" fn ahci_read_dispatch(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_WRITE handler for AHCI controllers, called by the dispatcher.
 unsafe extern "C" fn ahci_write_dispatch(
     _device: *mut crate::io::DeviceObject,
@@ -757,24 +782,29 @@ unsafe extern "C" fn ahci_write_dispatch(
 /// Create a DriverObject with AHCI READ/WRITE dispatch handlers and
 /// register DeviceObjects into the storage dispatch registry.
 fn register_dispatch_objects() {
-    let driver = crate::io::allocate_driver(b"\\Driver\\storahci");
-    if driver.is_null() {
-        return;
-    }
-    let mut table = crate::io::dispatch::DispatchTable::new();
-    table.major_functions[crate::io::major::IRP_MJ_READ as usize] = Some(ahci_read_dispatch);
-    table.major_functions[crate::io::major::IRP_MJ_WRITE as usize] = Some(ahci_write_dispatch);
-    table.install(driver);
-    // One device object per controller that actually probed, instead
-    // of four placeholders that made every controller index look
-    // present even when nothing was behind it.
-    for ctrl in 0..count() {
-        let device =
-            crate::io::create_device(driver, crate::io::DeviceType::Disk, b"\\Device\\Harddisk");
-        if device.is_null() {
-            continue;
+    unsafe {
+        let driver = crate::io::allocate_driver(b"\\Driver\\storahci");
+        if driver.is_null() {
+            return;
         }
-        crate::drivers::storage::io_dispatch::register_device(ctrl, device);
+        let mut table = crate::io::dispatch::DispatchTable::new();
+        table.major_functions[crate::io::major::IRP_MJ_READ as usize] = Some(ahci_read_dispatch);
+        table.major_functions[crate::io::major::IRP_MJ_WRITE as usize] = Some(ahci_write_dispatch);
+        table.install(driver);
+        // One device object per controller that actually probed, instead
+        // of four placeholders that made every controller index look
+        // present even when nothing was behind it.
+        for ctrl in 0..count() {
+            let device = crate::io::create_device(
+                driver,
+                crate::io::DeviceType::Disk,
+                b"\\Device\\Harddisk",
+            );
+            if device.is_null() {
+                continue;
+            }
+            crate::drivers::storage::io_dispatch::register_device(ctrl, device);
+        }
     }
 }
 
@@ -824,6 +854,9 @@ pub fn read_sector(channel: usize, port: usize, lba: u32, buf: &mut [u8]) -> boo
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read a single sector using PIO (Programmed I/O) mode.
 /// This is more reliable than DMA in virtualized environments like QEMU.
 pub unsafe fn ahci_read_sector_pio(
@@ -910,52 +943,40 @@ pub unsafe fn ahci_read_sector_pio(
 
     // Set up command header: 1 PRD, write=0 (read), C=1
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050001u32);
+    core::ptr::write_volatile(cmd_list_virt.add(4) as *mut u32, cmd_table_phys as u32);
     core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(4) as *mut u32,
-        cmd_table_phys as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(8) as *mut u32,
+        cmd_list_virt.add(8) as *mut u32,
         (cmd_table_phys >> 32) as u32,
     );
 
     // Set up FIS buffer (H2D register FIS)
     core::ptr::write_volatile(cmd_table_virt as *mut u32, 0x27594027u32); // FIS type H2D, C bit set
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(4) as *mut u32,
+        cmd_table_virt.add(4) as *mut u32,
         ATA_CMD_READ_PIO_EXT as u32,
     );
 
     // LBA (48-bit LBA)
-    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(8) as *mut u32, lba as u32);
+    core::ptr::write_volatile(cmd_table_virt.add(8) as *mut u32, lba);
+    core::ptr::write_volatile(cmd_table_virt.add(12) as *mut u32, (lba >> 8) & 0xFF);
+    core::ptr::write_volatile(cmd_table_virt.add(16) as *mut u32, (lba >> 16) & 0xFF);
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(12) as *mut u32,
-        ((lba >> 8) & 0xFF) as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(16) as *mut u32,
-        ((lba >> 16) & 0xFF) as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(20) as *mut u32,
+        cmd_table_virt.add(20) as *mut u32,
         0x00000100u32, // Sector count = 1 in high byte
     );
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(24) as *mut u32,
+        cmd_table_virt.add(24) as *mut u32,
         0x40u32, // Device = LBA mode
     );
 
     // Set up PRD for data buffer at offset 128 (256 bytes per PRD entry)
+    core::ptr::write_volatile(cmd_table_virt.add(128) as *mut u32, dma_phys as u32);
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(128) as *mut u32,
-        dma_phys as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(132) as *mut u32,
+        cmd_table_virt.add(132) as *mut u32,
         ((dma_phys >> 32) & 0xFFFFFFFF) as u32,
     );
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(136) as *mut u32,
+        cmd_table_virt.add(136) as *mut u32,
         (dma_size as u32 - 1) | PRD_EOT,
     );
 
@@ -1003,7 +1024,7 @@ pub unsafe fn ahci_read_sector_pio(
         }
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
-        if (tfd & (TFD_ERR as u32)) != 0 {
+        if (tfd & TFD_ERR) != 0 {
             // kprintln!("[AHCI] READ error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
@@ -1033,6 +1054,9 @@ pub unsafe fn ahci_read_sector_pio(
     success
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn ahci_read_sector(
     ctrl: &mut AhciController,
     port: usize,
@@ -1114,49 +1138,31 @@ unsafe fn ahci_read_sector(
 
     // Set up command header using RAM writes
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050001u32);
+    core::ptr::write_volatile(cmd_list_virt.add(4) as *mut u32, cmd_table_phys as u32);
     core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(4) as *mut u32,
-        cmd_table_phys as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(8) as *mut u32,
+        cmd_list_virt.add(8) as *mut u32,
         (cmd_table_phys >> 32) as u32,
     );
 
     // Set up H2D Register FIS
     core::ptr::write_volatile(cmd_table_virt as *mut u32, 0x27594027u32);
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(4) as *mut u32,
+        cmd_table_virt.add(4) as *mut u32,
         ATA_CMD_READ_DMA_EXT as u32,
     );
-    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(8) as *mut u32, lba as u32);
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(12) as *mut u32,
-        ((lba >> 8) & 0xFF) as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(16) as *mut u32,
-        ((lba >> 16) & 0xFF) as u32,
-    );
-    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(20) as *mut u32, 0x40u32);
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(24) as *mut u32,
-        0x00000100u32,
-    );
+    core::ptr::write_volatile(cmd_table_virt.add(8) as *mut u32, lba);
+    core::ptr::write_volatile(cmd_table_virt.add(12) as *mut u32, (lba >> 8) & 0xFF);
+    core::ptr::write_volatile(cmd_table_virt.add(16) as *mut u32, (lba >> 16) & 0xFF);
+    core::ptr::write_volatile(cmd_table_virt.add(20) as *mut u32, 0x40u32);
+    core::ptr::write_volatile(cmd_table_virt.add(24) as *mut u32, 0x00000100u32);
 
     // Set up PRD
+    core::ptr::write_volatile(cmd_table_virt.add(128) as *mut u32, dma_phys as u32);
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(128) as *mut u32,
-        dma_phys as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(132) as *mut u32,
+        cmd_table_virt.add(132) as *mut u32,
         ((dma_phys >> 32) & 0xFFFFFFFF) as u32,
     );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(136) as *mut u32,
-        511 | PRD_EOT,
-    );
+    core::ptr::write_volatile(cmd_table_virt.add(136) as *mut u32, 511 | PRD_EOT);
 
     // Stop the port first
     stop_port(mmio, port_offset);
@@ -1204,7 +1210,7 @@ unsafe fn ahci_read_sector(
         }
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
-        if (tfd & (TFD_ERR as u32)) != 0 {
+        if (tfd & TFD_ERR) != 0 {
             // kprintln!("[AHCI] READ DMA error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
@@ -1238,6 +1244,9 @@ unsafe fn ahci_read_sector(
 // AHCI DMA Multi-Sector Functions (using PRD Table)
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read multiple sectors using DMA mode with proper PRD table management.
 ///
 /// This function properly builds the Physical Region Descriptor (PRD) table
@@ -1343,41 +1352,40 @@ pub unsafe fn ahci_dma_read_sectors(
     // Set up command header
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050001u32);
     core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(4) as *mut u32,
+        cmd_list_virt.add(4) as *mut u32,
         cmd_buf.cmd_table_phys as u32,
     );
     core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(8) as *mut u32,
+        cmd_list_virt.add(8) as *mut u32,
         ((cmd_buf.cmd_table_phys >> 32) & 0xFFFFFFFF) as u32,
     );
     core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(12) as *mut u32,
+        cmd_list_virt.add(12) as *mut u32,
         (prd_count as u32 * 16) | ((data_size as u32) & 0x0003FFFF),
     );
 
     // Build H2D Register FIS
     let fis_virt = cmd_table_virt;
     core::ptr::write_volatile(fis_virt as *mut u32, 0x27594027u32);
-    core::ptr::write_volatile((fis_virt as *mut u8).add(4) as *mut u32, 0u32);
+    core::ptr::write_volatile(fis_virt.add(4) as *mut u32, 0u32);
     core::ptr::write_volatile(
-        (fis_virt as *mut u8).add(8) as *mut u32,
+        fis_virt.add(8) as *mut u32,
         (lba & 0xFF) as u32
             | (((lba >> 8) & 0xFF) as u32) << 8
             | (((lba >> 16) & 0xFF) as u32) << 16
             | (0x40u32 << 24),
     );
     core::ptr::write_volatile(
-        (fis_virt as *mut u8).add(12) as *mut u32,
+        fis_virt.add(12) as *mut u32,
         ((lba >> 24) & 0xFF) as u32
             | (((lba >> 32) & 0xFF) as u32) << 8
-            | (((lba >> 40) & 0xFF) as u32) << 16
-            | (0u32 << 24),
+            | (((lba >> 40) & 0xFF) as u32) << 16,
     );
     core::ptr::write_volatile(
-        (fis_virt as *mut u8).add(16) as *mut u32,
+        fis_virt.add(16) as *mut u32,
         sectors as u32 | ((sectors as u32) << 8),
     );
-    core::ptr::write_volatile((fis_virt as *mut u8).add(20) as *mut u32, 0u32);
+    core::ptr::write_volatile(fis_virt.add(20) as *mut u32, 0u32);
 
     // Stop port and write registers
     stop_port(mmio, port_offset);
@@ -1423,7 +1431,7 @@ pub unsafe fn ahci_dma_read_sectors(
         let ci = mmio_read32(mmio, (port_offset + PORT_CI as u64) as u32);
         if ci & 0x01 == 0 {
             let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
-            if (tfd & (TFD_ERR as u32)) != 0 {
+            if (tfd & TFD_ERR) != 0 {
                 // kprintln!("[AHCI DMA] READ error (TFD=0x{:08x}, LBA={})", tfd, lba);
                 break;
             }
@@ -1432,7 +1440,7 @@ pub unsafe fn ahci_dma_read_sectors(
         }
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
-        if (tfd & (TFD_ERR as u32)) != 0 {
+        if (tfd & TFD_ERR) != 0 {
             // kprintln!("[AHCI DMA] READ error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
@@ -1460,6 +1468,9 @@ pub unsafe fn ahci_dma_read_sectors(
     success
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write multiple sectors using DMA mode with proper PRD table management.
 pub unsafe fn ahci_dma_write_sectors(
     ctrl: &mut AhciController,
@@ -1544,40 +1555,37 @@ pub unsafe fn ahci_dma_write_sectors(
     // Command header with W=1 for write
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050005u32);
     core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(4) as *mut u32,
+        cmd_list_virt.add(4) as *mut u32,
         cmd_buf.cmd_table_phys as u32,
     );
     core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(8) as *mut u32,
+        cmd_list_virt.add(8) as *mut u32,
         ((cmd_buf.cmd_table_phys >> 32) & 0xFFFFFFFF) as u32,
     );
     core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(12) as *mut u32,
+        cmd_list_virt.add(12) as *mut u32,
         (prd_count as u32 * 16) | ((data_size as u32) & 0x0003FFFF),
     );
 
     // H2D Register FIS with WRITE DMA EXT (0x35)
     let fis_virt = cmd_table_virt;
     core::ptr::write_volatile(fis_virt as *mut u32, 0x27594027u32);
+    core::ptr::write_volatile(fis_virt.add(4) as *mut u32, ATA_CMD_WRITE_DMA_EXT as u32);
     core::ptr::write_volatile(
-        (fis_virt as *mut u8).add(4) as *mut u32,
-        ATA_CMD_WRITE_DMA_EXT as u32,
-    );
-    core::ptr::write_volatile(
-        (fis_virt as *mut u8).add(8) as *mut u32,
+        fis_virt.add(8) as *mut u32,
         (lba & 0xFF) as u32
             | (((lba >> 8) & 0xFF) as u32) << 8
             | (((lba >> 16) & 0xFF) as u32) << 16
             | (0x40u32 << 24),
     );
     core::ptr::write_volatile(
-        (fis_virt as *mut u8).add(12) as *mut u32,
+        fis_virt.add(12) as *mut u32,
         ((lba >> 24) & 0xFF) as u32
             | (((lba >> 32) & 0xFF) as u32) << 8
             | (((lba >> 40) & 0xFF) as u32) << 16,
     );
     core::ptr::write_volatile(
-        (fis_virt as *mut u8).add(16) as *mut u32,
+        fis_virt.add(16) as *mut u32,
         sectors as u32 | ((sectors as u32) << 8),
     );
 
@@ -1619,7 +1627,7 @@ pub unsafe fn ahci_dma_write_sectors(
         let ci = mmio_read32(mmio, (port_offset + PORT_CI as u64) as u32);
         if ci & 0x01 == 0 {
             let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
-            if (tfd & (TFD_ERR as u32)) != 0 {
+            if (tfd & TFD_ERR) != 0 {
                 // kprintln!("[AHCI DMA] WRITE error (TFD=0x{:08x}, LBA={})", tfd, lba);
                 break;
             }
@@ -1628,7 +1636,7 @@ pub unsafe fn ahci_dma_write_sectors(
         }
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
-        if (tfd & (TFD_ERR as u32)) != 0 {
+        if (tfd & TFD_ERR) != 0 {
             // kprintln!("[AHCI DMA] WRITE error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
@@ -1653,6 +1661,9 @@ pub unsafe fn ahci_dma_write_sectors(
     success
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Build a Physical Region Descriptor (PRD) table for DMA transfers.
 ///
 /// The PRD table is placed in the command table starting at offset `prd_base`.
@@ -1709,7 +1720,7 @@ pub unsafe fn build_prd_table(
         } else {
             AhciPrd::new(current_phys, bytes_this_prd as u32)
         };
-        let Some(prd) = prd else { return None };
+        let prd = prd?;
 
         unsafe {
             core::ptr::write_volatile(prd_ptr, prd);
@@ -1747,6 +1758,9 @@ pub fn write_sector(channel: usize, port: usize, lba: u32, buf: &[u8]) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write a single sector using PIO mode.
 pub unsafe fn ahci_write_sector_pio(
     ctrl: &mut AhciController,
@@ -1829,47 +1843,32 @@ pub unsafe fn ahci_write_sector_pio(
 
     // Set up command header: write=1, C=1
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050000u32 | (1 << 6));
+    core::ptr::write_volatile(cmd_list_virt.add(4) as *mut u32, cmd_table_phys as u32);
     core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(4) as *mut u32,
-        cmd_table_phys as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(8) as *mut u32,
+        cmd_list_virt.add(8) as *mut u32,
         (cmd_table_phys >> 32) as u32,
     );
 
     // Set up H2D FIS
     core::ptr::write_volatile(cmd_table_virt as *mut u32, 0x27594027u32);
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(4) as *mut u32,
+        cmd_table_virt.add(4) as *mut u32,
         ATA_CMD_WRITE_PIO_EXT as u32,
     );
-    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(8) as *mut u32, lba as u32);
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(12) as *mut u32,
-        ((lba >> 8) & 0xFF) as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(16) as *mut u32,
-        ((lba >> 16) & 0xFF) as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(20) as *mut u32,
-        0x00000100u32,
-    );
-    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(24) as *mut u32, 0x40u32);
+    core::ptr::write_volatile(cmd_table_virt.add(8) as *mut u32, lba);
+    core::ptr::write_volatile(cmd_table_virt.add(12) as *mut u32, (lba >> 8) & 0xFF);
+    core::ptr::write_volatile(cmd_table_virt.add(16) as *mut u32, (lba >> 16) & 0xFF);
+    core::ptr::write_volatile(cmd_table_virt.add(20) as *mut u32, 0x00000100u32);
+    core::ptr::write_volatile(cmd_table_virt.add(24) as *mut u32, 0x40u32);
 
     // Set up PRD
+    core::ptr::write_volatile(cmd_table_virt.add(128) as *mut u32, dma_phys as u32);
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(128) as *mut u32,
-        dma_phys as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(132) as *mut u32,
+        cmd_table_virt.add(132) as *mut u32,
         ((dma_phys >> 32) & 0xFFFFFFFF) as u32,
     );
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(136) as *mut u32,
+        cmd_table_virt.add(136) as *mut u32,
         (dma_size as u32 - 1) | PRD_EOT,
     );
 
@@ -1916,7 +1915,7 @@ pub unsafe fn ahci_write_sector_pio(
         }
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
-        if (tfd & (TFD_ERR as u32)) != 0 {
+        if (tfd & TFD_ERR) != 0 {
             // kprintln!("[AHCI] WRITE error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
@@ -1943,6 +1942,9 @@ pub unsafe fn ahci_write_sector_pio(
     success
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write a single sector using DMA mode.
 unsafe fn ahci_write_sector(ctrl: &mut AhciController, port: usize, lba: u32, buf: &[u8]) -> bool {
     let mmio = ctrl.mmio_base;
@@ -2020,49 +2022,31 @@ unsafe fn ahci_write_sector(ctrl: &mut AhciController, port: usize, lba: u32, bu
 
     // Set up command header
     core::ptr::write_volatile(cmd_list_virt as *mut u32, 0x00050000u32 | (1 << 6));
+    core::ptr::write_volatile(cmd_list_virt.add(4) as *mut u32, cmd_table_phys as u32);
     core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(4) as *mut u32,
-        cmd_table_phys as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_list_virt as *mut u8).add(8) as *mut u32,
+        cmd_list_virt.add(8) as *mut u32,
         (cmd_table_phys >> 32) as u32,
     );
 
     // Set up H2D Register FIS
     core::ptr::write_volatile(cmd_table_virt as *mut u32, 0x27594027u32);
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(4) as *mut u32,
+        cmd_table_virt.add(4) as *mut u32,
         ATA_CMD_WRITE_DMA_EXT as u32,
     );
-    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(8) as *mut u32, lba as u32);
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(12) as *mut u32,
-        ((lba >> 8) & 0xFF) as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(16) as *mut u32,
-        ((lba >> 16) & 0xFF) as u32,
-    );
-    core::ptr::write_volatile((cmd_table_virt as *mut u8).add(20) as *mut u32, 0x40u32);
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(24) as *mut u32,
-        0x00000100u32,
-    );
+    core::ptr::write_volatile(cmd_table_virt.add(8) as *mut u32, lba);
+    core::ptr::write_volatile(cmd_table_virt.add(12) as *mut u32, (lba >> 8) & 0xFF);
+    core::ptr::write_volatile(cmd_table_virt.add(16) as *mut u32, (lba >> 16) & 0xFF);
+    core::ptr::write_volatile(cmd_table_virt.add(20) as *mut u32, 0x40u32);
+    core::ptr::write_volatile(cmd_table_virt.add(24) as *mut u32, 0x00000100u32);
 
     // Set up PRD
+    core::ptr::write_volatile(cmd_table_virt.add(128) as *mut u32, dma_phys as u32);
     core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(128) as *mut u32,
-        dma_phys as u32,
-    );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(132) as *mut u32,
+        cmd_table_virt.add(132) as *mut u32,
         ((dma_phys >> 32) & 0xFFFFFFFF) as u32,
     );
-    core::ptr::write_volatile(
-        (cmd_table_virt as *mut u8).add(136) as *mut u32,
-        511 | PRD_EOT,
-    );
+    core::ptr::write_volatile(cmd_table_virt.add(136) as *mut u32, 511 | PRD_EOT);
 
     // Stop the port first
     stop_port(mmio, port_offset);
@@ -2110,7 +2094,7 @@ unsafe fn ahci_write_sector(ctrl: &mut AhciController, port: usize, lba: u32, bu
         }
 
         let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
-        if (tfd & (TFD_ERR as u32)) != 0 {
+        if (tfd & TFD_ERR) != 0 {
             // kprintln!("[AHCI] WRITE DMA error (TFD=0x{:08x}, LBA={})", tfd, lba);
             break;
         }
@@ -2399,6 +2383,12 @@ impl NcqTagManager {
     }
 }
 
+impl Default for NcqTagManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Per-port NCQ runtime state, indexed by `(controller, port)`.
 struct NcqPortState {
     tag_manager: NcqTagManager,
@@ -2503,7 +2493,7 @@ pub unsafe fn ncq_submit_command(
     let header_lo: u32 =
         0x0005_0005 | (1u32 << 10) | (1u32 << 11) | if is_write { 1u32 << 9 } else { 0 };
     let header_hi: u32 = (prd_count as u32 * 16) | ((data_size as u32) & 0x0003_FFFF);
-    let hdr_base = cmd_list_virt as *mut u8;
+    let hdr_base = cmd_list_virt;
     let hdr_offset = (tag as usize) * 32;
     core::ptr::write_volatile(hdr_base.add(hdr_offset) as *mut u32, header_lo);
     core::ptr::write_volatile(
@@ -2517,7 +2507,7 @@ pub unsafe fn ncq_submit_command(
     core::ptr::write_volatile(hdr_base.add(hdr_offset + 12) as *mut u32, header_hi);
 
     // Build H2D Register FIS with FPDMA QUEUED command.
-    let fis = cmd_table_virt as *mut u8;
+    let fis = cmd_table_virt;
     core::ptr::write_volatile(fis.add(0), 0x27); // FIS type = H2D Register
     let ata_cmd = if is_write {
         ATA_CMD_WRITE_FPDMA_QUEUED
@@ -2550,6 +2540,9 @@ pub unsafe fn ncq_submit_command(
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Read the SError register for a port (AHCI 1.3.1 Section 3.4.7).
 pub unsafe fn ncq_read_serror(mmio_base: u64, port: usize) -> u32 {
     if port >= AHCI_NCQ_MAX_TAGS {
@@ -2595,7 +2588,7 @@ pub fn ncq_handle_port_interrupt(controller_idx: usize, port: usize) -> u32 {
             }
 
             let tfd = mmio_read32(mmio, (port_offset + PORT_TFD as u64) as u32);
-            if (tfd & (TFD_ERR as u32)) != 0 {
+            if (tfd & TFD_ERR) != 0 {
                 had_error = true;
             }
 

@@ -63,6 +63,12 @@ impl DiskDevice {
     }
 }
 
+impl Default for DiskDevice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static mut DISKS: [DiskDevice; MAX_DISKS] = [const { DiskDevice::new() }; MAX_DISKS];
 static DISK_LOCK: Spinlock<()> = Spinlock::new(());
 static READ_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -73,10 +79,10 @@ static WRITE_COUNT: AtomicU32 = AtomicU32::new(0);
 pub fn init() {
     // Drive 0 (primary master) is the boot disk in QEMU.
     if ata::has_device(0) {
-        add_disk("PhysicalDrive0", 0, ata::total_sectors(0) as u64);
+        add_disk("PhysicalDrive0", 0, ata::total_sectors(0));
     }
     if ata::has_device(1) {
-        add_disk("PhysicalDrive1", 1, ata::total_sectors(1) as u64);
+        add_disk("PhysicalDrive1", 1, ata::total_sectors(1));
     }
 }
 
@@ -117,7 +123,7 @@ pub fn disk_read(idx: usize, offset: u64, byte_count: usize, buf: &mut [u8]) -> 
         if !disk.valid {
             return 0;
         }
-        let channel = (idx & 1) as usize;
+        let channel = idx & 1;
         let mut start_sector = (offset / 512) as u32;
         let mut remaining = byte_count;
         let mut out_off = 0usize;
@@ -182,7 +188,7 @@ pub fn disk_write(idx: usize, offset: u64, byte_count: usize, buf: &[u8]) -> usi
             return 0;
         }
 
-        let channel = (idx & 1) as usize;
+        let channel = idx & 1;
         let max_sectors = disk.sector_count;
         let mut lba = offset / 512;
         let mut remaining = byte_count;
@@ -190,7 +196,7 @@ pub fn disk_write(idx: usize, offset: u64, byte_count: usize, buf: &[u8]) -> usi
         let mut written = 0usize;
 
         while remaining > 0 {
-            if lba >= max_sectors as u64 {
+            if lba >= max_sectors {
                 break;
             }
             let sectors = 1u8;
@@ -214,7 +220,7 @@ pub fn disk_write(idx: usize, offset: u64, byte_count: usize, buf: &[u8]) -> usi
             let mut i = 0usize;
             while i < remaining {
                 let w = i / 2;
-                if i % 2 == 0 {
+                if i.is_multiple_of(2) {
                     tmp[w] = (tmp[w] & 0xFF00) | (buf[in_off + i] as u16);
                 } else {
                     tmp[w] = (tmp[w] & 0x00FF) | ((buf[in_off + i] as u16) << 8);
@@ -332,6 +338,9 @@ pub fn last_smoke_read_bytes() -> u32 {
 pub struct X86DiskBackend;
 
 impl crate::drivers::storage::disk::DiskBackend for X86DiskBackend {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn init(&self) {
         init()
     }

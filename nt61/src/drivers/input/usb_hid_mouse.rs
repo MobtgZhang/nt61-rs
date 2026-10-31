@@ -27,7 +27,7 @@ pub const BUTTON_MIDDLE: u8 = 1 << 2;
 pub const BUTTON_BUTTON_4: u8 = 1 << 3;
 pub const BUTTON_BUTTON_5: u8 = 1 << 4;
 
-/// Maximum X/Y delta per report (boot protocol is 8-bit signed).
+// /// Maximum X/Y delta per report (boot protocol is 8-bit signed).
 
 // ---------------------------------------------------------------------------
 // Types
@@ -295,7 +295,7 @@ fn process_report_internal(report: BootMouseReport) -> MouseEvent {
     MouseEvent {
         dx: report.dx as i16,
         dy: report.dy as i16,
-        wheel: report.wheel.unwrap_or(0) as i8,
+        wheel: report.wheel.unwrap_or(0),
         buttons: current_buttons,
         has_movement: dx != 0 || dy != 0 || report.wheel.map(|w| w != 0).unwrap_or(false),
         has_button_change: has_click,

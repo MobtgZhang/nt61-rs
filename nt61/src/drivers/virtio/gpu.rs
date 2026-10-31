@@ -104,6 +104,9 @@ pub struct VirtioGpu {
 }
 
 impl VirtioGpu {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Bring up a virtio-gpu device over the given transport.
     pub unsafe fn probe(
         transport_index: usize,
@@ -144,6 +147,9 @@ impl VirtioGpu {
         self.num_scanouts
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Create a 2D resource and attach it to a scanout, then upload
     /// the framebuffer contents and flush to display.
     pub unsafe fn present_framebuffer(

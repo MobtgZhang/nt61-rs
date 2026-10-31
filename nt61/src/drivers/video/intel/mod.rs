@@ -333,7 +333,7 @@ impl I915Device {
         self.write_reg(PIPEA_DSPASIZE, ((self.height - 1) << 16) | (self.width - 1));
 
         // Enable Plane A
-        self.write_reg(PIPEA_DSPCNTR, DISPLAY_ENABLE | 0 << 20);
+        self.write_reg(PIPEA_DSPCNTR, DISPLAY_ENABLE);
 
         // Enable Pipe A
         let pipe_conf = self.read_reg(PIPEA_CONF);
@@ -362,7 +362,7 @@ pub fn init() -> Option<I915Device> {
     for dev in devices {
         if dev.vendor_id == pci_ids::INTEL_VENDOR_ID && dev.class_code == 0x03 {
             let generation = pci_ids::generation_from_device_id(dev.device_id);
-            let mut device = I915Device::new(&dev, generation);
+            let mut device = I915Device::new(dev, generation);
 
             if device.init().is_ok() {
                 return Some(device);

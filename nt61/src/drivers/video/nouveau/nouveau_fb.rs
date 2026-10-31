@@ -11,7 +11,7 @@
 //! - NV120 (Pascal): GeForce GTX 1000
 //! - NV140 (Turing): GeForce RTX 2000
 //
-//! Clean-room implementation based on public specifications.
+//!   Clean-room implementation based on public specifications.
 
 use crate::drivers::video::core::gpu_common::{
     GpuDriver, GpuError, GpuFeatures, GpuFramebufferInfo, PixelFormat,
@@ -338,7 +338,7 @@ impl NouveauDevice {
 
         // Configure framebuffer
         let display_off = self.display_offset();
-        self.write_reg(display_off + 0x0000, self.fb_phys as u32);
+        self.write_reg(display_off, self.fb_phys as u32);
         self.write_reg(display_off + 0x0008, self.pitch);
         self.write_reg(display_off + 0x000C, (self.height << 16) | self.width);
 
@@ -372,7 +372,7 @@ pub fn nv50_init(dev: &mut NouveauDevice) -> Result<(), GpuError> {
     let pv_offset = 0x000000;
 
     // Enable PV Baptized
-    dev.write_reg(pv_offset + 0x0000, 1);
+    dev.write_reg(pv_offset, 1);
 
     // Configure framebuffer
     let pfb_off = dev.pfb_offset();
@@ -451,7 +451,7 @@ pub fn init() -> Option<NouveauDevice> {
     let devices = pci::enumerate();
     for dev in devices {
         if dev.vendor_id == NVIDIA_VENDOR_ID && dev.class_code == 0x03 {
-            let mut device = NouveauDevice::new(&dev);
+            let mut device = NouveauDevice::new(dev);
 
             if device.init().is_ok() {
                 // Initialize architecture-specific
@@ -479,4 +479,3 @@ pub fn init() -> Option<NouveauDevice> {
     }
     None
 }
-

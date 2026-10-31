@@ -581,10 +581,7 @@ pub fn send(nic_idx: usize, data: &[u8]) -> bool {
 /// prescribes.
 pub fn receive(nic_idx: usize, buffer: &mut [u8]) -> Option<usize> {
     let nics = get_nics();
-    let n = match nics[nic_idx].as_mut() {
-        Some(n) => n,
-        None => return None,
-    };
+    let n = nics[nic_idx].as_mut()?;
 
     if !n.initialised {
         return None;
@@ -614,8 +611,7 @@ pub fn receive(nic_idx: usize, buffer: &mut [u8]) -> Option<usize> {
 
     if (status & RX_STATUS_OK) == 0
         || (status & RX_STATUS_ERROR_MASK) != 0
-        || rx_size < RX_MIN_PACKET_SIZE
-        || rx_size > RX_MAX_PACKET_SIZE
+        || !(RX_MIN_PACKET_SIZE..=RX_MAX_PACKET_SIZE).contains(&rx_size)
     {
         state.reset_rx_ring(n.bar0_io);
         if let Some(adapter) = adapter_of(n.adapter) {

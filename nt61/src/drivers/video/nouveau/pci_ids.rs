@@ -11,7 +11,7 @@
 //! - NV120/Pascal (GeForce GTX 1000)
 //! - NV140/Turing (GeForce RTX 2000)
 //
-//! Clean-room implementation based on public specifications.
+//!   Clean-room implementation based on public specifications.
 
 /// NVIDIA vendor ID
 pub const NVIDIA_VENDOR_ID: u16 = 0x10DE;
@@ -360,9 +360,9 @@ pub fn device_name(device_id: u16) -> &'static str {
         0x1180..=0x1183 | 0x1050 | 0x1080 => "GeForce GTX 660",
         0x1184 => "GeForce GTX 670",
         0x1185 => "GeForce GTX 660 Ti",
-        0x1038 | 0x1039 | 0x103A => "GeForce GTX 760",
+        0x1038..=0x103A => "GeForce GTX 760",
         0x1040 => "GeForce GTX 770",
-        0x1045 | 0x1046 | 0x1047 => "GeForce GTX 780",
+        0x1045..=0x1047 => "GeForce GTX 780",
         0x1049 => "GeForce GTX TITAN",
         0x1051 => "GeForce GTX 650",
         0x1052 => "GeForce GT 640",
@@ -376,7 +376,7 @@ pub fn device_name(device_id: u16) -> &'static str {
         0x1400 => "GeForce GTX 750 Ti",
         0x1401 | 0x1402 | 0x1404 => "GeForce GTX 750",
         // NV120 (Pascal)
-        0x1B00 | 0x1B01 | 0x1B02 => "GeForce GTX 1080",
+        0x1B00..=0x1B02 => "GeForce GTX 1080",
         0x1B04 | 0x1B06 => "GeForce GTX 1070",
         0x1B0C | 0x1C03 => "GeForce GTX 1060",
         0x1B80 => "GeForce GTX 1050 Ti",

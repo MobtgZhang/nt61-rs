@@ -159,7 +159,7 @@ impl ClfsControlRecord {
                 // Sector 0: control Record
                 ClfsMetadataBlock::new_control(0, 1),
                 // Sector 1: control Shadow
-                ClfsMetadataBlock::new_control_shadow(1 * CLFS_SECTOR_SIZE as u32, 1),
+                ClfsMetadataBlock::new_control_shadow(CLFS_SECTOR_SIZE as u32, 1),
                 // Sector 2: General (Base) Record
                 ClfsMetadataBlock::new_general(2 * CLFS_SECTOR_SIZE as u32, 1),
                 // Sector 3: General Shadow

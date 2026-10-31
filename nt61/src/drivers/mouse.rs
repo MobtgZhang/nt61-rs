@@ -45,6 +45,12 @@ impl MouseEvent {
     }
 }
 
+impl Default for MouseEvent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// One mouse device.
 pub struct MouseDevice {
     pub valid: bool,
@@ -74,6 +80,12 @@ impl MouseDevice {
             packets_received: 0,
             button_clicks: 0,
         }
+    }
+}
+
+impl Default for MouseDevice {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

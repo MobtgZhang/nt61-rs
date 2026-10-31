@@ -59,6 +59,12 @@ impl NetworkInterface {
     }
 }
 
+impl Default for NetworkInterface {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TcpState {
@@ -112,6 +118,12 @@ impl TcpConnection {
     }
 }
 
+impl Default for TcpConnection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct UdpSocket {
     pub valid: bool,
@@ -134,6 +146,12 @@ impl UdpSocket {
             bytes_sent: 0,
             bytes_received: 0,
         }
+    }
+}
+
+impl Default for UdpSocket {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -330,7 +348,7 @@ pub fn udp_sendto(
         }
 
         let remote_ip = u32::from_be_bytes(remote_addr);
-        let result = crate::netstack::udp::send(socket_id as usize, remote_ip, remote_port, data);
+        let result = crate::netstack::udp::send(socket_id, remote_ip, remote_port, data);
 
         if let Some(bytes_sent) = result {
             socket.datagrams_sent += 1;

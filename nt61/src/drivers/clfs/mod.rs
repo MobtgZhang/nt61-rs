@@ -23,7 +23,7 @@
 //! - One BLF (Base Log File) — contains metadata
 //! - One or more container files — contain log records
 //
-//! The BLF contains 6 metadata sectors:
+//!   The BLF contains 6 metadata sectors:
 //! - Sector 0: control Record
 //! - Sector 1: control Record Shadow
 //! - Sector 2: Base Record
@@ -490,6 +490,7 @@ pub fn clfs_flush_buffers(handle: u32) -> u32 {
 /// # Returns
 /// `STATUS_SUCCESS` (0) on success, error code otherwise.
 #[repr(C)]
+#[derive(Default)]
 pub struct ClfsMgmtLogInformation {
     /// Total log size in bytes.
     pub total_log_size: u64,
@@ -501,18 +502,6 @@ pub struct ClfsMgmtLogInformation {
     pub record_count: u32,
     /// Log flags.
     pub flags: u32,
-}
-
-impl Default for ClfsMgmtLogInformation {
-    fn default() -> Self {
-        Self {
-            total_log_size: 0,
-            current_available: 0,
-            actual_size: 0,
-            record_count: 0,
-            flags: 0,
-        }
-    }
 }
 
 pub fn clfs_mgmt_query_log_information(handle: u32, info: &mut ClfsMgmtLogInformation) -> u32 {

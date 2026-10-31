@@ -279,6 +279,9 @@ pub fn probe_channel(idx: usize) {
 // Low-level timing
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Wait for the drive to not be busy. Returns true if BSY cleared
 /// within `timeout_us` microseconds.
 unsafe fn wait_not_busy(status_port: u16, timeout_us: u32) -> bool {
@@ -299,6 +302,9 @@ unsafe fn wait_not_busy(status_port: u16, timeout_us: u32) -> bool {
     false
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Wait for DRQ to be set (and BSY cleared). Returns true if
 /// DRQ was asserted within `timeout_us` microseconds.
 unsafe fn wait_drq(status_port: u16, timeout_us: u32) -> bool {
@@ -363,6 +369,9 @@ fn identify_capacity(data: &[u16; 256]) -> (bool, bool, u64) {
     (lba28 > 0 || lba48, lba48, total)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Send IDENTIFY DEVICE (0xEC) and parse the LBA capacity words.
 unsafe fn identify_ata(io: u16, ch: &mut AtaChannel) {
     #[cfg(target_arch = "x86_64")]
@@ -400,6 +409,9 @@ unsafe fn identify_ata(io: u16, ch: &mut AtaChannel) {
     //              ch.lba_supported, ch.lba48_supported, ch.total_sectors);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn identify_atapi(io: u16) {
     #[cfg(target_arch = "x86_64")]
     #[cfg(target_arch = "x86_64")]

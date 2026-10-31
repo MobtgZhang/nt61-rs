@@ -10,7 +10,7 @@
 //! - Key management
 //! - Authentication state machine
 //
-//! Clean-room implementation based on HDCP specification documents.
+//!   Clean-room implementation based on HDCP specification documents.
 
 use crate::drivers::video::log;
 use crate::ke::sync::Spinlock;

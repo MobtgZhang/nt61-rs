@@ -12,8 +12,8 @@
 //!   machine for a single device node
 //! * `find_driver` - look up the driver that should handle a device
 //
-//! Clean-room implementation. The spec source is Microsoft Docs /
-//! OSR / "Windows Internals, 6th ed." (Russinovich).
+//!   Clean-room implementation. The spec source is Microsoft Docs /
+//!   OSR / "Windows Internals, 6th ed." (Russinovich).
 
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -284,17 +284,19 @@ const CLASS_DEVICE_PREFIXES: [&[u8]; 5] = [
 /// Return the cached DriverObject for a class slot, allocating and
 /// registering it on first use.
 fn class_driver_object(slot: usize) -> *mut DriverObject {
-    let cached = CLASS_DRIVER_OBJECTS[slot].load(Ordering::Acquire);
-    if cached != 0 {
-        return cached as *mut DriverObject;
+    unsafe {
+        let cached = CLASS_DRIVER_OBJECTS[slot].load(Ordering::Acquire);
+        if cached != 0 {
+            return cached as *mut DriverObject;
+        }
+        let driver = crate::io::allocate_driver(CLASS_DRIVER_NAMES[slot]);
+        if driver.is_null() {
+            return core::ptr::null_mut();
+        }
+        let _ = crate::io::register_driver(driver);
+        CLASS_DRIVER_OBJECTS[slot].store(driver as u64, Ordering::Release);
+        driver
     }
-    let driver = crate::io::allocate_driver(CLASS_DRIVER_NAMES[slot]);
-    if driver.is_null() {
-        return core::ptr::null_mut();
-    }
-    let _ = crate::io::register_driver(driver);
-    CLASS_DRIVER_OBJECTS[slot].store(driver as u64, Ordering::Release);
-    driver
 }
 
 /// Bind a PnP node to its class driver: allocate (once) the class
@@ -303,47 +305,49 @@ fn class_driver_object(slot: usize) -> *mut DriverObject {
 /// of AddDevice + IoCreateDevice, and it is what makes the device tree
 /// reachable through the I/O manager instead of being a string table.
 fn bind_class_device(node: &mut PnPNode, slot: usize, device_type: DeviceType) -> bool {
-    let driver = class_driver_object(slot);
-    if driver.is_null() {
-        return false;
-    }
-    if !node.device_object.is_null() {
-        // Already bound (for example a retry after a failed start):
-        // keep the existing device object, refresh the driver pointer.
+    unsafe {
+        let driver = class_driver_object(slot);
+        if driver.is_null() {
+            return false;
+        }
+        if !node.device_object.is_null() {
+            // Already bound (for example a retry after a failed start):
+            // keep the existing device object, refresh the driver pointer.
+            node.driver = driver;
+            return true;
+        }
+        // Build a unique device name: prefix + decimal sequence number,
+        // without any heap allocation (boot-time safe).
+        let seq = DEVICE_OBJECT_SEQ.fetch_add(1, Ordering::Relaxed);
+        let mut name = [0u8; 48];
+        let prefix = CLASS_DEVICE_PREFIXES[slot];
+        name[..prefix.len()].copy_from_slice(prefix);
+        let mut len = prefix.len();
+        if seq == 0 {
+            name[len] = b'0';
+            len += 1;
+        } else {
+            let mut digits = [0u8; 10];
+            let mut n = 0usize;
+            let mut v = seq;
+            while v > 0 {
+                digits[n] = b'0' + (v % 10) as u8;
+                n += 1;
+                v /= 10;
+            }
+            for i in 0..n {
+                name[len + i] = digits[n - 1 - i];
+            }
+            len += n;
+        }
+        let device = crate::io::create_device(driver, device_type, &name[..len]);
+        if device.is_null() {
+            return false;
+        }
         node.driver = driver;
-        return true;
+        node.device_object = device;
+        true
     }
-    // Build a unique device name: prefix + decimal sequence number,
-    // without any heap allocation (boot-time safe).
-    let seq = DEVICE_OBJECT_SEQ.fetch_add(1, Ordering::Relaxed);
-    let mut name = [0u8; 48];
-    let prefix = CLASS_DEVICE_PREFIXES[slot];
-    name[..prefix.len()].copy_from_slice(prefix);
-    let mut len = prefix.len();
-    if seq == 0 {
-        name[len] = b'0';
-        len += 1;
-    } else {
-        let mut digits = [0u8; 10];
-        let mut n = 0usize;
-        let mut v = seq;
-        while v > 0 {
-            digits[n] = b'0' + (v % 10) as u8;
-            n += 1;
-            v /= 10;
-        }
-        for i in 0..n {
-            name[len + i] = digits[n - 1 - i];
-        }
-        len += n;
-    }
-    let device = crate::io::create_device(driver, device_type, &name[..len]);
-    if device.is_null() {
-        return false;
-    }
-    node.driver = driver;
-    node.device_object = device;
-    true
 }
 
 fn start_storage_driver(node: &mut PnPNode) -> bool {
@@ -383,32 +387,24 @@ pub fn register_driver(reg: DriverRegistration) -> bool {
 /// exact `compatible_id`, then prefix of `hw_id`, then wildcard.
 pub fn find_driver(node: &PnPNode) -> Option<&'static DriverRegistration> {
     unsafe {
-        for slot in (*core::ptr::addr_of!(DRIVER_TABLE)).iter() {
-            if let Some(reg) = slot {
-                if name_eq(&reg.name, &node.hw_id) {
-                    return Some(reg);
-                }
+        for reg in (*core::ptr::addr_of!(DRIVER_TABLE)).iter().flatten() {
+            if name_eq(reg.name, &node.hw_id) {
+                return Some(reg);
             }
         }
-        for slot in (*core::ptr::addr_of!(DRIVER_TABLE)).iter() {
-            if let Some(reg) = slot {
-                if name_starts_with(&node.hw_id, reg.name.as_bytes()) {
-                    return Some(reg);
-                }
+        for reg in (*core::ptr::addr_of!(DRIVER_TABLE)).iter().flatten() {
+            if name_starts_with(&node.hw_id, reg.name.as_bytes()) {
+                return Some(reg);
             }
         }
-        for slot in (*core::ptr::addr_of!(DRIVER_TABLE)).iter() {
-            if let Some(reg) = slot {
-                if name_starts_with(&node.compatible_id, reg.name.as_bytes()) {
-                    return Some(reg);
-                }
+        for reg in (*core::ptr::addr_of!(DRIVER_TABLE)).iter().flatten() {
+            if name_starts_with(&node.compatible_id, reg.name.as_bytes()) {
+                return Some(reg);
             }
         }
-        for slot in (*core::ptr::addr_of!(DRIVER_TABLE)).iter() {
-            if let Some(reg) = slot {
-                if reg.name.is_empty() {
-                    return Some(reg);
-                }
+        for reg in (*core::ptr::addr_of!(DRIVER_TABLE)).iter().flatten() {
+            if reg.name.is_empty() {
+                return Some(reg);
             }
         }
     }
@@ -856,9 +852,15 @@ fn write_hex2(v: u32, out: &mut [u8]) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Allocate a device object for a driver. Helper used by
 /// individual drivers to attach their `IoCreateDevice`-equivalent.
-pub fn allocate_device_object(driver: *mut DriverObject, dtype: DeviceType) -> *mut DeviceObject {
+pub unsafe fn allocate_device_object(
+    driver: *mut DriverObject,
+    dtype: DeviceType,
+) -> *mut DeviceObject {
     unsafe {
         let raw = pool::allocate(
             pool::PoolType::NonPaged,

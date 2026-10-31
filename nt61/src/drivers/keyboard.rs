@@ -43,6 +43,12 @@ impl KeyEvent {
     }
 }
 
+impl Default for KeyEvent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct KeyboardDevice {
     pub valid: bool,
     pub device_object: *mut DeviceObject,
@@ -66,6 +72,12 @@ impl KeyboardDevice {
             keys_pressed: 0,
             keys_released: 0,
         }
+    }
+}
+
+impl Default for KeyboardDevice {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

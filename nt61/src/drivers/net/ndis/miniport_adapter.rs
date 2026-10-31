@@ -139,8 +139,10 @@ impl MiniportAdapterContext {
 
     /// Free an adapter context
     pub fn free(ctx: *mut MiniportAdapterContext) {
-        if !ctx.is_null() {
-            pool::free_with_tag(ctx as *mut u8, tags::MPADAPTER);
+        unsafe {
+            if !ctx.is_null() {
+                pool::free_with_tag(ctx as *mut u8, tags::MPADAPTER);
+            }
         }
     }
 

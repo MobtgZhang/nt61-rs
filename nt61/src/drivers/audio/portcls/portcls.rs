@@ -10,8 +10,8 @@
 //! - Audio stream management
 //! - power management integration
 //
-//! Clean-room implementation based on Windows PortCls documentation
-//! and audio driver architecture.
+//!   Clean-room implementation based on Windows PortCls documentation
+//!   and audio driver architecture.
 
 use crate::ke::sync::Spinlock;
 use alloc::boxed::Box;
@@ -80,12 +80,12 @@ pub struct AudioFormat {
 impl AudioFormat {
     /// Calculate bytes per second
     pub fn bytes_per_second(&self) -> u32 {
-        (self.sample_rate as u32) * (self.channels as u32) * ((self.bits_per_sample / 8) as u32)
+        self.sample_rate * (self.channels as u32) * ((self.bits_per_sample / 8) as u32)
     }
 
     /// Calculate frame size in bytes
     pub fn frame_size(&self) -> u16 {
-        (self.channels * ((self.bits_per_sample + 7) / 8)).max(1)
+        (self.channels * self.bits_per_sample.div_ceil(8)).max(1)
     }
 }
 

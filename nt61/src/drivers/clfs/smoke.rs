@@ -233,7 +233,7 @@ fn test_record_read() -> bool {
     // write some records
     for i in 0..10 {
         let data = make_test_record(i);
-        let status = clfs_write_log_record(log, i as u32, &data);
+        let status = clfs_write_log_record(log, i, &data);
         if status != STATUS_SUCCESS {
             crate::kprintln_info!("CLFS", "  FAIL: Write failed at record {}", i);
             return false;

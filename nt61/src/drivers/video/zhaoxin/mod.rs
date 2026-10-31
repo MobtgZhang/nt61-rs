@@ -8,7 +8,7 @@
 //! - Zhaoxin ZX-F (KX-7000)
 //! - Glenfly GT-10C0/GT-11C0
 //
-//! Hardware support:
+//!   Hardware support:
 //! - Basic framebuffer (VGA text mode fallback)
 //! - CRT controller with dual-pipe support
 //! - Hardware cursor
@@ -16,7 +16,7 @@
 //! - Basic 2D acceleration (Glenfly)
 //! - DirectX 11.1 (limited)
 //
-//! Clean-room implementation based on public specifications.
+//!   Clean-room implementation based on public specifications.
 
 pub mod glenfly_fb;
 pub mod glenfly_reg;
@@ -336,14 +336,14 @@ pub fn init() -> Option<ZhaoxinDevice> {
     for dev in devices {
         // Check for Zhaoxin
         if dev.vendor_id == ZHAOXIN_VENDOR_ID && dev.class_code == 0x03 {
-            let mut device = ZhaoxinDevice::new(&dev);
+            let mut device = ZhaoxinDevice::new(dev);
             if device.init().is_ok() {
                 return Some(device);
             }
         }
         // Check for Glenfly
         if dev.vendor_id == GLENFLY_VENDOR_ID && dev.class_code == 0x03 {
-            let mut device = ZhaoxinDevice::new(&dev);
+            let mut device = ZhaoxinDevice::new(dev);
             if device.init().is_ok() {
                 return Some(device);
             }

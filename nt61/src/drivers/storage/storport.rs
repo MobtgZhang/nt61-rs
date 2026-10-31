@@ -16,13 +16,13 @@
 //! * `stor_port_notification` — RequestComplete / BusResetDetected.
 //! * `stor_port_build_io` — make an SRB from an IRP.
 //
-//! A driver that wants to use storport fills in a
-//! `PORT_CONFIGURATION_INFORMATION` and a
-//! `HW_INITIALIZATION_DATA` (miniport entry points). storport
-//! then drives the dispatching.
+//!   A driver that wants to use storport fills in a
+//!   `PORT_CONFIGURATION_INFORMATION` and a
+//!   `HW_INITIALIZATION_DATA` (miniport entry points). storport
+//!   then drives the dispatching.
 //
-//! Clean-room implementation. Spec source: storport.chm from
-//! the WDK, "Windows Internals 6th ed." chapter 9.
+//!   Clean-room implementation. Spec source: storport.chm from
+//!   the WDK, "Windows Internals 6th ed." chapter 9.
 
 extern crate alloc;
 
@@ -116,6 +116,12 @@ impl Srb {
     }
 }
 
+impl Default for Srb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Miniport-to-storport callback signatures.
 pub type HwFindAdapter = unsafe extern "C" fn(
     device_extension: *mut (),
@@ -199,6 +205,12 @@ impl Adapter {
     }
 }
 
+impl Default for Adapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 const MAX_ADAPTERS: usize = 8;
 static mut ADAPTERS: [Adapter; MAX_ADAPTERS] = [const { Adapter::new() }; MAX_ADAPTERS];
 static ADAPTER_LOCK: Spinlock<()> = Spinlock::new(());
@@ -248,11 +260,8 @@ pub fn stor_port_initialize(name: &str, mut hw: HwInitData) -> u32 {
 /// failure.
 pub fn stor_port_get_device_base(device_extension: *mut (), bar_phys: u64, len: u64) -> u64 {
     let _ = device_extension;
-    let pages = (len + 0xFFF) / 0x1000;
-    match crate::mm::syspte::map_io_space(bar_phys, pages) {
-        Some(v) => v,
-        None => 0,
-    }
+    let pages = len.div_ceil(0x1000);
+    crate::mm::syspte::map_io_space(bar_phys, pages).unwrap_or_default()
 }
 
 /// `stor_port_free_device_base` — release a previously-mapped base.
@@ -262,7 +271,7 @@ pub fn stor_port_free_device_base(device_extension: *mut (), va: u64) {
 
 /// `stor_port_allocate_pool` — pool allocation.
 pub fn stor_port_allocate_pool(_device_extension: *mut (), size: u32) -> *mut u8 {
-    pool::allocate(pool::PoolType::NonPaged, size as usize) as *mut u8
+    pool::allocate(pool::PoolType::NonPaged, size as usize)
 }
 
 /// `stor_port_free_pool` — pool deallocation.
@@ -270,9 +279,12 @@ pub fn stor_port_free_pool(_device_extension: *mut (), p: *mut u8) {
     let _ = p;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `stor_port_notification` — storport-to-miniport calls. Only
 /// the variants we use are wired up; the rest are no-ops.
-pub fn stor_port_notification(notify_type: u32, _device_extension: *mut (), srb: *mut Srb) {
+pub unsafe fn stor_port_notification(notify_type: u32, _device_extension: *mut (), srb: *mut Srb) {
     match notify_type {
         // RequestComplete
         2 => {
@@ -296,10 +308,13 @@ pub fn stor_port_build_io(srb: *mut Srb) -> *mut Srb {
     srb
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `stor_port_start_io` — submit an SRB for processing. Stores
 /// `srb` in a per-adapter pending slot and calls the miniport's
 /// `HwStartIo`.
-pub fn stor_port_start_io(adapter_idx: usize, srb: *mut Srb) -> u32 {
+pub unsafe fn stor_port_start_io(adapter_idx: usize, srb: *mut Srb) -> u32 {
     if adapter_idx >= MAX_ADAPTERS {
         return STORPORT_INVALID_PARAMETER;
     }
@@ -374,4 +389,3 @@ pub fn smoke_test() -> bool {
     let _ = completed; // intentionally retained for the symmetry of stats
     true
 }
-

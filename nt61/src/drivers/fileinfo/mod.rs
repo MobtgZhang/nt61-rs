@@ -12,16 +12,16 @@
 //!   Search indexer uses to track files across renames.
 //! * Extended attributes (EA) for OneDrive / cloud-sync filters.
 //
-//! fileinfo is a minifilter, so it lives on top of fltmgr. It
-//! uses the pre-create / post-create callbacks fltmgr exposes.
+//!   fileinfo is a minifilter, so it lives on top of fltmgr. It
+//!   uses the pre-create / post-create callbacks fltmgr exposes.
 //
-//! In our bootstrap the filter is wired up by registering a
-//! callback that simply records the (volume, file name) pairs
-//! that have been opened so the user-mode service can enumerate
-//! them.
+//!   In our bootstrap the filter is wired up by registering a
+//!   callback that simply records the (volume, file name) pairs
+//!   that have been opened so the user-mode service can enumerate
+//!   them.
 //
-//! Clean-room implementation. Spec source: Microsoft "FileInfo
-//! Minifilter" reference.
+//!   Clean-room implementation. Spec source: Microsoft "FileInfo
+//!   Minifilter" reference.
 
 extern crate alloc;
 

@@ -19,6 +19,9 @@ pub mod loongarch64;
 #[cfg(target_arch = "x86_64")]
 pub use x86_64::register_storage_backends;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn register_storage_backends() {
     crate::rtl::klog::phase_trace_marker(710);

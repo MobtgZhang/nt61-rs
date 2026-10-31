@@ -248,7 +248,11 @@ pub fn set_sample_rate(device: &UacDevice, rate: u32) -> Result<(), &'static str
     };
     CONTROL_REQUESTS.fetch_add(1, Ordering::Relaxed);
     match crate::drivers::usb::xhci::control_transfer(
-        device.controller, 1, 0, &setup, Some((&mut freq as *mut u8, 3)),
+        device.controller,
+        1,
+        0,
+        &setup,
+        Some((&mut freq as *mut u8, 3)),
     ) {
         Ok(_) => Ok(()),
         Err(e) => {
@@ -271,17 +275,17 @@ pub fn get_sample_rate(device: &UacDevice) -> Result<u32, &'static str> {
     };
     CONTROL_REQUESTS.fetch_add(1, Ordering::Relaxed);
     match crate::drivers::usb::xhci::control_transfer(
-        device.controller, 1, 0, &setup, Some((&mut freq as *mut u8, 3)),
+        device.controller,
+        1,
+        0,
+        &setup,
+        Some((&mut freq as *mut u8, 3)),
     ) {
         Err(e) => {
             CONTROL_ERRORS.fetch_add(1, Ordering::Relaxed);
             Err(e)
         }
-        Ok(_) => Ok(
-            u32::from(freq[0])
-                | (u32::from(freq[1]) << 8)
-                | (u32::from(freq[2]) << 16),
-        ),
+        Ok(_) => Ok(u32::from(freq[0]) | (u32::from(freq[1]) << 8) | (u32::from(freq[2]) << 16)),
     }
 }
 
@@ -302,7 +306,11 @@ pub fn set_volume(device: &UacDevice, channel: u8, volume_db256: i16) -> Result<
     };
     CONTROL_REQUESTS.fetch_add(1, Ordering::Relaxed);
     match crate::drivers::usb::xhci::control_transfer(
-        device.controller, 1, 0, &setup, Some((&mut buf as *mut u8, 2)),
+        device.controller,
+        1,
+        0,
+        &setup,
+        Some((&mut buf as *mut u8, 2)),
     ) {
         Ok(_) => Ok(()),
         Err(e) => {
@@ -327,7 +335,11 @@ pub fn set_mute(device: &UacDevice, channel: u8, muted: bool) -> Result<(), &'st
     };
     CONTROL_REQUESTS.fetch_add(1, Ordering::Relaxed);
     match crate::drivers::usb::xhci::control_transfer(
-        device.controller, 1, 0, &setup, Some((&mut one as *mut u8, 1)),
+        device.controller,
+        1,
+        0,
+        &setup,
+        Some((&mut one as *mut u8, 1)),
     ) {
         Ok(_) => Ok(()),
         Err(e) => {
@@ -375,7 +387,7 @@ pub fn parse_configuration(controller: usize, port: u8, config: &[u8]) -> Option
         uac_version: hdr.bcd_uac,
         playback_channels: fmt.channels,
         capture_channels: 0,
-        default_rate: fmt.freq_min.max(8_000).min(192_000),
+        default_rate: fmt.freq_min.clamp(8_000, 192_000),
         bits_per_sample: fmt.bit_resolution,
         subframe_size: fmt.subframe_size,
         feature_unit: feature.map(|f| f.unit_id).unwrap_or(0),
@@ -422,7 +434,10 @@ pub fn last_uac_version() -> u32 {
 
 /// Diagnostic accessors for the smoke test.
 pub fn control_request_counts() -> (u32, u32) {
-    (CONTROL_REQUESTS.load(Ordering::Relaxed), CONTROL_ERRORS.load(Ordering::Relaxed))
+    (
+        CONTROL_REQUESTS.load(Ordering::Relaxed),
+        CONTROL_ERRORS.load(Ordering::Relaxed),
+    )
 }
 
 pub fn smoke_test() -> bool {

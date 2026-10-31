@@ -53,7 +53,6 @@ pub struct AudioCapabilities {
 
 impl AudioCapabilities {
     /// Check if a sample rate is supported
-
     pub fn supports_sample_rate(&self, rate: u32) -> bool {
         let bit = match rate {
             8000 => 0,
@@ -115,7 +114,7 @@ impl AudioFormat {
 
     /// Calculate bytes per sample
     pub fn bytes_per_sample(&self) -> usize {
-        ((self.bits_per_sample + 7) / 8) as usize
+        self.bits_per_sample.div_ceil(8) as usize
     }
 
     /// Calculate bytes per frame (all channels)
@@ -598,9 +597,7 @@ impl AudioDeviceManager {
         format: AudioFormat,
     ) -> Option<u32> {
         // Verify device exists
-        if self.get_device(device_id).is_none() {
-            return None;
-        }
+        self.get_device(device_id)?;
 
         let stream = AudioStream::new(device_id, direction, format);
         let stream_id = stream.id;

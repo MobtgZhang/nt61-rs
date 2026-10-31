@@ -325,7 +325,7 @@ pub fn init() -> Option<RadeonDevice> {
     for dev in devices {
         if dev.vendor_id == pci_ids::AMD_VENDOR_ID && dev.class_code == 0x03 {
             let family = pci_ids::family_from_device_id(dev.device_id);
-            let mut device = RadeonDevice::new(&dev, family);
+            let mut device = RadeonDevice::new(dev, family);
 
             if device.init().is_ok() {
                 return Some(device);

@@ -29,6 +29,9 @@ use crate::ke::sync::Spinlock;
 /// Cached probe result for the dispatch handlers (Spinlock for safe access).
 static CACHED_DEVICES: Spinlock<Option<VirtioDevices>> = Spinlock::new(None);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_READ handler for virtio-blk devices (dispatch callback).
 unsafe extern "C" fn virtio_blk_read(
     _device: *mut crate::io::DeviceObject,
@@ -47,6 +50,9 @@ unsafe extern "C" fn virtio_blk_read(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_WRITE handler for virtio-blk devices (dispatch callback).
 unsafe extern "C" fn virtio_blk_write(
     _device: *mut crate::io::DeviceObject,
@@ -69,6 +75,9 @@ unsafe extern "C" fn virtio_blk_write(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Register virtio-blk devices into the storage dispatch registry.
 pub unsafe fn register_dispatch() {
     let driver = crate::io::allocate_driver(b"\\Driver\\virtio_blk");
@@ -92,6 +101,9 @@ pub unsafe fn register_dispatch() {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Probe all virtio-mmio slots and initialise matching drivers.
 pub unsafe fn probe_virtio_devices() -> VirtioDevices {
     let mut transports = alloc::vec::Vec::new();

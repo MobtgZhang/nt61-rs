@@ -393,8 +393,8 @@ pub fn probe_ports(mmio: u64) -> Vec<DdiPortState> {
     let sfuse = read_sfuse_strap(mmio);
     // Publish the SFUSE strap for diagnostics, then use a derived value
     // (number of DDI ports enabled) to drive heuristics further down.
-    LAST_SFUSE.store(sfuse as u32, core::sync::atomic::Ordering::Relaxed);
-    let port_count_hint = ((sfuse & 0xF) as usize).max(4).min(8);
+    LAST_SFUSE.store(sfuse, core::sync::atomic::Ordering::Relaxed);
+    let port_count_hint = ((sfuse & 0xF) as usize).clamp(4, 8);
 
     log::video_log("i915-ddi", &alloc::format!("SFUSE strap: 0x{:08x}", sfuse));
     LAST_PORT_HINT.store(

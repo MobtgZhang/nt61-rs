@@ -5,7 +5,7 @@
 use crate::drivers::video::intel::i915_reg::*;
 
 /// Interrupt status
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct InterruptStatus {
     /// VBlank A pending
     pub vblank_a: bool,
@@ -17,18 +17,6 @@ pub struct InterruptStatus {
     pub flip_b: bool,
     /// Error pending
     pub error: bool,
-}
-
-impl Default for InterruptStatus {
-    fn default() -> Self {
-        Self {
-            vblank_a: false,
-            vblank_b: false,
-            flip_a: false,
-            flip_b: false,
-            error: false,
-        }
-    }
 }
 
 /// i915 interrupt handler

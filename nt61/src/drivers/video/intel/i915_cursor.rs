@@ -9,7 +9,7 @@
 //! - Skylake and later (enhanced cursor with larger sizes)
 //! - Tiger Lake+ (Xe cursor architecture)
 //
-//! Reference: Intel Graphics Programmer's Reference Manuals (PRMs)
+//!   Reference: Intel Graphics Programmer's Reference Manuals (PRMs)
 
 use crate::drivers::video::intel::i915_reg::*;
 

@@ -87,7 +87,7 @@ pub fn nouveau_irq_status(device: &NouveauDevice) -> u32 {
 /// Acknowledge/clear the interrupt sources in `mask`.
 pub fn nouveau_irq_clear(device: &NouveauDevice, mask: u32) {
     device.write_reg(0x000100, mask);
-    IRQ_ACKS.fetch_add(mask as u32, Ordering::Relaxed);
+    IRQ_ACKS.fetch_add(mask, Ordering::Relaxed);
 }
 
 static LAST_IRQ: AtomicU32 = AtomicU32::new(0);

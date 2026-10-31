@@ -450,7 +450,7 @@ pub fn init() {
         let xres = state.xres;
         let yres = state.yres;
         let bpp = state.bpp;
-        let pitch = xres as u32 * ((bpp as u32 + 7) / 8);
+        let pitch = xres as u32 * (bpp as u32).div_ceil(8);
         let bpp_actual = bpp as u32;
 
         framebuffer::init(Some(framebuffer::FramebufferInfo {

@@ -77,6 +77,12 @@ impl PciDeviceExtension {
     }
 }
 
+impl Default for PciDeviceExtension {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 const MAX_PCI_DEVICES: usize = 32;
 static mut DEVICE_EXTENSIONS: [PciDeviceExtension; MAX_PCI_DEVICES] =
     [const { PciDeviceExtension::new() }; MAX_PCI_DEVICES];

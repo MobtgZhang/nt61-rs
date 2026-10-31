@@ -18,7 +18,7 @@
 //! - Sector 5: Truncate Record Shadow
 //! - Remaining sectors: reserved / future use
 //
-//! Each sector has a 2-byte trailer: [BlockType | flags, USN]
+//!   Each sector has a 2-byte trailer: [BlockType | flags, USN]
 
 // ============================================================================
 // Constants

@@ -48,8 +48,8 @@
 //!   - writing its MajorFunction[IRP_MJ_CREATE] pointer into
 //!     `DriverObject + 0x40`;
 //!   - writing its driver_unload pointer into `DriverObject + 0x28`.
-//! Failure to follow that contract causes the dispatch table to
-//! remain zero and downstream `IopCallDriver` to no-op.
+//!     Failure to follow that contract causes the dispatch table to
+//!     remain zero and downstream `IopCallDriver` to no-op.
 //!
 //! # Win7 boot sequence parity
 //!
@@ -238,13 +238,13 @@ pub fn load_and_init_boot_start_drivers() {
             }
             "mssmbios.sys" => {
                 serial::write_string(
-                    "[K07]   dispatching to drivers::storage::ramdisk::init()\r\n",
+                    "[K07]   dispatching to drivers::platform::mssmbios::init()\r\n",
                 );
-                crate::drivers::storage::ramdisk::init();
+                crate::drivers::platform::mssmbios::init();
             }
             "classpnp.sys" => {
                 serial::write_string("[K07]   dispatching to drivers::storage::ata::init()\r\n");
-                crate::drivers::arch::init_ata();
+                crate::drivers::storage::ata::init();
             }
             "bootvid.dll" => {
                 serial::write_string(
@@ -313,91 +313,94 @@ pub fn load_and_init_boot_start_drivers() {
 
 #[inline(never)]
 fn load_one_driver(path: &str, raw: &[u8]) -> Result<i32, &'static str> {
-    // Parse the PE header to find AddressOfEntryPoint, ImageBase,
-    // and the section list. We only need the entry RVA and the
-    // section table for this simplified loader.
-    let (entry_rva, image_size, _image_base, sections) = parse_pe_header(raw)?;
-
-    // Check slot index availability
-    let slot_idx = slot_index().ok_or("No available driver slot")?;
-
-    // Allocate a runtime slot for the driver. We pick a fixed
-    // identity-mapped window starting at `DRIVER_LOAD_BASE`
-    // (0x7c000000); this sits inside the kernel's identity map
-    // (the same window that hosts the disk-loaded ntoskrnl.exe
-    // and HAL.DLL) so the loader's `driver_entry` can be called
-    // with paging fully enabled without a #PF.
-    const DRIVER_LOAD_BASE: u64 = 0x7c00_0000;
-    const DRIVER_LOAD_STRIDE: u64 = 0x0004_0000; // 256 KiB / driver slot
-    let slot_base: u64 = DRIVER_LOAD_BASE + (slot_idx as u64) * DRIVER_LOAD_STRIDE;
-
-    // Copy sections.
     unsafe {
-        for sec in &sections {
-            let dst = (slot_base + sec.virtual_address as u64) as *mut u8;
-            let src_off = sec.raw_data_offset as usize;
-            let src_end = src_off + sec.virtual_size.min(sec.raw_data_size) as usize;
-            if src_end > raw.len() {
-                continue;
+        // Parse the PE header to find AddressOfEntryPoint, ImageBase,
+        // and the section list. We only need the entry RVA and the
+        // section table for this simplified loader.
+        let (entry_rva, image_size, _image_base, sections) = parse_pe_header(raw)?;
+
+        // Check slot index availability
+        let slot_idx = slot_index().ok_or("No available driver slot")?;
+
+        // Allocate a runtime slot for the driver. We pick a fixed
+        // identity-mapped window starting at `DRIVER_LOAD_BASE`
+        // (0x7c000000); this sits inside the kernel's identity map
+        // (the same window that hosts the disk-loaded ntoskrnl.exe
+        // and HAL.DLL) so the loader's `driver_entry` can be called
+        // with paging fully enabled without a #PF.
+        const DRIVER_LOAD_BASE: u64 = 0x7c00_0000;
+        const DRIVER_LOAD_STRIDE: u64 = 0x0004_0000; // 256 KiB / driver slot
+        let slot_base: u64 = DRIVER_LOAD_BASE + (slot_idx as u64) * DRIVER_LOAD_STRIDE;
+
+        // Copy sections.
+        unsafe {
+            for sec in &sections {
+                let dst = (slot_base + sec.virtual_address as u64) as *mut u8;
+                let src_off = sec.raw_data_offset as usize;
+                let src_end = src_off + sec.virtual_size.min(sec.raw_data_size) as usize;
+                if src_end > raw.len() {
+                    continue;
+                }
+                let mut k = src_off;
+                while k < src_end {
+                    core::ptr::write_volatile(dst.add(k - src_off), raw[k]);
+                    k += 1;
+                }
             }
-            let mut k = src_off;
-            while k < src_end {
-                core::ptr::write_volatile(dst.add(k - src_off), raw[k]);
-                k += 1;
+            // Zero out the remainder of the slot so uninitialised
+            // BSS-like areas don't leak stale kernel data into the
+            // driver.
+            for k in 0..image_size as usize {
+                core::ptr::write_volatile((slot_base as *mut u8).add(k), 0);
             }
         }
-        // Zero out the remainder of the slot so uninitialised
-        // BSS-like areas don't leak stale kernel data into the
-        // driver.
-        for k in 0..image_size as usize {
-            core::ptr::write_volatile((slot_base as *mut u8).add(k), 0);
+
+        // Build a DriverObject scratch record. We use a heap-allocated
+        // 0x100-byte buffer from the kernel pool; the driver's driver_entry
+        // will write into the MajorFunction[] and driver_unload fields,
+        // which we read back after the call to log what the driver did.
+        let driver_object_ptr =
+            crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, 0x100);
+        if driver_object_ptr.is_null() {
+            return Err("Failed to allocate DriverObject");
         }
-    }
-
-    // Build a DriverObject scratch record. We use a heap-allocated
-    // 0x100-byte buffer from the kernel pool; the driver's driver_entry
-    // will write into the MajorFunction[] and driver_unload fields,
-    // which we read back after the call to log what the driver did.
-    let driver_object_ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, 0x100);
-    if driver_object_ptr.is_null() {
-        return Err("Failed to allocate DriverObject");
-    }
-    unsafe {
-        for i in 0..0x100 {
-            core::ptr::write_volatile(driver_object_ptr.add(i), 0u8);
+        unsafe {
+            for i in 0..0x100 {
+                core::ptr::write_volatile(driver_object_ptr.add(i), 0u8);
+            }
         }
+        let entry_addr: u64 = slot_base + entry_rva as u64;
+        let path_buf = path.as_bytes();
+
+        // We hand the driver_entry the raw UTF-8 path bytes as the
+        // registry-path UnicodeString pointer. Our driver stubs
+        // don't actually dereference the path's length field, they
+        // just take the address, so passing the raw pointer is
+        // sufficient.
+        let path_ptr = path_buf.as_ptr();
+
+        let status: i32;
+        unsafe {
+            let f: extern "system" fn(*mut u8, *const u8) -> i32 =
+                core::mem::transmute(entry_addr as *const ());
+            status = f(driver_object_ptr, path_ptr);
+        }
+
+        // Log driver_entry result
+        if status == 0 {
+            serial::write_string("[K07] Driver loaded successfully\r\n");
+        } else {
+            serial::write_string("[K07] Driver loaded with status: ");
+            serial::write_u32_hex(status as u32);
+            serial::write_string("\r\n");
+        }
+
+        // Free the DriverObject buffer
+        let _ = crate::mm::pool::free(driver_object_ptr);
+
+        let _ = slot_base;
+        Ok(status)
     }
-    let entry_addr: u64 = slot_base + entry_rva as u64;
-    let path_buf = path.as_bytes();
-
-    // We hand the driver_entry the raw UTF-8 path bytes as the
-    // registry-path UnicodeString pointer. Our driver stubs
-    // don't actually dereference the path's length field, they
-    // just take the address, so passing the raw pointer is
-    // sufficient.
-    let path_ptr = path_buf.as_ptr();
-
-    let status: i32;
-    unsafe {
-        let f: extern "system" fn(*mut u8, *const u8) -> i32 =
-            core::mem::transmute(entry_addr as *const ());
-        status = f(driver_object_ptr, path_ptr);
-    }
-
-    // Log driver_entry result
-    if status == 0 {
-        serial::write_string("[K07] Driver loaded successfully\r\n");
-    } else {
-        serial::write_string("[K07] Driver loaded with status: ");
-        serial::write_u32_hex(status as u32);
-        serial::write_string("\r\n");
-    }
-
-    // Free the DriverObject buffer
-    let _ = crate::mm::pool::free(driver_object_ptr);
-
-    let _ = slot_base;
-    Ok(status)
 }
 
 /// Allocate a driver slot index. Returns Some(index) on success, None if all slots are exhausted.

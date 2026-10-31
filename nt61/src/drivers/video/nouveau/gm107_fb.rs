@@ -53,7 +53,7 @@ pub fn gm107_fb_init(dev: &mut NouveauDevice) -> Result<(), GpuError> {
 
     // Configure display output
     let display_off = 0x007000;
-    dev.write_reg(display_off + 0x0000, dev.fb_phys as u32);
+    dev.write_reg(display_off, dev.fb_phys as u32);
     dev.write_reg(display_off + 0x0008, dev.pitch);
     dev.write_reg(display_off + 0x000C, (dev.height << 16) | dev.width);
 

@@ -228,25 +228,25 @@ pub fn smoke_test() -> bool {
                 log::video_ok("efifb", "smoke test passed (32-bit pixel readback)");
                 // Clear it back.
                 framebuffer::set_pixel(0, 0, 0);
-                return true;
+                true
             } else {
                 log::video_warn("efifb", "smoke test: pixel mismatch (may still work)");
-                return false;
+                false
             }
         }
         16 => {
             let cell = unsafe { core::ptr::read_volatile(fb as *const u16) };
             if cell != 0 {
                 log::video_ok("efifb", "smoke test passed (16-bit cell writable)");
-                return true;
+                true
             } else {
                 log::video_warn("efifb", "smoke test: cell zero after write");
-                return false;
+                false
             }
         }
         _ => {
             log::video_warn("efifb", "smoke test skipped: unsupported bpp");
-            return true;
+            true
         }
     }
 }

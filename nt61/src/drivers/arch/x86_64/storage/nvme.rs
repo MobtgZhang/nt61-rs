@@ -48,8 +48,7 @@ const CSTS_RDY: u32 = 1 << 0; // Ready
 // ============================================================================
 
 /// Admin commands (Opcode) per NVMe 1.4 specification
-/// Note: These must be kept in sync with the command constructors below
-
+/// Note: These must be kept in sync with the command constructors below///
 /// Admin commands (Opcode)
 const ADMIN_DELETE_IO_SQ: u8 = 0x00;
 const ADMIN_CREATE_IO_SQ: u8 = 0x01;
@@ -125,7 +124,7 @@ impl NvmeSqEntry {
     /// create an IDENTIFY command
     pub fn identify(cns: u8, nsid: u32, prp1: u64, prp2: u64) -> Self {
         Self {
-            cdw0: ((ADMIN_IDENTIFY as u32) << 0) | ((cns as u32) << 8),
+            cdw0: (ADMIN_IDENTIFY as u32) | ((cns as u32) << 8),
             nsid,
             cdw2: 0,
             cdw3: 0,
@@ -139,7 +138,7 @@ impl NvmeSqEntry {
     /// create a GET_FEATURES command
     pub fn get_features(fid: u8, nsid: u32, prp1: u64) -> Self {
         Self {
-            cdw0: ((ADMIN_GET_FEATURES as u32) << 0) | ((fid as u32) << 8),
+            cdw0: (ADMIN_GET_FEATURES as u32) | ((fid as u32) << 8),
             nsid,
             cdw2: 0,
             cdw3: 0,
@@ -153,7 +152,7 @@ impl NvmeSqEntry {
     /// create a SET_FEATURES command
     pub fn set_features(fid: u8, nsid: u32, value: u32, prp1: u64) -> Self {
         Self {
-            cdw0: ((ADMIN_SET_FEATURES as u32) << 0) | ((fid as u32) << 8),
+            cdw0: (ADMIN_SET_FEATURES as u32) | ((fid as u32) << 8),
             nsid,
             cdw2: 0,
             cdw3: value,
@@ -193,8 +192,8 @@ impl NvmeSqEntry {
             cdw3: 0,
             prp1: 0,
             prp2: 0,
-            cdw10: ((qsize as u32 - 1) << 0) | ((qid as u32) << 16),
-            cdw11: ((qp_attrs as u32) << 0) | ((cqid as u32) << 16),
+            cdw10: (qsize as u32 - 1) | ((qid as u32) << 16),
+            cdw11: (qp_attrs as u32) | ((cqid as u32) << 16),
         }
     }
 
@@ -244,8 +243,8 @@ impl NvmeSqEntry {
             cdw3: 0,
             prp1: 0,
             prp2: 0,
-            cdw10: ((qsize as u32 - 1) << 0) | ((qid as u32) << 16),
-            cdw11: ((vector as u32) << 0) | ((qp_attrs as u32) << 16),
+            cdw10: (qsize as u32 - 1) | ((qid as u32) << 16),
+            cdw11: (vector as u32) | ((qp_attrs as u32) << 16),
         }
     }
 
@@ -260,7 +259,7 @@ impl NvmeSqEntry {
             cdw3: 0,
             prp1: 0,
             prp2: 0,
-            cdw10: ((sqid as u32) << 0) | ((cid as u32) << 16),
+            cdw10: (sqid as u32) | ((cid as u32) << 16),
             cdw11: 0,
         }
     }
@@ -604,18 +603,30 @@ fn push_nvme(c: NvmeController) {
 // MMIO Helpers
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn mmio_read64(base: u64, offset: u64) -> u64 {
     core::ptr::read_volatile((base + offset) as *const u64)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn mmio_read32(base: u64, offset: u64) -> u32 {
     core::ptr::read_volatile((base + offset) as *const u32)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn mmio_write32(base: u64, offset: u64, val: u32) {
     core::ptr::write_volatile((base + offset) as *mut u32, val);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write a 64-bit value to MMIO with volatile access.
 ///
 /// This wraps `core::ptr::write_volatile` so both 32-bit and 64-bit
@@ -710,6 +721,9 @@ pub fn init_found_count() -> u32 {
     unsafe { NVME_INIT_FOUND }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_READ handler for NVMe controllers.
 unsafe extern "C" fn nvme_read_dispatch(
     _device: *mut crate::io::DeviceObject,
@@ -730,6 +744,9 @@ unsafe extern "C" fn nvme_read_dispatch(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_WRITE handler for NVMe controllers.
 unsafe extern "C" fn nvme_write_dispatch(
     _device: *mut crate::io::DeviceObject,
@@ -753,24 +770,29 @@ unsafe extern "C" fn nvme_write_dispatch(
 /// Create a DriverObject with NVMe READ/WRITE dispatch handlers and
 /// register DeviceObjects into the storage dispatch registry.
 fn register_dispatch_objects() {
-    let driver = crate::io::allocate_driver(b"\\Driver\\stornvme");
-    if driver.is_null() {
-        return;
-    }
-    let mut table = crate::io::dispatch::DispatchTable::new();
-    table.major_functions[crate::io::major::IRP_MJ_READ as usize] = Some(nvme_read_dispatch);
-    table.major_functions[crate::io::major::IRP_MJ_WRITE as usize] = Some(nvme_write_dispatch);
-    table.install(driver);
-    // One device object per controller that actually probed, instead
-    // of four placeholders that made every controller index look
-    // present even when nothing was behind it.
-    for ctrl in 0..count() {
-        let device =
-            crate::io::create_device(driver, crate::io::DeviceType::Disk, b"\\Device\\NvmeDisk");
-        if device.is_null() {
-            continue;
+    unsafe {
+        let driver = crate::io::allocate_driver(b"\\Driver\\stornvme");
+        if driver.is_null() {
+            return;
         }
-        crate::drivers::storage::io_dispatch::register_device(ctrl, device);
+        let mut table = crate::io::dispatch::DispatchTable::new();
+        table.major_functions[crate::io::major::IRP_MJ_READ as usize] = Some(nvme_read_dispatch);
+        table.major_functions[crate::io::major::IRP_MJ_WRITE as usize] = Some(nvme_write_dispatch);
+        table.install(driver);
+        // One device object per controller that actually probed, instead
+        // of four placeholders that made every controller index look
+        // present even when nothing was behind it.
+        for ctrl in 0..count() {
+            let device = crate::io::create_device(
+                driver,
+                crate::io::DeviceType::Disk,
+                b"\\Device\\NvmeDisk",
+            );
+            if device.is_null() {
+                continue;
+            }
+            crate::drivers::storage::io_dispatch::register_device(ctrl, device);
+        }
     }
 }
 
@@ -808,7 +830,7 @@ fn init_controller(c: &mut NvmeController, bar0: u64) -> bool {
 
         // Parse page size from CC register
         let mps = (mmio_read32(mmio, REG_CC) >> 7) & 0xF;
-        c.page_size = 1u32 << (12 + mps as u32);
+        c.page_size = 1u32 << (12 + mps);
 
         // Reset the controller
         if !reset_controller(c) {
@@ -897,70 +919,72 @@ fn enable_controller(c: &mut NvmeController) -> bool {
 }
 
 fn identify_controller(c: &mut NvmeController) -> bool {
-    // Allocate buffer for identify data
-    let buf_size = 4096;
-    let buf = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, buf_size);
-    if buf.is_null() {
-        // kprintln!("[NVMe] Failed to allocate identify buffer");
-        return false;
-    }
-
-    // Get physical address
-    // This is critical for NVMe DMA - we cannot use virtual address as physical
-    let phys = match crate::mm::vm::virt_to_phys(buf as u64) {
-        Some(p) => p,
-        None => {
-            // virt_to_phys failed - release buffer and return error
-            let _ = crate::mm::pool::free(buf);
-            return false;
-        }
-    };
-
     unsafe {
-        // Build IDENTIFY command
-        let cmd = NvmeSqEntry::identify(1, 0, phys, 0);
-
-        // Submit command (simplified - in real implementation would use admin queue)
-        if !submit_admin_command(c, cmd) {
-            let _ = crate::mm::pool::free(buf);
+        // Allocate buffer for identify data
+        let buf_size = 4096;
+        let buf = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, buf_size);
+        if buf.is_null() {
+            // kprintln!("[NVMe] Failed to allocate identify buffer");
             return false;
         }
 
-        // Copy result to identify data
-        core::ptr::copy_nonoverlapping(buf, c.identify_data.as_mut_ptr(), buf_size);
+        // Get physical address
+        // This is critical for NVMe DMA - we cannot use virtual address as physical
+        let phys = match crate::mm::vm::virt_to_phys(buf as u64) {
+            Some(p) => p,
+            None => {
+                // virt_to_phys failed - release buffer and return error
+                let _ = crate::mm::pool::free(buf);
+                return false;
+            }
+        };
 
-        // Parse identify data
-        let id_controller = &*(c.identify_data.as_ptr() as *const NvmeIdentifyController);
-        c.controller_id = id_controller.controller_id;
-        c.namespace_count = id_controller.nn;
+        unsafe {
+            // Build IDENTIFY command
+            let cmd = NvmeSqEntry::identify(1, 0, phys, 0);
 
-        // kprintln!("[NVMe] Identify: VID=0x{:04x} SSVID=0x{:04x}",
-        //                  id_controller.vid, id_controller.ssvid);
+            // Submit command (simplified - in real implementation would use admin queue)
+            if !submit_admin_command(c, cmd) {
+                let _ = crate::mm::pool::free(buf);
+                return false;
+            }
 
-        // Print model
-        let model_bytes = &id_controller.model;
-        let model = core::str::from_utf8(model_bytes).unwrap_or("(invalid)");
+            // Copy result to identify data
+            core::ptr::copy_nonoverlapping(buf, c.identify_data.as_mut_ptr(), buf_size);
 
-        // Trim trailing NULs and whitespace before publishing the model.
-        let trimmed_len = model
-            .bytes()
-            .take_while(|b| *b != 0 && !b.is_ascii_whitespace())
-            .count();
-        let trimmed = &model[..trimmed_len.min(model.len())];
+            // Parse identify data
+            let id_controller = &*(c.identify_data.as_ptr() as *const NvmeIdentifyController);
+            c.controller_id = id_controller.controller_id;
+            c.namespace_count = id_controller.nn;
 
-        // Publish model length into identify_data for any later
-        // accessor that wants to avoid re-doing the UTF-8 scan.
-        if trimmed_len < id_controller.model.len() {
-            let ptr = id_controller.model.as_ptr();
-            // SAFETY: trimmed_len <= model.len() <= 40 bytes.
-            core::ptr::write_bytes(ptr as *mut u8, 0, id_controller.model.len() - trimmed_len);
+            // kprintln!("[NVMe] Identify: VID=0x{:04x} SSVID=0x{:04x}",
+            //                  id_controller.vid, id_controller.ssvid);
+
+            // Print model
+            let model_bytes = &id_controller.model;
+            let model = core::str::from_utf8(model_bytes).unwrap_or("(invalid)");
+
+            // Trim trailing NULs and whitespace before publishing the model.
+            let trimmed_len = model
+                .bytes()
+                .take_while(|b| *b != 0 && !b.is_ascii_whitespace())
+                .count();
+            let trimmed = &model[..trimmed_len.min(model.len())];
+
+            // Publish model length into identify_data for any later
+            // accessor that wants to avoid re-doing the UTF-8 scan.
+            if trimmed_len < id_controller.model.len() {
+                let ptr = id_controller.model.as_ptr();
+                // SAFETY: trimmed_len <= model.len() <= 40 bytes.
+                core::ptr::write_bytes(ptr as *mut u8, 0, id_controller.model.len() - trimmed_len);
+            }
+            let _ = trimmed; // reserved for future model-string accessor
+                             // kprintln!("[NVMe]   Model: {}", model);
         }
-        let _ = trimmed; // reserved for future model-string accessor
-                         // kprintln!("[NVMe]   Model: {}", model);
-    }
 
-    let _ = crate::mm::pool::free(buf);
-    true
+        let _ = crate::mm::pool::free(buf);
+        true
+    }
 }
 
 // ============================================================================
@@ -1203,7 +1227,7 @@ pub fn write_sectors(controller: usize, nsid: u32, lba: u64, buffer: &[u8]) -> b
             }
 
             // Copy data to DMA buffer
-            core::ptr::copy_nonoverlapping(buffer.as_ptr(), buf as *mut u8, buf_size);
+            core::ptr::copy_nonoverlapping(buffer.as_ptr(), buf, buf_size);
 
             // Get physical address
             // This is critical for NVMe DMA - we cannot use virtual address as physical

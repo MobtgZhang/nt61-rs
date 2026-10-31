@@ -119,6 +119,12 @@ impl StorageDevice {
     }
 }
 
+impl Default for StorageDevice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Global storage device registry.
 /// This allows the filesystem layer to discover and access storage devices.
 static STORAGE_DEVICES: Spinlock<[Option<StorageDevice>; MAX_STORAGE_DEVICES]> =
@@ -155,7 +161,7 @@ pub fn register_device(device: StorageDevice) -> Option<usize> {
 pub fn get_device(device_id: usize) -> Option<StorageDevice> {
     let devices = STORAGE_DEVICES.lock();
     match devices.get(device_id) {
-        Some(&Some(ref device)) => Some(StorageDevice {
+        Some(Some(device)) => Some(StorageDevice {
             device_type: device.device_type,
             sector_size: device.sector_size,
             total_sectors: device.total_sectors,

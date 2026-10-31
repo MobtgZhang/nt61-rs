@@ -328,7 +328,7 @@ impl EdidBaseBlock {
     /// Parse EDID from a raw 128-byte buffer
     pub fn parse(buffer: &[u8; EDID_BLOCK_SIZE]) -> Result<Self, EdidError> {
         // Verify header
-        if &buffer[0..8] != &EDID_HEADER {
+        if buffer[0..8] != EDID_HEADER {
             return Err(EdidError::InvalidHeader);
         }
 
@@ -667,7 +667,7 @@ impl From<EdidBaseBlock> for DisplayInfo {
             manufacturer: edid.manufacturer_name(),
             product_id: edid.product_id,
             serial_number: edid.serial_number,
-            year: (1990 + edid.year as u16) as u16,
+            year: (1990 + edid.year as u16),
             screen_width_cm: edid.screen_width_cm,
             screen_height_cm: edid.screen_height_cm,
             preferred_width: preferred.map(|p| p.horz_active).unwrap_or(0),

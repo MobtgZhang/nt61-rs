@@ -15,10 +15,16 @@
 use core::sync::atomic::{AtomicBool, AtomicU8};
 
 // Helper functions for MMIO access
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn mmio_read32(base: u64, offset: u32) -> u32 {
     core::ptr::read_volatile((base + offset as u64) as *const u32)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn mmio_write32(base: u64, offset: u32, value: u32) {
     core::ptr::write_volatile((base + offset as u64) as *mut u32, value);
 }
@@ -59,7 +65,7 @@ const PORTSC_PEC: u32 = 1 << 3; // Port Enable Change
 const PORTSC_PR: u32 = 1 << 8; // Port Reset
 const PORTSC_HSP: u32 = 1 << 9; // High Speed
 
-/// HCCPARAMS bits.
+// /// HCCPARAMS bits.
 
 // ============================================================================
 // USB Descriptor Structures
@@ -656,19 +662,12 @@ pub fn control_transfer(
             (setup.length >> 8) as u8,
         ];
         // Allocate an 8-byte scratch buffer for the setup payload.
-        let setup_buf = crate::mm::pool::allocate_aligned(
-            crate::mm::pool::PoolType::NonPaged,
-            8,
-            8,
-        ) as *mut u8;
+        let setup_buf =
+            crate::mm::pool::allocate_aligned(crate::mm::pool::PoolType::NonPaged, 8, 8);
         if setup_buf.is_null() {
             return Err("EHCI: setup buffer allocation failed");
         }
-        core::ptr::copy_nonoverlapping(
-            setup_bytes.as_ptr(),
-            setup_buf,
-            8,
-        );
+        core::ptr::copy_nonoverlapping(setup_bytes.as_ptr(), setup_buf, 8);
 
         // qTD 0: SETUP stage (PID 2), 8 bytes.
         let setup_qtd = EhciQtd::new(setup_buf as u64, 8, 2);
@@ -684,7 +683,11 @@ pub fn control_transfer(
         };
         // qTD 2: STATUS stage (PID opposite to data, or IN for no data).
         let status_pid: u8 = if has_data {
-            if dir_in { 0 } else { 3 }
+            if dir_in {
+                0
+            } else {
+                3
+            }
         } else {
             3 // IN status when no data phase (for reads)
         };
@@ -721,13 +724,13 @@ pub fn control_transfer(
 
         // Program the QH to point at the setup qTD.
         core::ptr::write_volatile(&mut (*qh_mem).current_qtd, qtd_phys as u32);
-        core::ptr::write_volatile(
-            &mut (*qh_mem).next_qtd,
-            qtd_phys as u32,
-        );
+        core::ptr::write_volatile(&mut (*qh_mem).next_qtd, qtd_phys as u32);
 
         // Program ASYNCLISTADDR to the QH.
-        core::ptr::write_volatile((op_base + OP_ASYNCLISTADDR as u64) as *mut u32, qh_phys as u32);
+        core::ptr::write_volatile(
+            (op_base + OP_ASYNCLISTADDR as u64) as *mut u32,
+            qh_phys as u32,
+        );
 
         // Ring the doorbell (USBD) to force the async schedule to
         // advance.
@@ -787,7 +790,8 @@ pub fn enumerate_device(controller: usize, port: u8) -> Result<UsbDevice, &'stat
     let _ = control_transfer(controller, 1, &set_cfg, None)?;
 
     // Read the descriptor that the DMA wrote.
-    let descriptor = unsafe { core::ptr::read_volatile(buf.as_ptr() as *const UsbDeviceDescriptor) };
+    let descriptor =
+        unsafe { core::ptr::read_volatile(buf.as_ptr() as *const UsbDeviceDescriptor) };
 
     Ok(UsbDevice {
         address: 1,

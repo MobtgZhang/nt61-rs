@@ -3,6 +3,7 @@
 //! This module implements power management for NVIDIA GPUs.
 //
 //! Clean-room implementation based on public specifications.
+use crate::libs::ntdll::types::NTSTATUS;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -31,7 +32,7 @@ static PM_CLOCK_GATES: AtomicU32 = AtomicU32::new(0);
 static PM_LAST_STATE: AtomicU32 = AtomicU32::new(0);
 
 /// Initialize power management
-pub fn nouveau_pm_init(device: &super::NouveauDevice) -> Result<(), ()> {
+pub fn nouveau_pm_init(device: &super::NouveauDevice) -> Result<(), NTSTATUS> {
     // Enable power management
     device.write_reg(0x0010A0, 0x1);
     PM_INIT_CALLS.fetch_add(1, Ordering::Relaxed);

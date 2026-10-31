@@ -59,11 +59,10 @@ pub fn smoke_test() -> bool {
     }
     // kprintln!("  [BUS SMOKE] host bridge stable ID 0x{:08x}", id0);
 
-    if devs.len() > 1 {
-        if pci_bus::find_pci(devs[1].bus, devs[1].device, devs[1].function).is_none() {
-            // kprintln!("  [BUS SMOKE FAIL] cached PCI info missing for 0:1:0");
-            return false;
-        }
+    if devs.len() > 1 && pci_bus::find_pci(devs[1].bus, devs[1].device, devs[1].function).is_none()
+    {
+        // kprintln!("  [BUS SMOKE FAIL] cached PCI info missing for 0:1:0");
+        return false;
     }
 
     // kprintln!("  [BUS SMOKE OK] bus drivers healthy");

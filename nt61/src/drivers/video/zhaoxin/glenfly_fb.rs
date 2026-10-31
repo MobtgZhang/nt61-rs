@@ -9,7 +9,7 @@
 //! - Video decode acceleration
 //! - Improved power management
 //
-//! Clean-room implementation based on public specifications.
+//!   Clean-room implementation based on public specifications.
 
 use crate::drivers::video::core::gpu_common::{
     GpuDriver, GpuError, GpuFeatures, GpuFramebufferInfo, PixelFormat,
@@ -478,12 +478,10 @@ pub fn init() -> Option<GlenflyDevice> {
     for dev in devices {
         if dev.vendor_id == GLENFLY_VENDOR_ID && dev.class_code == 0x03 {
             let variant = variant_from_device_id(dev.vendor_id, dev.device_id);
-            let mut device = GlenflyDevice::new(&dev, variant);
+            let mut device = GlenflyDevice::new(dev, variant);
 
-            if device.init().is_ok() {
-                if device.init_framebuffer(None).is_ok() {
-                    return Some(device);
-                }
+            if device.init().is_ok() && device.init_framebuffer(None).is_ok() {
+                return Some(device);
             }
         }
     }

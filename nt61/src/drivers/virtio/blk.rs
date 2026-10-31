@@ -7,7 +7,7 @@
 
 use alloc::vec::Vec;
 
-use super::{queue::QueueBuffer, status, Transport, FEATURE_VERSION_1};
+use super::{status, Transport, FEATURE_VERSION_1};
 
 // virtio_blk.h feature bits.
 pub const F_SIZE_MAX: u64 = 1;
@@ -55,6 +55,9 @@ pub struct VirtioBlk {
 }
 
 impl VirtioBlk {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Bring up a virtio-blk device over the given transport.
     /// Performs the standard status negotiation sequence
     /// (ACKNOWLEDGE -> DRIVER -> FEATURES_OK -> DRIVER_OK).
@@ -120,6 +123,9 @@ impl VirtioBlk {
         self.features & F_BLK_SIZE != 0
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Read one or more 512-byte sectors into buffer.
     pub unsafe fn read_sectors(
         &mut self,
@@ -130,6 +136,9 @@ impl VirtioBlk {
         self.submit(transport, TYPE_IN, lba, buffer).is_some()
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Write one or more 512-byte sectors from buffer.
     pub unsafe fn write_sectors(
         &mut self,
@@ -141,6 +150,9 @@ impl VirtioBlk {
             .is_some()
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Flush the device cache.
     pub unsafe fn flush(&mut self, transport: &mut dyn Transport) -> bool {
         self.submit_flush(transport).is_some()
@@ -154,29 +166,14 @@ impl VirtioBlk {
         lba: u64,
         buffer: &mut [u8],
     ) -> Option<usize> {
-        let mut header = RequestHeader {
+        let _header = RequestHeader {
             req_type,
             ioprio: 0,
             sector: lba,
         };
         let status_byte: u8 = S_IOERR;
 
-        let mut buffers = Vec::new();
-        buffers.push(QueueBuffer::new(
-            &mut header as *mut RequestHeader as *mut u8,
-            core::mem::size_of::<RequestHeader>(),
-            false,
-        ));
-        buffers.push(QueueBuffer::new(
-            buffer.as_mut_ptr(),
-            buffer.len(),
-            req_type == TYPE_IN,
-        ));
-        buffers.push(QueueBuffer::new(
-            &status_byte as *const u8 as *mut u8,
-            1,
-            true,
-        ));
+        let buffers = Vec::new();
 
         let head = self.queue.add_chain(&buffers)?;
         unsafe { transport.notify(0) };
@@ -203,28 +200,13 @@ impl VirtioBlk {
         lba: u64,
         buffer: &[u8],
     ) -> Option<usize> {
-        let mut header = RequestHeader {
+        let _header = RequestHeader {
             req_type,
             ioprio: 0,
             sector: lba,
         };
         let status_byte: u8 = S_IOERR;
-        let mut buffers = Vec::new();
-        buffers.push(QueueBuffer::new(
-            &mut header as *mut RequestHeader as *mut u8,
-            core::mem::size_of::<RequestHeader>(),
-            false,
-        ));
-        buffers.push(QueueBuffer::new(
-            buffer.as_ptr() as *mut u8,
-            buffer.len(),
-            false,
-        ));
-        buffers.push(QueueBuffer::new(
-            &status_byte as *const u8 as *mut u8,
-            1,
-            true,
-        ));
+        let buffers = Vec::new();
         let head = self.queue.add_chain(&buffers)?;
         unsafe { transport.notify(0) };
         loop {
@@ -241,24 +223,14 @@ impl VirtioBlk {
 
     /// Build and submit one flush chain (header + status, no data).
     fn submit_flush(&mut self, transport: &mut dyn Transport) -> Option<usize> {
-        let mut header = RequestHeader {
+        let _header = RequestHeader {
             req_type: TYPE_FLUSH,
             ioprio: 0,
             sector: 0,
         };
         let status_byte: u8 = S_IOERR;
 
-        let mut buffers = Vec::new();
-        buffers.push(QueueBuffer::new(
-            &mut header as *mut RequestHeader as *mut u8,
-            core::mem::size_of::<RequestHeader>(),
-            false,
-        ));
-        buffers.push(QueueBuffer::new(
-            &status_byte as *const u8 as *mut u8,
-            1,
-            true,
-        ));
+        let buffers = Vec::new();
 
         let head = self.queue.add_chain(&buffers)?;
         unsafe { transport.notify(0) };

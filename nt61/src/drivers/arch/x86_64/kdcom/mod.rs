@@ -33,9 +33,9 @@
 //! * `kdp_print` / `kdprompt` — formatted kernel output.
 //! * `kdp_crash` — break into the debugger on bug check.
 //
-//! The transport runs entirely on the early serial port; the
-//! transport layer never panics, so a dead debugger can never
-//! take down the kernel.
+//!   The transport runs entirely on the early serial port; the
+//!   transport layer never panics, so a dead debugger can never
+//!   take down the kernel.
 //
 //! # IMPORTANT: Serial Output Behavior
 //
@@ -43,8 +43,8 @@
 //! - When debugger IS connected: Output is encoded as KD protocol packets
 //! - Debugger-decoded view shows human-readable Windows debug messages
 //
-//! Clean-room implementation. Spec source: "Windows Internals,
-//! 6th ed." (Russinovich) chapter 12 and the public WDK docs.
+//!   Clean-room implementation. Spec source: "Windows Internals,
+//!   6th ed." (Russinovich) chapter 12 and the public WDK docs.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -298,7 +298,7 @@ pub fn kdp_crash(bugcode: u32, parameter_count: u32) {
 
     // Wait for debugger response
     for _ in 0..0x100000 {
-        if let Some(_) = try_read_byte() {
+        if try_read_byte().is_some() {
             break;
         }
         core::hint::spin_loop();
@@ -496,6 +496,9 @@ pub fn smoke_test() -> bool {
 }
 
 // Ensure these FFI markers are not optimised out.
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn kdcom_marker_init() -> u32 {
     kd_init_system()
 }

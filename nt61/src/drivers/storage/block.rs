@@ -196,7 +196,7 @@ pub fn register_device(device: BlockDevice) -> Option<BlockDeviceId> {
 pub fn get_device(id: BlockDeviceId) -> Option<BlockDevice> {
     let table = BLOCK_DEVICES.lock();
     match table.devices.get(id) {
-        Some(&Some(ref device)) => Some(BlockDevice {
+        Some(Some(device)) => Some(BlockDevice {
             id: device.id,
             name: device.name,
             block_size: device.block_size,

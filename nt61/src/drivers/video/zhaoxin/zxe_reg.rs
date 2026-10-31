@@ -8,9 +8,9 @@
 //! - DirectX 11.1 support
 //! - Enhanced video capabilities
 //
-//! Reference: S3 Chrome documentation, Linux zhaoxin driver
+//!   Reference: S3 Chrome documentation, Linux zhaoxin driver
 //
-//! Clean-room implementation based on public specifications.
+//!   Clean-room implementation based on public specifications.
 
 use super::pci_ids::DisplayFormat;
 

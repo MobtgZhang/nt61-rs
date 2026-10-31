@@ -42,7 +42,6 @@ const REG_IRS: u16 = 0x70;
 const GCTL_CRST: u32 = 1 << 0; // Controller Reset
 
 /// CORBCTL bits.
-
 const CORBCTL_CORBRUN: u8 = 1 << 1; // CORB Run
 
 /// CORBSTS bits.
@@ -506,7 +505,7 @@ pub fn count() -> usize {
 
 /// Get codecs for a controller
 pub fn get_codecs(hda_idx: usize) -> Option<&'static [HdaCodec]> {
-    unsafe { HDAS_CODECS[hda_idx].as_ref().map(|v| v.as_slice()) }
+    unsafe { HDAS_CODECS[hda_idx].as_deref() }
 }
 
 pub fn init() {
@@ -917,7 +916,6 @@ const SD_OFFSET_BDLPL: u16 = 0x24; // BDL Pointer Lower
 const SD_OFFSET_BDLPU: u16 = 0x28; // BDL Pointer Upper
 
 /// Stream status bits
-
 const SD_STS_BCIS: u8 = 1 << 3; // buffer Completion Interrupt Status
 const SD_STS_LVBCI: u8 = 1 << 2; // Last Valid BDL Entry Completed
 

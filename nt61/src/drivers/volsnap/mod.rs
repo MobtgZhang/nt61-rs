@@ -12,14 +12,14 @@
 //!   device_name)` triples that mountmgr turns into
 //!   `\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopyN` paths.
 //
-//! We implement a minimal subset: we track up to `MAX_SNAPSHOTS`
-//! in-memory snapshots per volume, each with a single diff-area
-//! in non-paged pool. The "diff" is just a record that the
-//! sector at offset N was modified; the real driver chains a
-//! copy-on-write filter above the file system.
+//!   We implement a minimal subset: we track up to `MAX_SNAPSHOTS`
+//!   in-memory snapshots per volume, each with a single diff-area
+//!   in non-paged pool. The "diff" is just a record that the
+//!   sector at offset N was modified; the real driver chains a
+//!   copy-on-write filter above the file system.
 //
-//! Clean-room implementation. Spec source: Microsoft "Volume
-//! Shadow Copy Service" reference.
+//!   Clean-room implementation. Spec source: Microsoft "Volume
+//!   Shadow Copy Service" reference.
 
 extern crate alloc;
 

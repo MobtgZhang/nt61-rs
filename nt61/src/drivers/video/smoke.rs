@@ -37,11 +37,8 @@ pub fn smoke_test() -> bool {
                 let _ = device.width;
 
                 // Log GPU family for debugging
-                match device.family {
-                    crate::drivers::video::core::gpu_common::AmdFamily::R600 => {
-                        // R600 early GPU - use R600-specific registers
-                    }
-                    _ => {}
+                if device.family == crate::drivers::video::core::gpu_common::AmdFamily::R600 {
+                    // R600 early GPU - use R600-specific registers
                 }
             }
         }

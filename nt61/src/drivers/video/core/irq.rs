@@ -69,7 +69,7 @@ impl GpuIrqFlags {
 // =====================================================================
 
 /// Interrupt status for a single display head
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct InterruptStatus {
     /// Vertical blank pending
     pub vblank_pending: bool,
@@ -81,18 +81,6 @@ pub struct InterruptStatus {
     pub error_pending: bool,
     /// Error code
     pub error_code: u32,
-}
-
-impl Default for InterruptStatus {
-    fn default() -> Self {
-        Self {
-            vblank_pending: false,
-            hblank_pending: false,
-            flip_pending: false,
-            error_pending: false,
-            error_code: 0,
-        }
-    }
 }
 
 // =====================================================================
@@ -354,10 +342,8 @@ impl GpuIrqController {
 
         for handler in &self.handlers {
             for head in 0..8u32 {
-                if self.enabled_heads & (1 << head) != 0 {
-                    if handler.handle_irq(head) {
-                        handled = true;
-                    }
+                if self.enabled_heads & (1 << head) != 0 && handler.handle_irq(head) {
+                    handled = true;
                 }
             }
         }
@@ -482,7 +468,7 @@ impl GpuSoftirqController {
 
         while pending != 0 {
             // Find lowest set bit
-            let idx = (pending & !pending + 1).trailing_zeros() as usize;
+            let idx = (pending & (!pending + 1)).trailing_zeros() as usize;
 
             if idx < self.handlers.len() {
                 if let Some(handler) = self.handlers[idx] {

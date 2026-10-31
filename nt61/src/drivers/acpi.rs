@@ -47,6 +47,12 @@ impl AcpiDeviceExtension {
     }
 }
 
+impl Default for AcpiDeviceExtension {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static mut DEVICES: [AcpiDeviceExtension; MAX_ACPI_DEVICES] =
     [const { AcpiDeviceExtension::new() }; MAX_ACPI_DEVICES];
 static ACPI_LOCK: Spinlock<()> = Spinlock::new(());

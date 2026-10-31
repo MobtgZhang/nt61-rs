@@ -4,6 +4,8 @@
 //
 //! Clean-room implementation based on public specifications.
 
+use crate::libs::ntdll::types::NTSTATUS;
+
 /// HDMI device
 pub struct HdmiDevice {}
 
@@ -14,18 +16,18 @@ impl HdmiDevice {
     }
 
     /// Initialize HDMI
-    pub fn init(&mut self) -> Result<(), ()> {
+    pub fn init(&mut self) -> Result<(), NTSTATUS> {
         Ok(())
     }
 
     /// Set video mode
-    pub fn set_mode(&mut self, width: u32, height: u32, refresh: u32) -> Result<(), ()> {
+    pub fn set_mode(&mut self, width: u32, height: u32, refresh: u32) -> Result<(), NTSTATUS> {
         let _ = (width, height, refresh);
         Ok(())
     }
 
     /// Enable HDMI
-    pub fn enable(&mut self) -> Result<(), ()> {
+    pub fn enable(&mut self) -> Result<(), NTSTATUS> {
         Ok(())
     }
 

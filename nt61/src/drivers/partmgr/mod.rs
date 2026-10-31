@@ -69,6 +69,12 @@ impl Partition {
     }
 }
 
+impl Default for Partition {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static mut PARTITIONS: [Partition; MAX_PARTITIONS] = [const { Partition::new() }; MAX_PARTITIONS];
 static LOCK: Spinlock<()> = Spinlock::new(());
 static TOTAL_PARTITIONS: AtomicU32 = AtomicU32::new(0);

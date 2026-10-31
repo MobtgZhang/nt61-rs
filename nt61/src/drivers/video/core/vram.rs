@@ -125,7 +125,7 @@ impl VramAlloc {
 
     /// Check if size is aligned
     pub fn is_aligned(&self) -> bool {
-        self.offset % self.alignment == 0 && self.size % self.alignment == 0
+        self.offset.is_multiple_of(self.alignment) && self.size.is_multiple_of(self.alignment)
     }
 }
 
@@ -244,7 +244,7 @@ impl VramManager {
     /// Framebuffer allocations are placed at the end of VRAM
     /// to allow contiguous command buffers before it.
     pub fn allocate_framebuffer(&self, width: u32, height: u32, bpp: u32) -> Option<VramAlloc> {
-        let pitch = Self::align_up((width * bpp / 8) as u64, VRAM_FB_ALIGNMENT as u64);
+        let pitch = Self::align_up((width * bpp / 8) as u64, VRAM_FB_ALIGNMENT);
         let size = pitch * (height as u64);
         let size = Self::align_up(size, VRAM_FB_ALIGNMENT);
 
@@ -399,7 +399,7 @@ impl GartManager {
     /// * `page_size` - Page size (typically 4096)
     pub fn new(table_phys: u64, table_virt: u64, num_entries: usize, page_size: u64) -> Self {
         let entry_size = 8; // 64-bit entries
-        let bitmap_words = (num_entries + 63) / 64;
+        let bitmap_words = num_entries.div_ceil(64);
 
         Self {
             table_phys,
@@ -533,7 +533,7 @@ impl GartManager {
 
     /// Calculate pages needed
     fn pages_needed(size: u64, page_size: u64) -> usize {
-        ((size + page_size - 1) / page_size) as usize
+        size.div_ceil(page_size) as usize
     }
 }
 

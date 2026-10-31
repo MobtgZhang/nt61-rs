@@ -104,6 +104,9 @@ pub struct PciTransport {
 }
 
 impl PciTransport {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Scan one ECAM bus for modern virtio-pci devices.
     pub unsafe fn scan_bus(ecam_base: u64, bus: u8) -> alloc::vec::Vec<PciTransport> {
         let mut found = alloc::vec::Vec::new();
@@ -115,6 +118,9 @@ impl PciTransport {
         found
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Probe a single ECAM function; returns the transport when the
     /// function is a modern virtio-pci device.
     pub unsafe fn probe(
@@ -152,9 +158,9 @@ impl PciTransport {
             PCI_OFFSET_DEVICE_ID as u8,
         );
         crate::hal::serial::write_string_always("[VPCI] device read done\r\n");
-        if (device_id < PCI_DEVICE_ID_TRANSITIONAL_FIRST
-            || device_id > PCI_DEVICE_ID_TRANSITIONAL_LAST)
-            && (device_id < PCI_DEVICE_ID_MODERN_FIRST || device_id > PCI_DEVICE_ID_MODERN_LAST)
+        if !(PCI_DEVICE_ID_TRANSITIONAL_FIRST..=PCI_DEVICE_ID_TRANSITIONAL_LAST)
+            .contains(&device_id)
+            && !(PCI_DEVICE_ID_MODERN_FIRST..=PCI_DEVICE_ID_MODERN_LAST).contains(&device_id)
         {
             return None;
         }
@@ -430,6 +436,9 @@ impl PciTransport {
         self.common_base
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn read_device_features(&mut self) -> u64 {
         write_u32(self.common_base + COMMON_DFSELECT, 1);
         let high = read_u32(self.common_base + COMMON_DF) as u64;
@@ -438,6 +447,9 @@ impl PciTransport {
         (high << 32) | low
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn write_driver_features(&mut self, features: u64) {
         write_u32(self.common_base + COMMON_GFSELECT, 1);
         write_u32(self.common_base + COMMON_GF, (features >> 32) as u32);
@@ -445,6 +457,9 @@ impl PciTransport {
         write_u32(self.common_base + COMMON_GF, features as u32);
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn setup_queue(&mut self, index: u16, queue: &QueueLayout) -> bool {
         let (desc, avail, used) = match (
             queue.desc_physical(),
@@ -490,6 +505,9 @@ impl PciTransport {
         enabled == 1
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn max_queue_size(&mut self, index: u16) -> u32 {
         crate::hal::serial::write_string_always("[VPCI] max enter\r\n");
         write_u16(self.common_base + COMMON_Q_SELECT, index);
@@ -498,42 +516,69 @@ impl PciTransport {
         max
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn notify(&mut self, index: u16) {
         let queue_notify_off = read_u16(self.common_base + COMMON_Q_NOFF) as u64;
         let offset = queue_notify_off * self.notify_multiplier as u64;
         write_u16(self.notify_base + offset, index);
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn read_isr(&mut self) -> u32 {
         read_u8(self.isr_base) as u32
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn read_status(&mut self) -> u8 {
         read_u8(self.common_base + COMMON_STATUS)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn write_status(&mut self, status: u8) {
         write_u8(self.common_base + COMMON_STATUS, status);
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn reset(&mut self) {
         write_u8(self.common_base + COMMON_STATUS, 0);
         // Wait for the status to clear (virtio spec 2.1.2).
         while read_u8(self.common_base + COMMON_STATUS) != 0 {}
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn config_read_u8(&self, offset: u64) -> u8 {
         read_u8(self.device_base + offset)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn config_read_u16(&self, offset: u64) -> u16 {
         read_u16(self.device_base + offset)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn config_read_u32(&self, offset: u64) -> u32 {
         read_u32(self.device_base + offset)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn config_read_u64(&self, offset: u64) -> u64 {
         let low = self.config_read_u32(offset) as u64;
         let high = self.config_read_u32(offset + 4) as u64;
@@ -544,14 +589,13 @@ impl PciTransport {
     // Legacy (pre-VIRTIO_F_VERSION_1) BAR0 flat-layout transport.
     // -----------------------------------------------------------------------
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Probe a legacy virtio-pci device that has no vendor-specific
     /// capabilities. Uses the first non-I/O BAR as the legacy register
     /// region.
-    pub unsafe fn probe_legacy(
-        bus: u8,
-        device: u8,
-        function: u8,
-    ) -> Option<PciTransport> {
+    pub unsafe fn probe_legacy(bus: u8, device: u8, function: u8) -> Option<PciTransport> {
         let vendor = crate::hal::common::pci::read_config_word(
             bus,
             device,
@@ -573,12 +617,9 @@ impl PciTransport {
             return None;
         }
         // Legacy devices use BAR0 as a flat register region.
-        let bar0 = crate::hal::common::pci::read_config_dword(
-            bus,
-            device,
-            function,
-            PCI_OFFSET_BAR as u8,
-        ) as u64;
+        let bar0 =
+            crate::hal::common::pci::read_config_dword(bus, device, function, PCI_OFFSET_BAR as u8)
+                as u64;
         // I/O BARs have bit 0 set; skip them.
         if bar0 == 0 || (bar0 & 1) != 0 {
             return None;
@@ -604,58 +645,100 @@ impl PciTransport {
         self.legacy
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_read_host_features(&self) -> u32 {
         read_u32(self.common_base + LEGACY_HOST_FEATURES)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_write_guest_features(&self, features: u32) {
         write_u32(self.common_base + LEGACY_GUEST_FEATURES, features);
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_set_queue(&mut self, index: u16) {
         write_u16(self.common_base + LEGACY_QUEUE_SEL, index);
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_queue_num(&self) -> u16 {
         read_u16(self.common_base + LEGACY_QUEUE_NUM)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_queue_pfn(&self) -> u32 {
         read_u32(self.common_base + LEGACY_QUEUE_PFN)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_set_queue_pfn(&self, pfn: u32) {
         write_u32(self.common_base + LEGACY_QUEUE_PFN, pfn);
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_notify(&mut self, index: u16) {
         write_u16(self.notify_base, index);
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_read_isr(&self) -> u8 {
         read_u8(self.isr_base)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_read_status(&self) -> u8 {
         read_u8(self.common_base + LEGACY_STATUS)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_write_status(&self, status: u8) {
         write_u8(self.common_base + LEGACY_STATUS, status);
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_config_read_u8(&self, offset: u64) -> u8 {
         read_u8(self.device_base + offset)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_config_read_u16(&self, offset: u64) -> u16 {
         read_u16(self.device_base + offset)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn legacy_config_read_u32(&self, offset: u64) -> u32 {
         read_u32(self.device_base + offset)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Reset a legacy device: clear status to 0 (virtio legacy spec).
     pub unsafe fn legacy_reset(&self) {
         write_u8(self.common_base + LEGACY_STATUS, 0);
@@ -666,26 +749,44 @@ impl PciTransport {
 // Volatile accessors
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn read_u8(addr: u64) -> u8 {
     core::ptr::read_volatile(addr as *const u8)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn read_u16(addr: u64) -> u16 {
     core::ptr::read_volatile(addr as *const u16)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn read_u32(addr: u64) -> u32 {
     core::ptr::read_volatile(addr as *const u32)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn write_u8(addr: u64, value: u8) {
     core::ptr::write_volatile(addr as *mut u8, value);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn write_u16(addr: u64, value: u16) {
     core::ptr::write_volatile(addr as *mut u16, value);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn write_u32(addr: u64, value: u32) {
     core::ptr::write_volatile(addr as *mut u32, value);
 }

@@ -97,6 +97,12 @@ impl WdfDeviceList {
     }
 }
 
+impl Default for WdfDeviceList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// WDF driver object
 pub struct WdfDriver {
     /// Driver name

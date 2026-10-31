@@ -16,8 +16,8 @@
 //! * The file system signature if known (e.g. 0xAA55 for NTFS,
 //!   "FAT32   " for FAT32, 0xEE for GPT, ...).
 //
-//! Clean-room implementation. Spec source: Microsoft "Volume
-//! Manager" reference.
+//!   Clean-room implementation. Spec source: Microsoft "Volume
+//!   Manager" reference.
 
 extern crate alloc;
 
@@ -63,6 +63,12 @@ impl Volume {
             device_object: core::ptr::null_mut(),
             driver: core::ptr::null_mut(),
         }
+    }
+}
+
+impl Default for Volume {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

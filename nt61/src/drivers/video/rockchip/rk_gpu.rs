@@ -4,6 +4,8 @@
 //
 //! Clean-room implementation based on public specifications.
 
+use crate::libs::ntdll::types::NTSTATUS;
+
 /// Mali GPU device
 pub struct MaliGpu {}
 
@@ -30,12 +32,12 @@ impl MaliGpu {
     }
 
     /// Initialize GPU
-    pub fn init(&mut self) -> Result<(), ()> {
+    pub fn init(&mut self) -> Result<(), NTSTATUS> {
         Ok(())
     }
 
     /// Enable GPU clock
-    pub fn enable_clock(&mut self) -> Result<(), ()> {
+    pub fn enable_clock(&mut self) -> Result<(), NTSTATUS> {
         Ok(())
     }
 
@@ -45,7 +47,7 @@ impl MaliGpu {
     }
 
     /// Reset GPU
-    pub fn reset(&mut self) -> Result<(), ()> {
+    pub fn reset(&mut self) -> Result<(), NTSTATUS> {
         Ok(())
     }
 }

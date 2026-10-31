@@ -20,8 +20,9 @@ use super::vcb::ClfsVcb;
 // ============================================================================
 
 /// CLFS error codes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ClfsError {
+    #[default]
     Success = 0,
     InvalidParameter,
     InvalidHandle,
@@ -55,12 +56,6 @@ impl ClfsError {
             ClfsError::IoError => 0xC000000E,
             ClfsError::NotInitialized => 0xC0000001,
         }
-    }
-}
-
-impl Default for ClfsError {
-    fn default() -> Self {
-        Self::Success
     }
 }
 

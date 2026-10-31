@@ -8,7 +8,7 @@
 //! - Zhaoxin ZX-E (KX-6000G with Glenfly GT-10C0)
 //! - Zhaoxin ZX-F (KX-7000 enhanced integrated)
 //
-//! Clean-room implementation based on public specifications.
+//!   Clean-room implementation based on public specifications.
 
 /// Zhaoxin Electronics vendor ID
 pub const ZHAOXIN_VENDOR_ID: u16 = 0x1D17;
@@ -108,7 +108,7 @@ pub fn device_name(vendor_id: u16, device_id: u16) -> &'static str {
             0x0B00 | 0x0B01 => "Zhaoxin ZX-D Series",
             0x1B00 | 0x1B01 => "Zhaoxin ZX-D (KX-6000) Display Controller",
             0x0161..=0x0164 => "Zhaoxin ZX-E / KX-6000G",
-            0x1C00 | 0x1C01 | 0x1C02 => "Zhaoxin KX-6000 Series Display",
+            0x1C00..=0x1C02 => "Zhaoxin KX-6000 Series Display",
             0x0171..=0x0174 => "Zhaoxin ZX-F / KX-7000",
             0x1D00 | 0x1D01 => "Zhaoxin KX-7000 Series Display",
             _ => "Unknown Zhaoxin Device",

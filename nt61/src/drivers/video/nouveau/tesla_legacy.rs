@@ -7,13 +7,13 @@
 //! 1. The G80-G200 unified architecture (GeForce 8xxx-9xxx) - these are NV50+
 //! 2. The earlier Curie-based GPUs (GeForce 6xxx/7xxx) - these are pre-NV50
 //
-//! This module specifically targets the pre-NV50 "legacy" GPUs:
+//!    This module specifically targets the pre-NV50 "legacy" GPUs:
 //! - G70 (GeForce 7800)
 //! - G71 (GeForce 7900)
 //! - G73 (GeForce 7600)
 //! - G80 (GeForce 8800) - first unified shader, still NV50
 //
-//! Clean-room implementation based on public documentation.
+//!   Clean-room implementation based on public documentation.
 
 #![cfg(target_arch = "x86_64")]
 

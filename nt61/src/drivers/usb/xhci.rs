@@ -15,8 +15,7 @@
 // Constants
 // ============================================================================
 
-/// xHCI PCI class (0x0C, 0x03, 0x30).
-
+//! xHCI PCI class (0x0C, 0x03, 0x30).///
 /// xHCI capability register offsets.
 pub const CAPLENGTH: u8 = 0x00;
 pub const HCIVERSION: u8 = 0x02;
@@ -163,14 +162,13 @@ impl XhciTrb {
 
     /// create a SETUP stage TRB
     pub fn setup_stage(request_type: u8, request: u8, value: u16, index: u16, length: u16) -> Self {
-        let bm = (((request_type as u32) << 24) | ((request as u32) << 16) | ((value as u32) << 0))
-            as u32;
+        let bm = ((request_type as u32) << 24) | ((request as u32) << 16) | (value as u32);
         Self {
             ptr_low: bm,
-            ptr_high: (((index as u32) << 16) | (length as u32)) as u32,
+            ptr_high: (((index as u32) << 16) | (length as u32)),
             status: 8, // 8 bytes of setup data
             control: TRB_TYPE_SETUP_STAGE
-                | (((SETUP_STAGE_SETUP as u32) << 16) | TRB_IDT | TRB_IOC) as u32,
+                | (((SETUP_STAGE_SETUP as u32) << 16) | TRB_IDT | TRB_IOC),
         }
     }
 
@@ -319,7 +317,7 @@ impl XhciTrb {
             ptr_low: 0,
             ptr_high: 0,
             status: 0,
-            control: TRB_TYPE_DOORBELL | ((slot_id as u32) << 0) | ((stream_id as u32) << 16),
+            control: TRB_TYPE_DOORBELL | (slot_id as u32) | ((stream_id as u32) << 16),
         }
     }
 }
@@ -527,25 +525,40 @@ pub fn count() -> usize {
 // MMIO Helpers
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn mmio_read32(base: u64, offset: u32) -> u32 {
     core::ptr::read_volatile((base + offset as u64) as *const u32)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn mmio_write32(base: u64, offset: u32, val: u32) {
     core::ptr::write_volatile((base + offset as u64) as *mut u32, val);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn mmio_read64(base: u64, offset: u32) -> u64 {
     let low = mmio_read32(base, offset);
     let high = mmio_read32(base, offset + 4);
     ((high as u64) << 32) | (low as u64)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn mmio_write64(base: u64, offset: u32, val: u64) {
     mmio_write32(base, offset, val as u32);
     mmio_write32(base, offset + 4, (val >> 32) as u32);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read the runtime-register base (64-bit) for the given controller slot.
 /// This exercises both `mmio_read64` and the doorbell helpers indirectly
 /// when used during enumeration, and provides a defensive accessor so
@@ -562,6 +575,9 @@ pub(crate) unsafe fn read_runtime_base(controller: usize) -> u64 {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write a 64-bit context pointer for slot `slot` to the DCBAA.
 /// Used by `address_device()` in the real driver; exposes
 /// `mmio_write64` to the external API so the helper does not become
@@ -580,6 +596,9 @@ pub(crate) unsafe fn write_slot_context(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Increment the command-event index for the indexed controller.
 /// Used by smoke tests to keep the field alive.
 unsafe fn bump_cmd_event_idx(controller: usize) {
@@ -939,7 +958,7 @@ pub fn address_device(
         // head pointer so completion handler can locate the device
         // state.
         let bdf = (port as u32) << 8;
-        c.cmd = (c.cmd & !(0xFF << 16)) | ((bdf & 0xFFFF_FFFF) << 0) | ((slot as u32 & 0xFF) << 16);
+        c.cmd = (c.cmd & !(0xFF << 16)) | bdf | ((slot as u32 & 0xFF) << 16);
         let _ = ctx_base;
 
         let trb = XhciTrb::address_device(bdf, ctx_base);
@@ -1204,11 +1223,8 @@ pub fn control_transfer(
 fn init_event_ring(c: &mut XhciController) -> Result<(), &'static str> {
     const EVENT_TRBS: usize = 32;
     const EVENT_BYTES: usize = EVENT_TRBS * core::mem::size_of::<XhciTrb>();
-    let ptr = crate::mm::pool::allocate_aligned(
-        crate::mm::pool::PoolType::NonPaged,
-        EVENT_BYTES,
-        64,
-    );
+    let ptr =
+        crate::mm::pool::allocate_aligned(crate::mm::pool::PoolType::NonPaged, EVENT_BYTES, 64);
     if ptr.is_null() {
         return Err("xHCI: event ring allocation failed");
     }

@@ -134,7 +134,7 @@ pub fn init() {
     let devices = pci::enumerate();
     for dev in devices {
         let _ = pnp::register_pci_device(dev);
-        let info = decode_device(&dev);
+        let info = decode_device(dev);
         push_pci_info(info);
     }
     // kprintln!("      PCI bus: enumerated {} devices", devices.len());

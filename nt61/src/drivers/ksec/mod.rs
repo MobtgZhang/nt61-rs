@@ -4,10 +4,10 @@
 //!   * ksecdd.sys — Kernel Security Device Driver (entropy, RNG)
 //!   * cng.sys — Cryptographic Next Generation (AES, SHA, RC4, etc.)
 //
-//! CNG/BCrypt uses the Win32-style crypto naming convention
-//! (bcrypt_open_algorithm_provider, BCRYPT_AES_ALGORITHM, ...).
+//!     CNG/BCrypt uses the Win32-style crypto naming convention
+//!     (bcrypt_open_algorithm_provider, BCRYPT_AES_ALGORITHM, ...).
 //
-//! Key responsibilities:
+//!     Key responsibilities:
 //!   * `bcrypt_open_algorithm_provider` — register crypto algorithms
 //!   * `bcrypt_generate_symmetric_key` — create AES/SHA keys
 //!   * `bcrypt_encrypt` / `bcrypt_decrypt` — encrypt/decrypt data
@@ -15,8 +15,8 @@
 //!   * `KsecGatherEntropyData` — gather entropy from hardware sources
 //!   * `KsecRandomBytesGenerate` — generate cryptographically random bytes
 //
-//! Clean-room implementation. Spec source: Windows CNG SDK,
-//! WDK bcrypt.h / ksecdd.h.
+//!     Clean-room implementation. Spec source: Windows CNG SDK,
+//!     WDK bcrypt.h / ksecdd.h.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -103,7 +103,7 @@ pub fn ksec_random_bytes(output: &mut [u8]) {
 
         // Mix with seed using a simple hash
         for i in 0..16 {
-            block[i] = block[i].wrapping_add(seed[(i / 4) as usize].to_le_bytes()[i % 8]);
+            block[i] = block[i].wrapping_add(seed[i / 4].to_le_bytes()[i % 8]);
             block[i] = block[i].wrapping_mul(0x9Eu8);
             block[i] ^= block[(i + 7) % 16].wrapping_add(0xC6);
         }
@@ -114,7 +114,7 @@ pub fn ksec_random_bytes(output: &mut [u8]) {
         counter += 1;
 
         // Periodically re-seed
-        if counter % 1024 == 0 {
+        if counter.is_multiple_of(1024) {
             for s in &mut seed {
                 if let Some(r) = rdrand_u64() {
                     *s = s.wrapping_add(r);
@@ -259,14 +259,14 @@ pub fn aes_cbc_encrypt(key: &[u8], iv: &[u8], plaintext: &[u8], ciphertext: &mut
         Some(k) => k,
         None => return false,
     };
-    let padded_len = ((plaintext.len() + 15) / 16) * 16;
+    let padded_len = plaintext.len().div_ceil(16) * 16;
     if iv.len() != 16 || ciphertext.len() < padded_len {
         return false;
     }
 
     let mut prev_block = [0u8; 16];
     prev_block.copy_from_slice(iv);
-    let num_blocks = (plaintext.len() + 15) / 16;
+    let num_blocks = plaintext.len().div_ceil(16);
     for i in 0..num_blocks {
         let mut block = [0u8; 16];
         let src_off = i * 16;
@@ -326,12 +326,12 @@ pub fn bcrypt_generate_symmetric_key(handle: BCryptHandle, key_bytes: &[u8]) -> 
         1 => {
             // AES
             if key_bytes.len() == 16 || key_bytes.len() == 24 || key_bytes.len() == 32 {
-                Some(handle as u64 | ((key_bytes.len() as u64) << 32))
+                Some(handle | ((key_bytes.len() as u64) << 32))
             } else {
                 None
             }
         }
-        2 | 4 => Some(handle as u64), // SHA / MD5 — no key needed
+        2 | 4 => Some(handle), // SHA / MD5 — no key needed
         _ => None,
     }
 }

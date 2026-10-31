@@ -15,11 +15,11 @@
 //!   * `CiValidateImageData` — hash each section of the PE,
 //!     compare against catalog
 //
-//! When code integrity detects a violation, it returns
-//! `STATUS_INVALID_IMAGE_NOT_WIN` to block the driver from loading.
+//!     When code integrity detects a violation, it returns
+//!     `STATUS_INVALID_IMAGE_NOT_WIN` to block the driver from loading.
 //
-//! Clean-room implementation. Spec source: Windows Internals 6th ed.
-//! ch.10 (Code Integrity), WDK documentation.
+//!     Clean-room implementation. Spec source: Windows Internals 6th ed.
+//!     ch.10 (Code Integrity), WDK documentation.
 
 /// CI policy flags.
 pub const CI_POLICY_ENABLED: u32 = 0x00000001;
@@ -95,7 +95,7 @@ impl Sha256 {
 
     fn process_block(&mut self) {
         fn rotr(x: u32, n: u32) -> u32 {
-            (x >> n) | (x << (32 - n))
+            x.rotate_right(n)
         }
         fn ch(x: u32, y: u32, z: u32) -> u32 {
             (x & y) ^ (!x & z)
@@ -368,7 +368,7 @@ pub fn compute_pe_hash(image: &[u8]) -> [u8; 32] {
     };
 
     // Section headers start after optional header
-    let sec_hdr_off = (opt_hdr_off + coff.opt_hdr_size as usize) as usize;
+    let sec_hdr_off = opt_hdr_off + coff.opt_hdr_size as usize;
     if sec_hdr_off + 40 > image.len() {
         return hasher.finalize();
     }

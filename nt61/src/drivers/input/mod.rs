@@ -6,9 +6,9 @@
 //!    `drivers::usb::hid`; the input module just consumes the
 //!    HID boot reports).
 //
-//! Clean-room implementation. Spec source: PS/2 controller
-//! reference (IBM KB-101 keyboard) and USB HID 1.11. No code is
-//! copied from any Microsoft or ReactOS source file.
+//!    Clean-room implementation. Spec source: PS/2 controller
+//!    reference (IBM KB-101 keyboard) and USB HID 1.11. No code is
+//!    copied from any Microsoft or ReactOS source file.
 
 extern crate alloc;
 

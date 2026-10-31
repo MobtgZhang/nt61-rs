@@ -11,14 +11,14 @@
 //! * `pcw.sys` walks the registered counter sets, formats the
 //!   samples, and returns the data to user mode.
 //
-//! Each counter set is described by a `PCW_COUNTER_INFORMATION`
-//! block: a name, a set of counters (numeric values), and an
-//! opaque context pointer (the actual data source). A real
-//! driver registers the counter set; a user-mode consumer
-//! enumerates them via `DeviceIoControl` into `pcw`.
+//!   Each counter set is described by a `PCW_COUNTER_INFORMATION`
+//!   block: a name, a set of counters (numeric values), and an
+//!   opaque context pointer (the actual data source). A real
+//!   driver registers the counter set; a user-mode consumer
+//!   enumerates them via `DeviceIoControl` into `pcw`.
 //
-//! Clean-room implementation. Spec source: Microsoft "Kernel
-//! Performance Counter" reference and the public pcw.h header.
+//!   Clean-room implementation. Spec source: Microsoft "Kernel
+//!   Performance Counter" reference and the public pcw.h header.
 
 extern crate alloc;
 
@@ -72,6 +72,12 @@ impl CounterSet {
     }
 }
 
+impl Default for CounterSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static mut SETS: [CounterSet; MAX_COUNTER_SETS] = [const { CounterSet::new() }; MAX_COUNTER_SETS];
 static LOCK: Spinlock<()> = Spinlock::new(());
 static NEXT_SET_ID: AtomicU32 = AtomicU32::new(1);
@@ -95,9 +101,7 @@ pub fn pcw_register(name: &str, counters: &[CounterDescriptor]) -> u32 {
             // Copy name into fixed-size buffer
             let name_bytes = name.as_bytes();
             let copy_len = name_bytes.len().min(15);
-            for i in 0..copy_len {
-                slot.name_buf[i] = name_bytes[i];
-            }
+            slot.name_buf[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
             slot.name_buf[copy_len] = 0;
             slot.name_len = copy_len;
             slot.set_id = NEXT_SET_ID.fetch_add(1, Ordering::Relaxed);
@@ -171,9 +175,8 @@ pub fn pcw_collect() -> Vec<([u8; 16], usize, u32, [u64; MAX_COUNTERS_PER_SET])>
                 continue;
             }
             let mut values = [0u64; MAX_COUNTERS_PER_SET];
-            for i in 0..slot.counter_count as usize {
-                values[i] = slot.values[i];
-            }
+            values[..(slot.counter_count as usize)]
+                .copy_from_slice(&slot.values[..(slot.counter_count as usize)]);
             out.push((slot.name_buf, slot.name_len, slot.set_id, values));
         }
     }

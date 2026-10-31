@@ -7,9 +7,9 @@
 //! * `acpi_pm` - the ACPI power-management timer (24 / 32-bit
 //!   free-running counter at 3.579545 MHz).
 //
-//! Clean-room implementation. Spec source: IA-PC HPET
-//! specification 1.0a, ACPI 6.0 section 4.8.2. No code is
-//! copied from any Microsoft or ReactOS source file.
+//!   Clean-room implementation. Spec source: IA-PC HPET
+//!   specification 1.0a, ACPI 6.0 section 4.8.2. No code is
+//!   copied from any Microsoft or ReactOS source file.
 
 extern crate alloc;
 

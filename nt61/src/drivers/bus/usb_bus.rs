@@ -23,14 +23,13 @@ const XHCI_PCI_CLASS: (u8, u8, u8) = (0x0C, 0x03, 0x30);
 pub fn init() {
     let mut hc_count = 0u32;
     for dev in pci::enumerate() {
-        if (dev.class_code, dev.subclass, dev.prog_if) == UHCI_PCI_CLASS
+        if ((dev.class_code, dev.subclass, dev.prog_if) == UHCI_PCI_CLASS
             || (dev.class_code, dev.subclass, dev.prog_if) == EHCI_PCI_CLASS
-            || (dev.class_code, dev.subclass, dev.prog_if) == XHCI_PCI_CLASS
+            || (dev.class_code, dev.subclass, dev.prog_if) == XHCI_PCI_CLASS)
+            && pnp::register_pci_device(dev).is_some()
         {
-            if pnp::register_pci_device(dev).is_some() {
-                hc_count += 1;
-                let _ = hc_count; // increment semantics preserved; not yet reported
-            }
+            hc_count += 1;
+            let _ = hc_count; // increment semantics preserved; not yet reported
         }
     }
     // kprintln!("      USB bus: {} host controller(s) discovered", hc_count);

@@ -4,6 +4,8 @@
 //
 //! Clean-room implementation based on public specifications.
 
+use crate::libs::ntdll::types::NTSTATUS;
+
 /// GMU (Graphics Management Unit) device
 pub struct GmuDevice {}
 
@@ -14,17 +16,17 @@ impl GmuDevice {
     }
 
     /// Initialize GMU
-    pub fn init(&mut self) -> Result<(), ()> {
+    pub fn init(&mut self) -> Result<(), NTSTATUS> {
         Ok(())
     }
 
     /// power on GPU
-    pub fn power_on(&mut self) -> Result<(), ()> {
+    pub fn power_on(&mut self) -> Result<(), NTSTATUS> {
         Ok(())
     }
 
     /// power off GPU
-    pub fn power_off(&mut self) -> Result<(), ()> {
+    pub fn power_off(&mut self) -> Result<(), NTSTATUS> {
         Ok(())
     }
 

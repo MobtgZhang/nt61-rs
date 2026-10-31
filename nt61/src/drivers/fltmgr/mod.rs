@@ -22,7 +22,7 @@
 //! * A small set of well-known IRP callbacks: pre/post create,
 //!   pre/post read, pre/post write, pre/post set info.
 //
-//! A minifilter that wants to register with us does:
+//!   A minifilter that wants to register with us does:
 //
 //! ```text
 //!   let mut reg = FLT_REGISTRATION { ... };
@@ -90,6 +90,12 @@ impl FltRegistration {
     }
 }
 
+impl Default for FltRegistration {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// One registered filter.
 pub struct FltFilter {
     pub valid: bool,
@@ -114,6 +120,12 @@ impl FltFilter {
             pre_ops_called: 0,
             post_ops_called: 0,
         }
+    }
+}
+
+impl Default for FltFilter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -203,7 +215,7 @@ pub fn flt_start_filtering(h: u32) -> i32 {
         }
         slot.started = true;
         // kprintln!("    [FLTMGR] Start C");
-        return 0;
+        0
     }
 }
 
@@ -233,7 +245,7 @@ pub fn flt_unregister_filter(h: u32) -> i32 {
         }
         slot.valid = false;
         slot.started = false;
-        return 0;
+        0
     }
 }
 
@@ -420,7 +432,13 @@ pub fn smoke_test() -> bool {
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn stub_pre(_a: *mut (), _b: *mut u8) -> i32 {
     0
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn stub_post(_a: *mut (), _b: *mut u8, _f: u32) {}

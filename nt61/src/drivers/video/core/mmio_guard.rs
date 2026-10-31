@@ -5,7 +5,7 @@
 //! 1. Range-checked against the known MMIO size for this device
 //! 2. Serialized with a spinlock to prevent SMP races
 //
-//! Clean-room implementation.
+//!    Clean-room implementation.
 
 use crate::ke::sync::Spinlock;
 
@@ -203,15 +203,19 @@ impl MmioGuard {
     }
 
     /// Get a raw pointer to the MMIO region.
-    /// # Safety: caller must ensure the offset is within range.
+    /// # Safety
+    ///
+    /// Caller must ensure the offset is within range.
     #[inline]
     pub unsafe fn as_ptr(&self, offset: u32) -> *const u32 {
         self.range.address(offset) as *const u32
     }
 
     /// Get a raw mutable pointer to the MMIO region.
-    /// # Safety: caller must ensure the offset is within range and
-    /// that no other accesses are happening concurrently.
+    /// # Safety
+    ///
+    /// Caller must ensure the offset is within range and that no other
+    /// accesses are happening concurrently.
     #[inline]
     pub unsafe fn as_mut_ptr(&self, offset: u32) -> *mut u32 {
         self.range.address(offset) as *mut u32

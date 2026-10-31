@@ -1011,14 +1011,14 @@ fn nvidia_arch_from_device_id(device_id: u16) -> NvidiaArch {
     // Simplified version
     let family = device_id >> 8;
     match family {
-        0x06 => NvidiaArch::Tesla,                            // GeForce 8xxx-9xxx
-        0x0F => NvidiaArch::Fermi,                            // GeForce GTX 400/500
-        0x10 | 0x11 | 0x12 => NvidiaArch::Kepler,             // GeForce GTX 600/700
-        0x13 => NvidiaArch::Maxwell,                          // GeForce GTX 900
-        0x14 | 0x15 | 0x16 => NvidiaArch::Pascal,             // GeForce GTX 1000
-        0x17 | 0x18 => NvidiaArch::Turing,                    // RTX 2000
-        0x1E | 0x20 | 0x21 => NvidiaArch::Ampere,             // RTX 3000
-        0x22 | 0x23 | 0x24 | 0x25 => NvidiaArch::AdaLovelace, // RTX 4000
+        0x06 => NvidiaArch::Tesla,                // GeForce 8xxx-9xxx
+        0x0F => NvidiaArch::Fermi,                // GeForce GTX 400/500
+        0x10..=0x12 => NvidiaArch::Kepler,        // GeForce GTX 600/700
+        0x13 => NvidiaArch::Maxwell,              // GeForce GTX 900
+        0x14..=0x16 => NvidiaArch::Pascal,        // GeForce GTX 1000
+        0x17 | 0x18 => NvidiaArch::Turing,        // RTX 2000
+        0x1E | 0x20 | 0x21 => NvidiaArch::Ampere, // RTX 3000
+        0x22..=0x25 => NvidiaArch::AdaLovelace,   // RTX 4000
         _ => NvidiaArch::Unknown,
     }
 }
@@ -1077,12 +1077,10 @@ fn qualcomm_gen_from_device_id(device_id: u16) -> QualcommGen {
 }
 
 /// Get Allwinner SoC from device ID
-fn allwinner_soc_from_device_id(device_id: u16) -> AllwinnerSoc {
+fn allwinner_soc_from_device_id(_device_id: u16) -> AllwinnerSoc {
     // Allwinner uses device tree / MMIO, not standard PCI
     // This is for completeness
-    match device_id {
-        _ => AllwinnerSoc::Unknown,
-    }
+    AllwinnerSoc::Unknown
 }
 
 /// Get StarFive SoC from device ID

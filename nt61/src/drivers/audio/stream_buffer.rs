@@ -52,7 +52,7 @@ impl StreamBuffer {
     /// Create a new ring buffer. `capacity_frames` is rounded down to
     /// the nearest power of two and clamped to `MAX_CAPACITY_FRAMES`.
     pub fn new(capacity_frames: usize, channels: u8, sample_rate: u32) -> Self {
-        let requested = capacity_frames.max(1).min(MAX_CAPACITY_FRAMES);
+        let requested = capacity_frames.clamp(1, MAX_CAPACITY_FRAMES);
         let capacity = requested.next_power_of_two();
         let channels_usize = (channels as usize).max(1);
         Self {

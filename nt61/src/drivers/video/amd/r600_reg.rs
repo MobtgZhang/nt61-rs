@@ -222,7 +222,7 @@ pub const R600_DPLL_A_FB_DIV: u32 = 0x624;
 /// Display A PLL reference divider
 pub const R600_DPLL_A_REF_DIV: u32 = 0x628;
 
-//// Display A PLL post divider
+/// Display A PLL post divider
 pub const R600_DPLL_A_POST_DIV: u32 = 0x62C;
 
 // PLL control bits

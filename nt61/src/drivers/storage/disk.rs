@@ -12,6 +12,9 @@ pub struct DiskInfo {
 }
 
 pub trait DiskBackend: Sync {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn init(&self);
     fn disk_count(&self) -> usize;
     fn disk_read(&self, index: usize, offset: u64, byte_count: usize, buf: &mut [u8]) -> usize;
@@ -60,7 +63,7 @@ pub fn disk_write(index: usize, offset: u64, byte_count: usize, buf: &[u8]) -> u
 }
 
 pub fn smoke_test() -> bool {
-    backend().map_or(true, DiskBackend::smoke_test)
+    backend().is_none_or(DiskBackend::smoke_test)
 }
 
 pub fn read_count() -> u32 {
@@ -83,6 +86,9 @@ pub(crate) mod test_support {
     pub struct TestDiskBackend;
 
     impl DiskBackend for TestDiskBackend {
+        /// # Safety
+        ///
+        /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
         unsafe fn init(&self) {}
 
         fn disk_count(&self) -> usize {
@@ -122,6 +128,9 @@ pub(crate) mod test_support {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn register_test_backend() {
         super::register_backend(&TestDiskBackend);
     }

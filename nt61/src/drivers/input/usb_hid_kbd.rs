@@ -65,9 +65,8 @@ impl BootKbdReport {
         let mut report = Self::default();
         report.modifiers = data[REPORT_MOD];
         report.reserved = data[REPORT_RESERVED];
-        for i in 0..MAX_KEYS {
-            report.keycodes[i] = data[REPORT_KEYCODES + i];
-        }
+        report.keycodes[..MAX_KEYS]
+            .copy_from_slice(&data[REPORT_KEYCODES..(MAX_KEYS + REPORT_KEYCODES)]);
         Some(report)
     }
 

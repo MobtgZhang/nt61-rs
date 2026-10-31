@@ -58,6 +58,9 @@ pub struct MmioTransport {
 }
 
 impl MmioTransport {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Probe an MMIO window; returns the transport when the slot holds a
     /// live virtio-mmio device (magic "virt", known protocol version).
     pub unsafe fn probe(base: u64) -> Option<MmioTransport> {
@@ -79,6 +82,9 @@ impl MmioTransport {
         self.device_id
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Read the full 64-bit device feature set (legacy devices only
     /// expose the low 32 bits; the high word reads as zero).
     pub unsafe fn read_device_features(&mut self) -> u64 {
@@ -93,6 +99,9 @@ impl MmioTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn write_driver_features(&mut self, features: u64) {
         if self.is_modern {
             write_u32(self.base + REG_DRIVER_FEATURES_SEL, 1);
@@ -104,6 +113,9 @@ impl MmioTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Program the transport for a virtqueue whose memory layout has
     /// already been initialised.
     pub unsafe fn setup_queue(&mut self, index: u16, queue: &QueueLayout) -> bool {
@@ -141,15 +153,24 @@ impl MmioTransport {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn max_queue_size(&mut self, index: u16) -> u32 {
         write_u32(self.base + REG_QUEUE_SEL, index as u32);
         read_u32(self.base + REG_QUEUE_NUM_MAX)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn notify(&mut self, index: u16) {
         write_u32(self.base + REG_QUEUE_NOTIFY, index as u32);
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Read and acknowledge the ISR status register.
     pub unsafe fn read_isr(&mut self) -> u32 {
         let isr = read_u32(self.base + REG_INTERRUPT_STATUS);
@@ -157,31 +178,52 @@ impl MmioTransport {
         isr
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn read_status(&mut self) -> u8 {
         read_u32(self.base + REG_STATUS) as u8
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn write_status(&mut self, status: u8) {
         write_u32(self.base + REG_STATUS, status as u32);
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn reset(&mut self) {
         write_u32(self.base + REG_STATUS, 0);
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Device-specific configuration space starts at REG_CONFIG.
     pub unsafe fn config_read_u8(&self, offset: u64) -> u8 {
         read_u8(self.base + REG_CONFIG + offset)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn config_read_u16(&self, offset: u64) -> u16 {
         read_u16(self.base + REG_CONFIG + offset)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn config_read_u32(&self, offset: u64) -> u32 {
         read_u32(self.base + REG_CONFIG + offset)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn config_read_u64(&self, offset: u64) -> u64 {
         let low = self.config_read_u32(offset) as u64;
         let high = self.config_read_u32(offset + 4) as u64;
@@ -193,18 +235,30 @@ impl MmioTransport {
 // Volatile MMIO accessors
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn read_u8(addr: u64) -> u8 {
     core::ptr::read_volatile(addr as *const u8)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn read_u16(addr: u64) -> u16 {
     core::ptr::read_volatile(addr as *const u16)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn read_u32(addr: u64) -> u32 {
     core::ptr::read_volatile(addr as *const u32)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn write_u32(addr: u64, value: u32) {
     core::ptr::write_volatile(addr as *mut u32, value);
 }

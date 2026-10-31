@@ -76,27 +76,23 @@ pub fn compute_clock(target_khz: u32) -> Option<ClockResult> {
     for dpll_div in 5..=10 {
         for fp_div in 10..=150 {
             let vco = ref_clock * fp_div;
-            if vco < 1_750_000 || vco > 3_500_000 {
+            if !(1_750_000..=3_500_000).contains(&vco) {
                 continue;
             }
 
             let dpll_dot_div = vco / target_khz;
-            if dpll_dot_div < 2 || dpll_dot_div > 127 {
+            if !(2..=127).contains(&dpll_dot_div) {
                 continue;
             }
 
             let clock = vco / dpll_dot_div;
-            let error = if clock > target_khz {
-                clock - target_khz
-            } else {
-                target_khz - clock
-            };
+            let error = clock.abs_diff(target_khz);
 
             if error < best_error {
                 best_error = error;
                 best_clock = clock;
-                best_dpll = ((fp_div - 2) as u32) << 16 | ((dpll_div - 2) as u32);
-                best_fp_div = ((fp_div - 2) as u32) << 16 | ((dpll_div - 2) as u32);
+                best_dpll = (fp_div - 2) << 16 | ((dpll_div - 2) as u32);
+                best_fp_div = (fp_div - 2) << 16 | ((dpll_div - 2) as u32);
                 best_fp_div_lo = 0;
             }
         }
@@ -219,7 +215,7 @@ pub fn get_best_clock(width: u32, height: u32, refresh: u32) -> u32 {
     let pixel_clock = (h_total as u64 * v_total as u64 * refresh as u64 / 1_000_000) as u32;
 
     // Common clock values in kHz
-    let common_clocks = [
+    let common_clocks: [u32; 32] = [
         25175, 31500, 40000, 49500, 50000, 54000, 65000, 72000, 75000, 78750, 85500, 94500, 108000,
         115000, 121750, 135000, 157500, 162000, 175500, 179500, 185625, 202500, 208000, 234000,
         262750, 268500, 315000, 340000, 355000, 368000, 397500, 438500,
@@ -230,11 +226,7 @@ pub fn get_best_clock(width: u32, height: u32, refresh: u32) -> u32 {
     let mut best_error = u32::MAX;
 
     for &clock in &common_clocks {
-        let error = if clock > pixel_clock {
-            clock - pixel_clock
-        } else {
-            pixel_clock - clock
-        };
+        let error = clock.abs_diff(pixel_clock);
 
         if error < best_error {
             best_error = error;

@@ -250,6 +250,12 @@ impl NetworkInterface {
     }
 }
 
+impl Default for NetworkInterface {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static TDI_ADDRESS_OBJECTS: Spinlock<Vec<TdiAddressObject>> = Spinlock::new(Vec::new());
 static TDI_CONNECTION_OBJECTS: Spinlock<Vec<TdiConnectionObject>> = Spinlock::new(Vec::new());
 static NETWORK_INTERFACES: Spinlock<[NetworkInterface; MAX_INTERFACES]> =
@@ -296,6 +302,12 @@ impl TcpIpStatistics {
             arp_requests_sent: AtomicU64::new(0),
             arp_replies_received: AtomicU64::new(0),
         }
+    }
+}
+
+impl Default for TcpIpStatistics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -887,6 +899,9 @@ pub fn ipv4_output(src_ip: u32, dst_ip: u32, protocol: u8, data: &[u8]) -> bool 
     result
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn dispatch_create(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !is_initialized() {
         return 0xC0000001_u32 as i32; // STATUS_UNSUCCESSFUL
@@ -903,14 +918,17 @@ pub unsafe extern "C" fn dispatch_create(_device: *mut DeviceObject, irp: *mut I
         if let Some(id) = addr_id {
             (*irp).io_status.information = id as usize;
             (*irp).io_status.status = 0; // STATUS_SUCCESS
-            return 0; // STATUS_SUCCESS
+            0 // STATUS_SUCCESS
         } else {
             (*irp).io_status.status = 0xC000009A; // STATUS_INSUFFICIENT_RESOURCES
-            return 0xC000009A_u32 as i32;
+            0xC000009A_u32 as i32
         }
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn dispatch_close(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     unsafe {
         (*irp).io_status.status = 0; // STATUS_SUCCESS
@@ -919,6 +937,9 @@ pub unsafe extern "C" fn dispatch_close(_device: *mut DeviceObject, irp: *mut Ir
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn dispatch_cleanup(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     unsafe {
         (*irp).io_status.status = 0;
@@ -927,6 +948,9 @@ pub unsafe extern "C" fn dispatch_cleanup(_device: *mut DeviceObject, irp: *mut 
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn dispatch_device_control(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !is_initialized() {
         unsafe {
@@ -973,6 +997,9 @@ pub unsafe extern "C" fn dispatch_device_control(_device: *mut DeviceObject, irp
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn dispatch_internal_device_control(
     _device: *mut DeviceObject,
     irp: *mut Irp,
@@ -1008,6 +1035,9 @@ pub unsafe extern "C" fn dispatch_internal_device_control(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_accept(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
     let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
@@ -1038,6 +1068,9 @@ unsafe fn handle_tdi_accept(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_connect(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
     let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
@@ -1079,6 +1112,9 @@ unsafe fn handle_tdi_connect(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_disconnect(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
     let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
@@ -1109,6 +1145,9 @@ unsafe fn handle_tdi_disconnect(irp: *mut Irp, stack: *mut IoStackLocation) -> u
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_listen(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
     let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
@@ -1139,6 +1178,9 @@ unsafe fn handle_tdi_listen(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_send(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
     let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
@@ -1181,6 +1223,9 @@ unsafe fn handle_tdi_send(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_receive(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
     let output_buffer = (*irp).user_buffer as *mut u8;
@@ -1214,6 +1259,9 @@ unsafe fn handle_tdi_receive(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_send_datagram(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
     let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
@@ -1257,6 +1305,9 @@ unsafe fn handle_tdi_send_datagram(irp: *mut Irp, stack: *mut IoStackLocation) -
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_receive_datagram(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
     let output_buffer = (*irp).user_buffer as *mut u8;
@@ -1304,6 +1355,9 @@ unsafe fn handle_tdi_receive_datagram(irp: *mut Irp, stack: *mut IoStackLocation
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_associate_address(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
     let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
@@ -1334,6 +1388,9 @@ unsafe fn handle_tdi_associate_address(irp: *mut Irp, stack: *mut IoStackLocatio
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_disassociate_address(irp: *mut Irp, stack: *mut IoStackLocation) -> u32 {
     let input_buffer = (*stack).parameters.device_io_control.type3_input_buffer as *const u8;
     let input_length = (*stack).parameters.device_io_control.input_buffer_length as usize;
@@ -1358,21 +1415,33 @@ unsafe fn handle_tdi_disassociate_address(irp: *mut Irp, stack: *mut IoStackLoca
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_query_information(irp: *mut Irp, _stack: *mut IoStackLocation) -> u32 {
     (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_set_information(irp: *mut Irp, _stack: *mut IoStackLocation) -> u32 {
     (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_set_event_handler(irp: *mut Irp, _stack: *mut IoStackLocation) -> u32 {
     (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn handle_tdi_action(irp: *mut Irp, _stack: *mut IoStackLocation) -> u32 {
     (*irp).io_status.information = 0;
     0 // STATUS_SUCCESS
@@ -1394,7 +1463,10 @@ pub fn get_interface_count() -> usize {
     NETWORK_INTERFACES.lock().iter().filter(|i| i.valid).count()
 }
 
-pub fn driver_entry(driver: *mut DriverObject) -> u32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn driver_entry(driver: *mut DriverObject) -> u32 {
     init();
 
     unsafe {

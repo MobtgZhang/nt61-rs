@@ -15,22 +15,17 @@ use super::vcb::ClfsVcb;
 // ============================================================================
 
 /// How the log was opened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ClfsOpenMode {
     /// Open for reading only.
     Readonly,
     /// Open for writing only.
     Writeonly,
     /// Open for both reading and writing.
+    #[default]
     ReadWrite,
     /// Open for appending (new records only).
     Append,
-}
-
-impl Default for ClfsOpenMode {
-    fn default() -> Self {
-        Self::ReadWrite
-    }
 }
 
 // ============================================================================
@@ -177,7 +172,7 @@ impl ClfsFcb {
 
     /// Check if this handle is valid for the given VCB.
     pub fn is_valid_for(&self, vcb_ptr: *const ClfsVcb) -> bool {
-        self.vcb as *const _ == vcb_ptr
+        core::ptr::eq(self.vcb, vcb_ptr)
     }
 }
 

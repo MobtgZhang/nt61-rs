@@ -9,7 +9,7 @@
 //! - Link training and configuration
 //! - Multi-function and branch device communication
 //
-//! Clean-room implementation based on DP 1.4 specification.
+//!   Clean-room implementation based on DP 1.4 specification.
 
 use crate::drivers::video::log;
 use alloc::format;
@@ -30,8 +30,7 @@ const REG_AUX_STATUS: u16 = 0x6408; // AUX channel status
 /// AUX channel I2C slave address for DDC
 const DDC_I2C_ADDR: u8 = 0x50;
 
-/// AUX channel I2C slave address for GMCH (Graphics Memory Controller Hub)
-
+/// AUX channel I2C slave address for GMCH (Graphics Memory Controller Hub)///
 /// DPCD register addresses
 pub mod dpcd {
     /// Sink count (read)
@@ -153,7 +152,7 @@ impl AuxStatus {
     /// Get the error code
     pub fn error_code(&self) -> u8 {
         if self.error {
-            ((self.reply_count & 0x0F) + 1) as u8
+            (self.reply_count & 0x0F) + 1
         } else {
             0
         }

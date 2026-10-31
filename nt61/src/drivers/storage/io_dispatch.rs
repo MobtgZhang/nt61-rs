@@ -43,6 +43,9 @@ pub fn get_device(device_id: usize) -> Option<*mut DeviceObject> {
     registry.devices[device_id]
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn dispatch_read(device_id: usize, byte_offset: u64, buffer: &mut [u8]) -> bool {
     let device = match get_device(device_id) {
         Some(d) => d,
@@ -58,6 +61,9 @@ pub unsafe fn dispatch_read(device_id: usize, byte_offset: u64, buffer: &mut [u8
     status >= 0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn dispatch_write(device_id: usize, byte_offset: u64, buffer: &[u8]) -> bool {
     let device = match get_device(device_id) {
         Some(d) => d,
@@ -73,6 +79,9 @@ pub unsafe fn dispatch_write(device_id: usize, byte_offset: u64, buffer: &[u8]) 
     status >= 0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn create_driver_object(driver_name: &[u8]) -> *mut DriverObject {
     crate::io::allocate_driver(driver_name)
 }

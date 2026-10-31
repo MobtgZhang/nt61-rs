@@ -44,7 +44,7 @@ pub fn init() {
             // (added in ACPI 2.0+).
             let base = hdr as *const u8;
             let port = core::ptr::read_unaligned(base.add(0x68) as *const u32) as u16;
-            let length = core::ptr::read_unaligned(base.add(0x6C) as *const u8);
+            let length = core::ptr::read_unaligned(base.add(0x6C));
             PM_TIMER = Some(AcpiPm {
                 port,
                 width: if length == 0 { 24 } else { length },

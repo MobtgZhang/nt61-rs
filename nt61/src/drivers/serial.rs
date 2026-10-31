@@ -84,6 +84,12 @@ impl SerialPort {
     }
 }
 
+impl Default for SerialPort {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Static array of serial port state.
 ///
 /// SAFETY: This `static mut` is only mutated during single-threaded BSP

@@ -7,9 +7,9 @@
 //! - DMA controller setup
 //! - Volume and mute control
 //
-//! Clean-room implementation. Spec source: AC'97 Component
-//! Specification Rev 2.3. No code is copied from any Microsoft
-//! or ReactOS source file.
+//!   Clean-room implementation. Spec source: AC'97 Component
+//!   Specification Rev 2.3. No code is copied from any Microsoft
+//!   or ReactOS source file.
 
 use crate::hal::common::pci;
 use crate::mm::pool::{self, PoolType};
@@ -18,8 +18,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 /// AC'97 PCI class: multimedia (0x04) / audio (0x01).
 const AC97_PCI_CLASS: (u8, u8) = (0x04, 0x01);
 
-/// AC'97 audio I/O port base
-
+/// AC'97 audio I/O port base///
 /// AC'97 Mixer Register offsets (BAR1)
 const MIXER_RESET: u8 = 0x00;
 const MIXER_MASTER_VOLUME: u8 = 0x02;

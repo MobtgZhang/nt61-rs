@@ -30,11 +30,14 @@ static OPEN_COUNT: AtomicU32 = AtomicU32::new(0);
 static mut DEVICE: *mut DeviceObject = core::ptr::null_mut();
 static mut DRIVER: *mut DriverObject = core::ptr::null_mut();
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// SpldrInit — wire the PnP / Power dispatch table onto the
 /// driver object and publish the device. The PnP manager then
 /// drives the lifecycle through the dispatch handlers below (the
 /// device is NotStarted until IRP_MN_START_DEVICE arrives).
-pub fn init(driver: *mut DriverObject) {
+pub unsafe fn init(driver: *mut DriverObject) {
     if INITIALISED.load(Ordering::Acquire) {
         return;
     }
@@ -118,12 +121,18 @@ unsafe extern "C" fn spldr_close(_device: *mut DeviceObject, irp: *mut Irp) -> i
     complete_irp(irp, STATUS_SUCCESS)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// The loader device exposes no IOCTLs; requests are rejected with
 /// the standard NT 6.1 status for an invalid device request.
 unsafe extern "C" fn spldr_device_control(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     complete_irp(irp, STATUS_INVALID_DEVICE_REQUEST)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_PNP — full NT 6.1 minor-function contract for the
 /// device, with DeviceObject::set_pnp_state tracking every
 /// lifecycle transition.
@@ -175,6 +184,9 @@ unsafe extern "C" fn spldr_pnp(device: *mut DeviceObject, irp: *mut Irp) -> i32 
     complete_irp(irp, status)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_POWER — route through the kernel power framework
 /// (process_power_irp handles WAIT_WAKE / POWER_SEQUENCE /
 /// SET_POWER / QUERY_POWER) and complete the IRP with the
@@ -192,12 +204,18 @@ unsafe extern "C" fn spldr_power(device: *mut DeviceObject, irp: *mut Irp) -> i3
     complete_irp(irp, status)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_SYSTEM_CONTROL — no WMI interfaces are registered, so
 /// system-control IRPs complete STATUS_NOT_SUPPORTED per NT 6.1.
 unsafe extern "C" fn spldr_system_control(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     complete_irp(irp, STATUS_NOT_SUPPORTED)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Complete an IRP with the given status and return it to the caller.
 unsafe fn complete_irp(irp: *mut Irp, status: i32) -> i32 {
     if !irp.is_null() {

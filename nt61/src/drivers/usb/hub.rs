@@ -114,7 +114,7 @@ impl HubState {
 
     /// Get port status
     pub fn get_port_status(&self, port: u8) -> (u16, u16) {
-        if port == 0 || port > self.num_ports as u8 {
+        if port == 0 || port > self.num_ports {
             return (0, 0);
         }
         (
@@ -125,7 +125,7 @@ impl HubState {
 
     /// Clear port change bit
     pub fn clear_port_change(&mut self, port: u8, feature: u16) {
-        if port == 0 || port > self.num_ports as u8 {
+        if port == 0 || port > self.num_ports {
             return;
         }
         self.port_change[port as usize - 1] &= !feature;
@@ -133,7 +133,7 @@ impl HubState {
 
     /// Set port feature
     pub fn set_port_feature(&mut self, port: u8, feature: u16) {
-        if port == 0 || port > self.num_ports as u8 {
+        if port == 0 || port > self.num_ports {
             return;
         }
         let idx = port as usize - 1;
@@ -152,7 +152,7 @@ impl HubState {
 
     /// Clear port feature
     pub fn clear_port_feature(&mut self, port: u8, feature: u16) {
-        if port == 0 || port > self.num_ports as u8 {
+        if port == 0 || port > self.num_ports {
             return;
         }
         let idx = port as usize - 1;

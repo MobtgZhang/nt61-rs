@@ -9,7 +9,7 @@
 //! - Hardware cursor
 //! - Color keying and alpha blending
 //
-//! Clean-room implementation based on public specifications.
+//!   Clean-room implementation based on public specifications.
 
 use crate::drivers::video::core::gpu_common::{
     GpuDriver, GpuError, GpuFeatures, GpuFramebufferInfo, PixelFormat,
@@ -533,7 +533,7 @@ pub fn init() -> Option<ZxDDevice> {
     for dev in devices {
         if dev.vendor_id == ZHAOXIN_VENDOR_ID && dev.class_code == 0x03 {
             let variant = variant_from_device_id(dev.vendor_id, dev.device_id);
-            let mut device = ZxDDevice::new(&dev, variant);
+            let mut device = ZxDDevice::new(dev, variant);
 
             if device.init().is_ok() {
                 // Try to initialize framebuffer

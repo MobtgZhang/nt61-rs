@@ -105,10 +105,8 @@ impl QueueLayout {
         crate::hal::serial::write_string_always(" size=0x");
         crate::hal::serial::write_hex_u64_always(mem_len as u64);
         crate::hal::serial::write_string_always("\r\n");
-        let page_count = ((mem_len + 4095) / 4096) as u64;
-        let Some(mem_phys) = crate::mm::allocate_pages(page_count) else {
-            return None;
-        };
+        let page_count = mem_len.div_ceil(4096) as u64;
+        let mem_phys = crate::mm::allocate_pages(page_count)?;
         let map_base = mem_phys & !0x1F_FFFF;
         if !crate::arch::identity_map_region(map_base, 0x20_0000) {
             crate::mm::free_pages(mem_phys, page_count);
@@ -180,10 +178,7 @@ impl QueueLayout {
             let mut current = head;
             let next_head = ((head as usize + buffers.len()) % self.num as usize) as u16;
             for (i, buffer) in buffers.iter().enumerate() {
-                let phys = match virt_to_phys(buffer.data as u64) {
-                    Some(addr) => addr,
-                    None => return None,
-                };
+                let phys = virt_to_phys(buffer.data as u64)?;
                 let d = self.desc.add(current as usize);
                 (*d).addr = phys;
                 (*d).len = buffer.len as u32;
@@ -269,7 +264,7 @@ impl QueueLayout {
 impl Drop for QueueLayout {
     fn drop(&mut self) {
         if !self.mem.is_null() {
-            let page_count = ((self.mem_len + 4095) / 4096) as u64;
+            let page_count = self.mem_len.div_ceil(4096) as u64;
             crate::mm::free_pages(self.mem as u64, page_count);
             self.mem = core::ptr::null_mut();
         }

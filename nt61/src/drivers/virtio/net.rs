@@ -37,6 +37,9 @@ pub struct VirtioNet {
 }
 
 impl VirtioNet {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Bring up a virtio-net device over the given transport.
     pub unsafe fn probe(
         transport_index: usize,
@@ -85,6 +88,9 @@ impl VirtioNet {
         self.mac
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Read one received frame into buffer (without the virtio header).
     /// Returns the frame length in bytes, or None when no packet is
     /// pending.
@@ -96,13 +102,10 @@ impl VirtioNet {
         let mut header = NetHeader::zeroed();
 
         // The device writes: header, frame data, num_buffers.
-        let head = match self.rx_queue.add_chain(&[
+        let head = self.rx_queue.add_chain(&[
             QueueBuffer::new(&mut header as *mut NetHeader as *mut u8, HDR_LEN, true),
             QueueBuffer::new(buffer.as_mut_ptr(), ETH_MTU + ETH_HEADER_SIZE, true),
-        ]) {
-            Some(h) => h,
-            None => return None,
-        };
+        ])?;
         unsafe { transport.notify(0) };
 
         // Busy-wait for the device to deliver the frame.
@@ -118,6 +121,9 @@ impl VirtioNet {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Transmit one frame from buffer.
     pub unsafe fn transmit(&mut self, transport: &mut dyn Transport, buffer: &[u8]) -> bool {
         let mut header = NetHeader::zeroed();

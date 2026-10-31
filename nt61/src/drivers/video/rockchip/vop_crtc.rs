@@ -4,8 +4,10 @@
 //
 //! Clean-room implementation based on public specifications.
 
+use crate::libs::ntdll::types::NTSTATUS;
+
 /// Initialize CRT controller
-pub fn rk_crtc_init() -> Result<(), ()> {
+pub fn rk_crtc_init() -> Result<(), NTSTATUS> {
     Ok(())
 }
 

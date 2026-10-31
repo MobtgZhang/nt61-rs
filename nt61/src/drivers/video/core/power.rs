@@ -536,20 +536,15 @@ impl Default for GpuPowerManager {
 // =====================================================================
 
 /// DFS policy
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DfsPolicy {
     /// Performance oriented
     Performance,
     /// Balanced (default)
+    #[default]
     Balanced,
     /// power saving
     PowerSave,
-}
-
-impl Default for DfsPolicy {
-    fn default() -> Self {
-        Self::Balanced
-    }
 }
 
 /// DFS controller

@@ -207,7 +207,7 @@ impl ClfsVcb {
         self.total_log_size.fetch_add(ctx.size(), Ordering::Relaxed);
 
         // Update base record
-        self.base_record.rg_containers[cid as usize] = cid as u32; // offset placeholder
+        self.base_record.rg_containers[cid as usize] = cid; // offset placeholder
 
         Some(cid)
     }
