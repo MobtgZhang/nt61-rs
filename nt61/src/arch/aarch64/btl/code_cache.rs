@@ -144,9 +144,13 @@ pub fn allocate_code(size: usize) -> u64 {
             return 0;
         }
         match CODE_ALLOC_PTR.compare_exchange(pos, next, Ordering::AcqRel, Ordering::Acquire) {
-        Ok(_) => {
-            return unsafe { core::ptr::addr_of!(CODE_BASE).cast::<u8>().add(aligned as usize) as u64 }
-        }
+            Ok(_) => {
+                return unsafe {
+                    core::ptr::addr_of!(CODE_BASE)
+                        .cast::<u8>()
+                        .add(aligned as usize) as u64
+                }
+            }
             Err(observed) => pos = observed,
         }
     }

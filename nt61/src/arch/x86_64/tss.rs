@@ -303,6 +303,9 @@ pub fn ap_tss(ap_index: usize) -> *mut PerCpuTss {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialise an AP's TSS: set the IST stack pointer, return the
 /// TSS address and limit so the per-CPU GDT can be built around it.
 pub unsafe fn init_ap_tss(ap_index: usize, rsp0: u64) -> Option<(*mut Tss, u32)> {

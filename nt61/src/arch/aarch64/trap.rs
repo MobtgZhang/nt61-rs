@@ -289,6 +289,9 @@ fn handle_kernel_sync(tf: &mut TrapFrame) {
     ));
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Called from the `lower_el_aarch32_sync` vector: an AArch32 task took
 /// a synchronous exception. There is no AArch32 support, so mark the
 /// entry once and park the CPU.
@@ -352,7 +355,9 @@ fn handle_user_page_fault(tf: &mut TrapFrame, is_instruction: bool) {
     // hanging the entire system when a user process crashed.
     let thread = crate::arch::common::percpu::get_current().current_thread;
     if !thread.is_null() {
-        crate::ps::thread::terminate(thread, 0xC000_0005u32);
+        unsafe {
+            crate::ps::thread::terminate(thread, 0xC000_0005u32);
+        }
     }
     // Yield the CPU back to the scheduler. Returning from this trap
     // would eret to the faulting instruction and fault forever.
@@ -377,7 +382,9 @@ fn handle_user_sync_fault(tf: &mut TrapFrame, ec: u64, iss: u64) {
     // and yield back to the scheduler instead of hanging the CPU.
     let thread = crate::arch::common::percpu::get_current().current_thread;
     if !thread.is_null() {
-        crate::ps::thread::terminate(thread, 0xC000_0005u32);
+        unsafe {
+            crate::ps::thread::terminate(thread, 0xC000_0005u32);
+        }
     }
     // Same treatment as page faults: never return to the faulting PC.
     crate::ke::scheduler::tick();

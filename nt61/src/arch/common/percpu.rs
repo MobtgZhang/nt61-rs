@@ -192,6 +192,9 @@ extern "Rust" {
 // Public API — delegates to arch-specific implementations
 // =====================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialize the per-CPU area for the given CPU and install it as
 /// the per-CPU register/base for the current CPU.
 ///
@@ -240,9 +243,12 @@ pub fn set_user_rsp(sp: u64) {
     unsafe { __percpu_set_user_rsp(sp) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Publish the ETHREAD of the currently-running thread into the
 /// per-CPU area's `current_thread` slot.
-pub fn set_current_thread(thread: *mut Ethread) {
+pub unsafe fn set_current_thread(thread: *mut Ethread) {
     unsafe { __percpu_set_current_thread(thread) }
 }
 
@@ -260,9 +266,12 @@ pub fn get_current_thread() -> *mut Ethread {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Publish the EPROCESS of the currently-running process into the
 /// per-CPU area's `current_process` slot.
-pub fn set_current_process(process: *mut Eprocess) {
+pub unsafe fn set_current_process(process: *mut Eprocess) {
     unsafe { __percpu_set_current_process(process) }
 }
 

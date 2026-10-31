@@ -24,6 +24,9 @@ mod extioi {
     pub const COREMAP: u64 = 0x800;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn read_u32(address: u64) -> u32 {
     let value: u32;
     asm!(
@@ -35,6 +38,9 @@ unsafe fn read_u32(address: u64) -> u32 {
     value
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn write_u32(address: u64, value: u32) {
     asm!(
         "iocsrwr.w {value}, {address}",

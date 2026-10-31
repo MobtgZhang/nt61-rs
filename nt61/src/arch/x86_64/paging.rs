@@ -81,6 +81,9 @@ pub fn walk_to_leaf(va: u64) -> Option<*mut MMPTE> {
     Some(pte)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Install an intermediate page-table page. `level` is 1 (PDPT),
 /// 2 (PD), or 3 (PT). The intermediate page's PTE is written in
 /// the parent table with `P=1, R/W=1, U=1, A=1, D=1`.
@@ -94,6 +97,9 @@ unsafe fn read_table_entry(table_phys: u64, idx: usize) -> Option<u64> {
     Some(ptr::read_volatile((table_phys as *const u64).add(idx)))
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Map a page-table page by physical address, write one entry, and
 /// immediately release the hyperspace mapping.
 unsafe fn write_table_entry(table_phys: u64, idx: usize, value: u64) -> bool {
@@ -104,6 +110,9 @@ unsafe fn write_table_entry(table_phys: u64, idx: usize, value: u64) -> bool {
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn install_intermediate(parent_table_phys: u64, parent_idx: usize, level: u32) -> bool {
     let _ = level;
     let pfn = match crate::mm::pfn::allocate_pfn() {
@@ -239,20 +248,14 @@ pub fn unmap_page(va: u64) -> Option<u64> {
     }
 
     let pml4_idx = ((va >> 39) & 0x1FF) as usize;
-    let pml4e_val = match unsafe { read_table_entry(pml4_pa, pml4_idx) } {
-        Some(value) => value,
-        None => return None,
-    };
+    let pml4e_val = unsafe { read_table_entry(pml4_pa, pml4_idx) }?;
     if (pml4e_val & 1) == 0 {
         return None;
     }
     let pdpt_pa = pml4e_val & 0x000F_FFFF_FFFF_F000;
 
     let pdpt_idx = ((va >> 30) & 0x1FF) as usize;
-    let pdpte_val = match unsafe { read_table_entry(pdpt_pa, pdpt_idx) } {
-        Some(value) => value,
-        None => return None,
-    };
+    let pdpte_val = unsafe { read_table_entry(pdpt_pa, pdpt_idx) }?;
     if (pdpte_val & 1) == 0 {
         return None;
     }
@@ -263,10 +266,7 @@ pub fn unmap_page(va: u64) -> Option<u64> {
     let pd_pa = pdpte_val & 0x000F_FFFF_FFFF_F000;
 
     let pd_idx = ((va >> 21) & 0x1FF) as usize;
-    let pde_val = match unsafe { read_table_entry(pd_pa, pd_idx) } {
-        Some(value) => value,
-        None => return None,
-    };
+    let pde_val = unsafe { read_table_entry(pd_pa, pd_idx) }?;
     if (pde_val & 1) == 0 {
         return None;
     }
@@ -277,10 +277,7 @@ pub fn unmap_page(va: u64) -> Option<u64> {
     let pt_pa = pde_val & 0x000F_FFFF_FFFF_F000;
 
     let pt_idx = ((va >> 12) & 0x1FF) as usize;
-    let pte_val = match unsafe { read_table_entry(pt_pa, pt_idx) } {
-        Some(value) => value,
-        None => return None,
-    };
+    let pte_val = unsafe { read_table_entry(pt_pa, pt_idx) }?;
     if (pte_val & 1) == 0 {
         return None;
     }
@@ -302,10 +299,7 @@ pub fn translate_virt(va: u64) -> Option<u64> {
     }
 
     let pml4_idx = ((va >> 39) & 0x1FF) as usize;
-    let pml4e_val = match unsafe { read_table_entry(pml4_pa, pml4_idx) } {
-        Some(value) => value,
-        None => return None,
-    };
+    let pml4e_val = unsafe { read_table_entry(pml4_pa, pml4_idx) }?;
     if (pml4e_val & 1) == 0 {
         return None;
     }
@@ -317,10 +311,7 @@ pub fn translate_virt(va: u64) -> Option<u64> {
     let pdpt_pa = pml4e_val & 0x000F_FFFF_FFFF_F000;
 
     let pdpt_idx = ((va >> 30) & 0x1FF) as usize;
-    let pdpte_val = match unsafe { read_table_entry(pdpt_pa, pdpt_idx) } {
-        Some(value) => value,
-        None => return None,
-    };
+    let pdpte_val = unsafe { read_table_entry(pdpt_pa, pdpt_idx) }?;
     if (pdpte_val & 1) == 0 {
         return None;
     }
@@ -332,10 +323,7 @@ pub fn translate_virt(va: u64) -> Option<u64> {
     let pd_pa = pdpte_val & 0x000F_FFFF_FFFF_F000;
 
     let pd_idx = ((va >> 21) & 0x1FF) as usize;
-    let pde_val = match unsafe { read_table_entry(pd_pa, pd_idx) } {
-        Some(value) => value,
-        None => return None,
-    };
+    let pde_val = unsafe { read_table_entry(pd_pa, pd_idx) }?;
     if (pde_val & 1) == 0 {
         return None;
     }
@@ -347,10 +335,7 @@ pub fn translate_virt(va: u64) -> Option<u64> {
     let pt_pa = pde_val & 0x000F_FFFF_FFFF_F000;
 
     let pt_idx = ((va >> 12) & 0x1FF) as usize;
-    let pte_val = match unsafe { read_table_entry(pt_pa, pt_idx) } {
-        Some(value) => value,
-        None => return None,
-    };
+    let pte_val = unsafe { read_table_entry(pt_pa, pt_idx) }?;
     if (pte_val & 1) == 0 {
         return None;
     }
@@ -365,10 +350,7 @@ pub fn leaf_entry(va: u64) -> Option<u64> {
         return None;
     }
 
-    let pml4e = match unsafe { read_table_entry(pml4_pa, ((va >> 39) & 0x1FF) as usize) } {
-        Some(value) => value,
-        None => return None,
-    };
+    let pml4e = unsafe { read_table_entry(pml4_pa, ((va >> 39) & 0x1FF) as usize) }?;
     if (pml4e & 1) == 0 {
         return None;
     }
@@ -376,12 +358,8 @@ pub fn leaf_entry(va: u64) -> Option<u64> {
         return Some(pml4e);
     }
 
-    let pdpte = match unsafe {
-        read_table_entry(pml4e & 0x000F_FFFF_FFFF_F000, ((va >> 30) & 0x1FF) as usize)
-    } {
-        Some(value) => value,
-        None => return None,
-    };
+    let pdpte =
+        unsafe { read_table_entry(pml4e & 0x000F_FFFF_FFFF_F000, ((va >> 30) & 0x1FF) as usize) }?;
     if (pdpte & 1) == 0 {
         return None;
     }
@@ -389,12 +367,8 @@ pub fn leaf_entry(va: u64) -> Option<u64> {
         return Some(pdpte);
     }
 
-    let pde = match unsafe {
-        read_table_entry(pdpte & 0x000F_FFFF_FFFF_F000, ((va >> 21) & 0x1FF) as usize)
-    } {
-        Some(value) => value,
-        None => return None,
-    };
+    let pde =
+        unsafe { read_table_entry(pdpte & 0x000F_FFFF_FFFF_F000, ((va >> 21) & 0x1FF) as usize) }?;
     if (pde & 1) == 0 {
         return None;
     }
@@ -406,12 +380,18 @@ pub fn leaf_entry(va: u64) -> Option<u64> {
         .filter(|entry| (entry & 1) != 0)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write the supplied PFN into CR3.
 pub unsafe fn load_page_root(pml4_pfn: u64) {
     let paddr = pfn_to_phys(pml4_pfn);
     asm!("mov cr3, {}", in(reg) paddr, options(nostack));
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialise the paging subsystem. In the bootstrap this just
 /// reads CR3 to populate the system PML4 PFN in the VAS
 /// subsystem. The recursive self-map is installed by

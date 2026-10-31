@@ -210,7 +210,9 @@ mod tests {
         }
     }
 
-    fn flat_memory(backing: &mut [u8]) -> super::super::memory::GuestAddressSpace<super::super::memory::FlatPaging> {
+    fn flat_memory(
+        backing: &mut [u8],
+    ) -> super::super::memory::GuestAddressSpace<super::super::memory::FlatPaging> {
         let paging = super::super::memory::FlatPaging {
             base: backing.as_mut_ptr(),
             len: backing.len(),
@@ -226,15 +228,14 @@ mod tests {
         let mut regs = alloc::vec![0u64; 17];
         regs[X86Reg::R10 as usize] = 0xBEEF;
         let mut mem = NopMemory;
-        let out =
-            unsafe {
-                dispatch_nt_syscall(
-                    GuestAbi::X86_64,
-                    TEST_SERVICE_X86_64 as u32,
-                    &regs,
-                    &mut mem,
-                )
-            };
+        let out = unsafe {
+            dispatch_nt_syscall(
+                GuestAbi::X86_64,
+                TEST_SERVICE_X86_64 as u32,
+                &regs,
+                &mut mem,
+            )
+        };
         assert_eq!(out, BridgeOutcome::Dispatched(STATUS_SUCCESS));
         assert_eq!(LAST_ARGS.load(Ordering::SeqCst), 0xBEEF);
     }
@@ -262,15 +263,14 @@ mod tests {
 
         let mut regs = alloc::vec![0u64; 17];
         regs[X86Reg::Rdx as usize] = 0x40;
-        let out =
-            unsafe {
-                dispatch_nt_syscall(
-                    GuestAbi::X86_32,
-                    TEST_SERVICE_X86_32 as u32,
-                    &regs,
-                    &mut mem,
-                )
-            };
+        let out = unsafe {
+            dispatch_nt_syscall(
+                GuestAbi::X86_32,
+                TEST_SERVICE_X86_32 as u32,
+                &regs,
+                &mut mem,
+            )
+        };
         assert_eq!(out, BridgeOutcome::Dispatched(STATUS_SUCCESS));
         assert_eq!(LAST_ARGS.load(Ordering::SeqCst), 0x42);
     }
@@ -297,15 +297,14 @@ mod tests {
         let mut regs = alloc::vec![0u64; 17];
         regs[X86Reg::R10 as usize] = 0x11;
         regs[X86Reg::Rsp as usize] = 0x80;
-        let out =
-            unsafe {
-                dispatch_nt_syscall(
-                    GuestAbi::X86_64,
-                    TEST_SERVICE_X86_64_STACK as u32,
-                    &regs,
-                    &mut mem,
-                )
-            };
+        let out = unsafe {
+            dispatch_nt_syscall(
+                GuestAbi::X86_64,
+                TEST_SERVICE_X86_64_STACK as u32,
+                &regs,
+                &mut mem,
+            )
+        };
         assert_eq!(out, BridgeOutcome::Dispatched(STATUS_SUCCESS));
         assert_eq!(LAST_STACK_ARG.load(Ordering::SeqCst), 0x77);
     }
@@ -313,13 +312,7 @@ mod tests {
     #[test]
     fn x86_32_argument_block_is_32_bit() {
         unsafe {
-            register_syscall(
-                TEST_SERVICE_X86_32_WORD,
-                capture_handler,
-                1,
-                "btl_test32w",
-            )
-            .unwrap();
+            register_syscall(TEST_SERVICE_X86_32_WORD, capture_handler, 1, "btl_test32w").unwrap();
         }
         let mut backing = [0u8; 0x100];
         let mut mem = flat_memory(&mut backing);
@@ -328,15 +321,14 @@ mod tests {
 
         let mut regs = alloc::vec![0u64; 17];
         regs[X86Reg::Rdx as usize] = 0x40;
-        let out =
-            unsafe {
-                dispatch_nt_syscall(
-                    GuestAbi::X86_32,
-                    TEST_SERVICE_X86_32_WORD as u32,
-                    &regs,
-                    &mut mem,
-                )
-            };
+        let out = unsafe {
+            dispatch_nt_syscall(
+                GuestAbi::X86_32,
+                TEST_SERVICE_X86_32_WORD as u32,
+                &regs,
+                &mut mem,
+            )
+        };
         assert_eq!(out, BridgeOutcome::Dispatched(STATUS_SUCCESS));
         assert_eq!(LAST_ARGS.load(Ordering::SeqCst), 0x77);
     }

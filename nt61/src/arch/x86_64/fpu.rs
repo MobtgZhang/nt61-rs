@@ -12,7 +12,7 @@
 //!   - AVX state (YMM0-15 upper halves)
 //!   - AVX-512 state (ZMM0-31, OPMASK, ZMM state header) [if supported]
 //
-//! The layout follows the AMD64 and Intel 64 ABI specifications.
+//!     The layout follows the AMD64 and Intel 64 ABI specifications.
 
 /// FPU state buffer size for XSAVE area.
 /// This must be large enough to hold:
@@ -20,7 +20,7 @@
 ///   - Legacy FPU area (512 bytes)
 ///   - SSE/XMM area (576 bytes)
 ///   - AVX/YMM upper halves (256 bytes)
-/// Total: ~1408 bytes, we allocate 4096 for alignment and future extensions
+///     Total: ~1408 bytes, we allocate 4096 for alignment and future extensions
 pub const FPU_STATE_SIZE: usize = 4096;
 
 /// FPU state alignment requirement (XSAVE requires 64-byte alignment)
@@ -146,6 +146,12 @@ impl FpuState {
     }
 }
 
+impl Default for FpuState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Per-thread FPU state tracking
 pub struct ThreadFpuState {
     /// XSAVE area for this thread
@@ -159,44 +165,44 @@ pub struct ThreadFpuState {
 impl ThreadFpuState {
     /// create new FPU state for a thread
     pub fn new(enable_avx: bool) -> Option<&'static mut Self> {
-        // Allocate aligned FPU state from non-paged pool
-        let state_ptr =
-            crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, FPU_STATE_SIZE)
-                as *mut FpuState;
-
-        if state_ptr.is_null() {
-            return None;
-        }
-
         unsafe {
+            // Allocate aligned FPU state from non-paged pool
+            let state_ptr =
+                crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, FPU_STATE_SIZE)
+                    as *mut FpuState;
+
+            if state_ptr.is_null() {
+                return None;
+            }
+
             // Initialize the FPU state
             (*state_ptr).init_for_thread(enable_avx);
-        }
 
-        let fpu_state = crate::mm::pool::allocate(
-            crate::mm::pool::PoolType::NonPaged,
-            core::mem::size_of::<Self>(),
-        ) as *mut Self;
+            let fpu_state = crate::mm::pool::allocate(
+                crate::mm::pool::PoolType::NonPaged,
+                core::mem::size_of::<Self>(),
+            ) as *mut Self;
 
-        if fpu_state.is_null() {
-            let _ = crate::mm::pool::free(state_ptr as *mut u8);
-            return None;
-        }
+            if fpu_state.is_null() {
+                let _ = crate::mm::pool::free(state_ptr as *mut u8);
+                return None;
+            }
 
-        unsafe {
             (*fpu_state).state_buffer = state_ptr;
             (*fpu_state).avx_enabled = enable_avx;
             (*fpu_state).in_use = false;
-        }
 
-        unsafe { fpu_state.as_mut() }
+            fpu_state.as_mut()
+        }
     }
 
     /// Free FPU state
     pub fn free(&mut self) {
-        if !self.state_buffer.is_null() {
-            let _ = crate::mm::pool::free(self.state_buffer as *mut u8);
-            self.state_buffer = core::ptr::null_mut();
+        unsafe {
+            if !self.state_buffer.is_null() {
+                let _ = crate::mm::pool::free(self.state_buffer as *mut u8);
+                self.state_buffer = core::ptr::null_mut();
+            }
         }
     }
 }
@@ -394,13 +400,16 @@ fn init_fpu_state() {
     fpu_restore(&clean_state, get_xsave_features());
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Save FPU state for the current thread
 ///
 /// Called from KiSwapContext before switching away from a thread.
 /// This saves the complete SIMD state so the next time the thread
 /// runs, its FPU state is restored.
 #[inline]
-pub fn save_current_thread_fpu(thread_fpu: *mut ThreadFpuState) {
+pub unsafe fn save_current_thread_fpu(thread_fpu: *mut ThreadFpuState) {
     if thread_fpu.is_null() {
         return;
     }
@@ -422,12 +431,15 @@ pub fn save_current_thread_fpu(thread_fpu: *mut ThreadFpuState) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Restore FPU state for the next thread
 ///
 /// Called from KiSwapContext after switching to a new thread.
 /// This restores the FPU state that was previously saved for this thread.
 #[inline]
-pub fn restore_thread_fpu(thread_fpu: *mut ThreadFpuState) {
+pub unsafe fn restore_thread_fpu(thread_fpu: *mut ThreadFpuState) {
     if thread_fpu.is_null() {
         return;
     }
@@ -446,11 +458,14 @@ pub fn restore_thread_fpu(thread_fpu: *mut ThreadFpuState) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Mark FPU as used by the current thread
 ///
 /// Called when a thread first uses SIMD instructions. This ensures
 /// the FPU state is saved before switching away.
-pub fn mark_fpu_used(thread_fpu: *mut ThreadFpuState) {
+pub unsafe fn mark_fpu_used(thread_fpu: *mut ThreadFpuState) {
     if !thread_fpu.is_null() {
         unsafe {
             (*thread_fpu).in_use = true;

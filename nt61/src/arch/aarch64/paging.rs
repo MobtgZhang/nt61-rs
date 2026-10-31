@@ -169,6 +169,9 @@ fn split_block_attrs(desc: u64) -> u64 {
     attrs
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Walk the kernel page tables and return a writable pointer to
 /// the leaf PTE that maps `va`. Allocates any missing
 /// intermediates along the way. The caller writes the leaf PTE
@@ -433,6 +436,9 @@ pub fn leaf_entry(va: u64) -> Option<u64> {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn load_page_root(pml4_pfn: u64) {
     let pa = pfn_to_phys(pml4_pfn);
     // The process root contains both the low-half user mappings and

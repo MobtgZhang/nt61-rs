@@ -126,7 +126,13 @@ mod tests {
             len: 0,
         });
         let result = bridge_x86_64_memory(TEST_SERVICE, &args, &mut memory);
-        assert_eq!(result, BridgeResult { result: STATUS_SUCCESS as u64, status: 0 });
+        assert_eq!(
+            result,
+            BridgeResult {
+                result: STATUS_SUCCESS as u64,
+                status: 0
+            }
+        );
         assert_eq!(LAST_ARG.load(Ordering::SeqCst), 0xBEEF);
     }
 
@@ -139,9 +145,12 @@ mod tests {
             len: 0,
         });
         let result = bridge_x86_32_memory(TEST_SERVICE, &args, &mut memory);
-        assert_eq!(result, BridgeResult {
-            result: 0,
-            status: BridgeOutcome::MemoryFault.status(),
-        });
+        assert_eq!(
+            result,
+            BridgeResult {
+                result: 0,
+                status: BridgeOutcome::MemoryFault.status(),
+            }
+        );
     }
 }

@@ -56,6 +56,9 @@ fn is_leaf(e: u64) -> bool {
     (e & (PTE_R | PTE_W | PTE_X)) != 0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Install an intermediate page table at `parent` if absent.
 unsafe fn install_intermediate_riscv(parent: *mut MMPTE) -> bool {
     let new_pfn = match pfn::allocate_pfn() {
@@ -82,6 +85,9 @@ fn slot_at(table_pa: u64, index: usize) -> *mut u64 {
     unsafe { (table_pa as *mut u64).add(index) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Map a virtual page using a 4-level Sv48 page table. The
 /// `root_pa` parameter is the physical address of the L0 table;
 /// the implementation walks it directly and allocates missing
@@ -153,6 +159,9 @@ pub unsafe fn map_page_sv48(root_pa: u64, va: u64, pa: u64, flags: u64) -> bool 
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Unmap a virtual page in Sv48 mode.
 pub unsafe fn unmap_page_sv48(va: u64) -> Option<u64> {
     unsafe {
@@ -182,6 +191,9 @@ pub unsafe fn unmap_page_sv48(va: u64) -> Option<u64> {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Translate a virtual address in Sv48 mode.
 pub unsafe fn translate_virt_sv48(va: u64) -> Option<u64> {
     unsafe {
@@ -207,6 +219,9 @@ pub unsafe fn translate_virt_sv48(va: u64) -> Option<u64> {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Load the Sv48 page-table root into `satp`.
 ///
 /// `pml4_pfn` is the PFN of the L0 (PXE) table; we shift it into

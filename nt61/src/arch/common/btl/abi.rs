@@ -57,12 +57,8 @@ pub fn normalize_syscall_args(abi: GuestAbi, guest_regs: &[u64]) -> NormalizedSy
         GuestAbi::X86_64 => {
             // Windows x64: syscall number in EAX, first four integer
             // arguments in R10 (replacing RCX), RDX, R8, R9.
-            const ARG_REGS: [X86Reg; MAX_BRIDGED_REGISTER_ARGS] = [
-                X86Reg::R10,
-                X86Reg::Rdx,
-                X86Reg::R8,
-                X86Reg::R9,
-            ];
+            const ARG_REGS: [X86Reg; MAX_BRIDGED_REGISTER_ARGS] =
+                [X86Reg::R10, X86Reg::Rdx, X86Reg::R8, X86Reg::R9];
             for (slot, reg) in ARG_REGS.iter().enumerate() {
                 if let Some(value) = guest_regs.get(*reg as usize) {
                     out.register_args[slot] = *value as usize;

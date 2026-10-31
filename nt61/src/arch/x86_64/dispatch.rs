@@ -205,6 +205,9 @@ pub fn vector_has_error_code(v: u64) -> bool {
     matches!(v, 8 | 10 | 11 | 12 | 13 | 14 | 17)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read one page-table entry through the self-map window.
 ///
 /// The self-map windows (`PXE_BASE`/`PPE_BASE`/`PDE_BASE`/`PTE_BASE`)
@@ -218,6 +221,9 @@ unsafe fn read_self_map_entry(base: u64, idx: usize) -> u64 {
     core::ptr::read_volatile((base + (idx as u64) * 8) as *const u64)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Raw UART sink for trap handlers.
 ///
 /// `out` to COM1 touches no memory, so it is the only output path that
@@ -231,6 +237,9 @@ unsafe fn raw_out(b: u8) {
     core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nostack));
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "x86_64")]
 unsafe fn raw_str(s: &[u8]) {
     for &b in s {
@@ -238,6 +247,9 @@ unsafe fn raw_str(s: &[u8]) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "x86_64")]
 unsafe fn raw_hex64(v: u64) {
     for i in (0..16).rev() {
@@ -246,6 +258,9 @@ unsafe fn raw_hex64(v: u64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "x86_64")]
 unsafe fn raw_field(name: &[u8], value: u64) {
     raw_str(name);
@@ -253,6 +268,9 @@ unsafe fn raw_field(name: &[u8], value: u64) {
     raw_str(b" ");
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "x86_64")]
 unsafe fn trace_entry(name: &str, idx: usize, val: u64) {
     crate::hal::x86_64::serial::write_string(name);
@@ -263,15 +281,17 @@ unsafe fn trace_entry(name: &str, idx: usize, val: u64) {
     crate::hal::x86_64::serial::write_string("\r\n");
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Fault-context trace. Uses only the UART sink and only reads memory
 /// that is guaranteed reachable from the faulting address space.
 #[cfg(target_arch = "x86_64")]
 unsafe fn trace_fault_walk(cr2: u64, err: u64, rip: u64, cs: u64, cr3: u64) {
     crate::hal::common::serial_disable::with_serial_unmasked(|| {
-        let cr0: u64;
         let tmp: u64;
         core::arch::asm!("mov {tmp}, cr0", tmp = out(reg) tmp, options(nostack));
-        cr0 = tmp;
+        let cr0: u64 = tmp;
 
         crate::hal::x86_64::serial::write_string("[PF-ENTRY] cr2=");
         crate::hal::x86_64::serial::write_u64_hex(cr2);
@@ -325,8 +345,11 @@ unsafe fn trace_fault_walk(cr2: u64, err: u64, rip: u64, cs: u64, cr3: u64) {
     });
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
-pub extern "win64" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
+pub unsafe extern "win64" fn dispatch_trap_frame(vector: u64, tf: *mut TrapFrame) {
     if tf.is_null() {
         return;
     }
@@ -931,6 +954,9 @@ fn handle_page_fault(error_code: u64, tf: &TrapFrame) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Early halt for page faults before MM is initialized.
 /// This MUST NOT call any functions or access any statics.
 #[cfg(target_arch = "x86_64")]
@@ -967,13 +993,13 @@ fn handle_general_protection(_error_code: u64, tf: &TrapFrame) {
     crate::hal::x86_64::serial::write_string_always("[GP] err=");
     crate::hal::x86_64::serial::write_hex_u64_always(_error_code);
     crate::hal::x86_64::serial::write_string_always(" cs=");
-    crate::hal::x86_64::serial::write_hex_u64_always(tf.cs as u64);
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.cs);
     crate::hal::x86_64::serial::write_string_always(" rip=");
     crate::hal::x86_64::serial::write_hex_u64_always(tf.rip);
     crate::hal::x86_64::serial::write_string_always(" rsp=");
     crate::hal::x86_64::serial::write_hex_u64_always(tf.rsp);
     crate::hal::x86_64::serial::write_string_always(" ss=");
-    crate::hal::x86_64::serial::write_hex_u64_always(tf.ss as u64);
+    crate::hal::x86_64::serial::write_hex_u64_always(tf.ss);
     crate::hal::x86_64::serial::write_string_always(" rax=");
     crate::hal::x86_64::serial::write_hex_u64_always(tf.rax);
     crate::hal::x86_64::serial::write_string_always(" rbx=");

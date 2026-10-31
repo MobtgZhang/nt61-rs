@@ -69,6 +69,9 @@ pub fn has_smt_sibling(_cpu_id: u32) -> bool {
     smt_threads() > 1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Send a `mail_send` to the target CPU with the supplied mailbox
 /// data. Used to start the AP.
 pub unsafe fn mail_send(cpu_id: u32, mailbox: u64) {
@@ -147,6 +150,9 @@ pub extern "Rust" fn __smp_get_current_cpu_id() -> u32 {
     cpuid
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Rust entry reached by the assembly trampoline after the per-CPU stack
 /// has been selected.
 #[no_mangle]
@@ -170,6 +176,9 @@ pub unsafe extern "C" fn secondary_entry() -> ! {
     crate::ke::scheduler::idle_loop()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn _keep() {
     let _ = asm!("nop");
     let _ = smt_threads();

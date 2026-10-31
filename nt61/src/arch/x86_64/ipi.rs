@@ -6,8 +6,8 @@
 //! - Function calls
 //! - CPU stop/halt
 //
-//! IPI vectors are allocated in the high range (0xF0-0xFF) to avoid
-//! conflicts with hardware IRQs.
+//!   IPI vectors are allocated in the high range (0xF0-0xFF) to avoid
+//!   conflicts with hardware IRQs.
 
 use crate::hal::x86_64::apic::{apic_read, apic_write, lapic_reg};
 use crate::ke::sync::Spinlock;
@@ -269,6 +269,9 @@ pub fn send_function_call_ipi(target_apic_id: u32, func: fn(*mut ()), arg: *mut 
     send_ipi(target_apic_id, IpiVector::FunctionCall);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Send End-Of-Interrupt to the local APIC
 #[inline]
 pub unsafe fn apic_eoi() {

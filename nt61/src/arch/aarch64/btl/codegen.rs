@@ -645,7 +645,7 @@ mod tests {
     fn lowers_x86_64_mov_imm_add_imm_ret() {
         let code = [
             0x48, 0xB8, 42, 0, 0, 0, 0, 0, 0, 0, // mov rax, 42
-            0x48, 0x83, 0xC0, 8, // add rax, 8
+            0x48, 0x83, 0xC0, 8,    // add rax, 8
             0xC3, // ret
         ];
         let mut ir = [IrInst::empty(); 8];
@@ -662,7 +662,10 @@ mod tests {
         let mut backing = [0u8; 0x1000];
         let mut memory = flat_memory(&mut backing);
         let (outcome, rax) = run_mov_imm_add_imm(&mut memory);
-        assert!(matches!(outcome, crate::arch::common::btl::exec::ExecOutcome::Retired { .. }));
+        assert!(matches!(
+            outcome,
+            crate::arch::common::btl::exec::ExecOutcome::Retired { .. }
+        ));
         assert_eq!(rax, 50);
     }
 }

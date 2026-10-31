@@ -32,6 +32,9 @@ pub const STATUS_ACCESS_VIOLATION: i32 = 0xC0000005u32 as i32;
 pub const STATUS_INVALID_PARAMETER: i32 = 0xC000000Du32 as i32;
 pub const STATUS_DATATYPE_MISALIGNMENT: i32 = 0x80000002u32 as i32;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Verify that a user-mode pointer is safe to read from.
 /// 1. The address is within user-mode address space
 /// 2. Every page covering the range is present and mapped user-readable
@@ -78,7 +81,9 @@ pub unsafe fn probe_for_read(address: *const u8, length: usize) -> Result<(), i3
 // A write probe that forwards to the read probe is not a write probe: it
 // accepts read-only mappings and the caller then writes through them. The
 // writable bit has to be checked explicitly.
-
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline]
 pub unsafe fn probe_for_write(address: *mut u8, length: usize) -> Result<(), i32> {
     if address.is_null() {
@@ -100,6 +105,9 @@ pub unsafe fn probe_for_write(address: *mut u8, length: usize) -> Result<(), i32
     Ok(())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline]
 pub unsafe fn probe_for_read_aligned(
     address: *const u8,
@@ -110,24 +118,30 @@ pub unsafe fn probe_for_read_aligned(
     // the API: ProbeForRead/ProbeForWrite test alignment first and only
     // then probe the range. Reporting misalignment before probing means a
     // caller never walks page tables for a pointer that is rejected anyway.
-    if alignment > 1 && (address as usize) % alignment != 0 {
+    if alignment > 1 && !(address as usize).is_multiple_of(alignment) {
         return Err(STATUS_DATATYPE_MISALIGNMENT);
     }
     probe_for_read(address, length)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline]
 pub unsafe fn probe_for_write_aligned(
     address: *mut u8,
     length: usize,
     alignment: usize,
 ) -> Result<(), i32> {
-    if alignment > 1 && (address as usize) % alignment != 0 {
+    if alignment > 1 && !(address as usize).is_multiple_of(alignment) {
         return Err(STATUS_DATATYPE_MISALIGNMENT);
     }
     probe_for_write(address, length)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Validate a user-mode string pointer (null-terminated)
 /// Validates that a null-terminated string is entirely within user-mode
 pub unsafe fn probe_for_read_string(address: *const u8, max_length: usize) -> Result<usize, i32> {
@@ -162,6 +176,9 @@ pub unsafe fn probe_for_read_string(address: *const u8, max_length: usize) -> Re
     Err(STATUS_INVALID_PARAMETER)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Validate a user-mode Unicode string pointer (null-terminated UTF-16)
 /// user-mode address space, up to max_length characters.
 pub unsafe fn probe_for_read_unicode_string(
@@ -174,7 +191,7 @@ pub unsafe fn probe_for_read_unicode_string(
 
     let addr = address as usize;
 
-    if addr >= USER_MAX_ADDRESS || addr % 2 != 0 {
+    if addr >= USER_MAX_ADDRESS || !addr.is_multiple_of(2) {
         return Err(STATUS_ACCESS_VIOLATION);
     }
 
@@ -201,6 +218,9 @@ pub unsafe fn probe_for_read_unicode_string(
     Err(STATUS_INVALID_PARAMETER)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Probe a user-mode `UnicodeString`.
 ///
 /// The structure itself is user-controlled, so both the header and the
@@ -229,6 +249,9 @@ pub unsafe fn probe_unicode_string(address: *const u8) -> Result<(), i32> {
     probe_for_read(header.buffer as *const u8, header.length as usize)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Copy a user-mode null-terminated byte string into a kernel buffer.
 ///
 /// The whole scan happens inside a probed range, so the caller never

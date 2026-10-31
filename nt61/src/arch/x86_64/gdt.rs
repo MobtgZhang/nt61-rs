@@ -253,11 +253,11 @@ const _: () = {
 
     // Verify selector constants match their slot × 8 + RPL layout.
     assert!(
-        USER_CS == (5 * 8 | 3),
+        USER_CS == ((5 * 8) | 3),
         "USER_CS must be slot 5 with RPL=3 (0x2b)"
     );
     assert!(
-        USER_DS == (4 * 8 | 3),
+        USER_DS == ((4 * 8) | 3),
         "USER_DS must be slot 4 with RPL=3 (0x23)"
     );
     assert!(TSS_SEL == (8 * 8), "TSS_SEL must be slot 8 (0x40)");

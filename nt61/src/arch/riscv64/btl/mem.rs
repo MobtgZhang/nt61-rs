@@ -13,8 +13,8 @@
 
 #![cfg(any(feature = "btl", test))]
 
-use crate::arch::common::btl::memory::{ArchLeafPaging, GuestAddressSpace, GuestMemory};
 use super::decoder::DecMode;
+use crate::arch::common::btl::memory::{ArchLeafPaging, GuestAddressSpace, GuestMemory};
 
 /// Maximum user-VA we model. Phase 4 matches USER_STACK_BASE + 1
 /// page; Phase 5 will widen to USER_STACK_TOP.

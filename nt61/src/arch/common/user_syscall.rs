@@ -3,6 +3,9 @@
 #[cfg(target_arch = "x86_64")]
 pub use crate::arch::x86_64::user_syscall::*;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(not(target_arch = "x86_64"))]
 #[cfg(target_arch = "riscv64")]
 #[inline(always)]
@@ -23,6 +26,9 @@ pub unsafe fn syscall_varargs(num: u32, args: &[u64]) -> i64 {
     result
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 pub unsafe fn syscall_varargs(num: u32, args: &[u64]) -> i64 {
@@ -43,6 +49,9 @@ pub unsafe fn syscall_varargs(num: u32, args: &[u64]) -> i64 {
     result
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "loongarch64")]
 #[inline(always)]
 pub unsafe fn syscall_varargs(num: u32, args: &[u64]) -> i64 {
@@ -66,6 +75,9 @@ pub unsafe fn syscall_varargs(num: u32, args: &[u64]) -> i64 {
     target_arch = "aarch64",
     target_arch = "loongarch64"
 )))]
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline(always)]
 pub unsafe fn syscall_varargs(num: u32, args: &[u64]) -> i64 {
     let result: i64;
@@ -84,26 +96,41 @@ pub unsafe fn syscall_varargs(num: u32, args: &[u64]) -> i64 {
     result
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn syscall0(num: u32) -> i64 {
     syscall_varargs(num, &[])
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn syscall1(num: u32, arg0: u64) -> i64 {
     syscall_varargs(num, &[arg0])
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn syscall2(num: u32, arg0: u64, arg1: u64) -> i64 {
     syscall_varargs(num, &[arg0, arg1])
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn syscall3(num: u32, arg0: u64, arg1: u64, arg2: u64) -> i64 {
     syscall_varargs(num, &[arg0, arg1, arg2])
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn syscall4(num: u32, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> i64 {
     syscall_varargs(num, &[arg0, arg1, arg2, arg3])

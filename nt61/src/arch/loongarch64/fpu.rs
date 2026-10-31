@@ -81,6 +81,9 @@ pub fn init_for_thread(state: &mut FpuState) {
     state.euen = 0;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Save the current CPU's FPU + LSX + LASX state into `state`.
 ///
 /// Marked `unsafe` because it must run with preemption disabled and
@@ -120,6 +123,9 @@ pub unsafe fn fpu_save(state: &mut FpuState) {
     let _ = ptr::read_volatile(&state.fpr[0]);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Restore FPU + LSX + LASX state from `state` into the CPU.
 ///
 /// Marked `unsafe` for the same reason as `fpu_save`.
@@ -143,6 +149,9 @@ pub unsafe fn fpu_restore(state: &FpuState) {
     asm!("csrwr {0}, 0x3", in(reg) state.fcsr as u64, options(nostack));
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Enable the FPU/LSX/LASX engines by setting EUEN bits. The bits are:
 ///   bit 0 (FPE) — base FPU;
 ///   bit 1 (SXE) — LSX (128-bit SIMD);
@@ -160,6 +169,9 @@ pub unsafe fn enable(lsx: bool, lasx: bool) {
     asm!("csrwr {0}, 0x2", in(reg) euen as u64, options(nostack));
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Disable the FPU engines (used during context switch save).
 pub unsafe fn disable() {
     let mut euen: u32;

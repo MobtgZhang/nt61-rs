@@ -8,9 +8,9 @@
 //! - GDT, IDT, TSS, paging, context switch (Phase 0)
 //! - Syscall entry points and per-CPU areas
 //
-//! Device drivers live in `hal::x86_64::` and `drivers/`. Do NOT
-//! add device driver modules here — use `crate::hal::x86_64::*`
-//! for hardware access after boot.
+//!   Device drivers live in `hal::x86_64::` and `drivers/`. Do NOT
+//!   add device driver modules here — use `crate::hal::x86_64::*`
+//!   for hardware access after boot.
 
 pub mod context;
 pub mod context_switch;

@@ -47,6 +47,9 @@ pub fn busy_wait_100ns(intervals: u64) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn _keep() {
     let _ = asm!("nop");
 }

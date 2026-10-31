@@ -96,7 +96,7 @@ fn map_framebuffer_region(pa: u64, size: u64) -> u64 {
         crate::boot_debug_println!("[FBR1] mapping framebuffer");
         let mapped = crate::mm::syspte::map_io_space(pa, page_count);
         crate::boot_debug_println!("[FBR2] framebuffer mapped");
-        return mapped.unwrap_or(pa); // Identity fallback remains valid only for firmware-exposed low addresses.
+        mapped.unwrap_or(pa) // Identity fallback remains valid only for firmware-exposed low addresses.
     }
     #[cfg(target_arch = "aarch64")]
     {

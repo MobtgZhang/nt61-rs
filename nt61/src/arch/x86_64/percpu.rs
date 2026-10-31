@@ -54,7 +54,6 @@ pub struct PerCpuData {
 
 impl PerCpuData {
     /// create a new Per-CPU data structure
-
     pub const fn new(cpu_id: u32, apic_id: u32) -> Self {
         Self {
             self_ptr: 0,

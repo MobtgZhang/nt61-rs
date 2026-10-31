@@ -199,9 +199,7 @@ fn parse_reg_ranges(
     let mut ranges = [DeviceRange { base: 0, size: 0 }; MAX_REG_RANGES];
     let address_stride = address_cells.saturating_mul(4) as usize;
     let size_stride = size_cells.saturating_mul(4) as usize;
-    let range_stride = address_stride
-        .checked_add(size_stride)
-        .unwrap_or(usize::MAX);
+    let range_stride = address_stride.saturating_add(size_stride);
     let count = if range_stride == 0 {
         0
     } else {

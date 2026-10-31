@@ -15,21 +15,21 @@
 //!    thread's user RSP. This is the value that will be
 //!    `iretq`-restored on Ring 3 entry.
 //
-//! The iretq frame is constructed on the **kernel** stack (which
-//! is still RSP at function entry) and contains the 5 values
-//! `SS, RSP, RFLAGS, CS, RIP` that `iretq` pops and uses to set
-//! the user-visible CPL=3 state.
+//!    The iretq frame is constructed on the **kernel** stack (which
+//!    is still RSP at function entry) and contains the 5 values
+//!    `SS, RSP, RFLAGS, CS, RIP` that `iretq` pops and uses to set
+//!    the user-visible CPL=3 state.
 //
-//! `CS` and `SS` are the canonical Ring-3 selectors installed by
-//! `arch::x86_64::gdt::init()`. The OVMF GDT is augmented so that
-//! user CS is at slot 5 (selector 0x2b) and user SS is at slot 4
-//! (selector 0x23). `RFLAGS` is set to 0x200 (IF=0, interrupts disabled)
-//! because the IDT is not fully initialized yet.
+//!    `CS` and `SS` are the canonical Ring-3 selectors installed by
+//!    `arch::x86_64::gdt::init()`. The OVMF GDT is augmented so that
+//!    user CS is at slot 5 (selector 0x2b) and user SS is at slot 4
+//!    (selector 0x23). `RFLAGS` is set to 0x200 (IF=0, interrupts disabled)
+//!    because the IDT is not fully initialized yet.
 //
-//! This routine is the only path that lets the kernel cleanly
-//! transition to Ring 3 the very first time. After the thread has
-//! been entered once, Ring-3 → Ring-0 → Ring-3 transitions use the
-//! `syscall`/`sysret` path (see `arch::x86_64::syscall`).
+//!    This routine is the only path that lets the kernel cleanly
+//!    transition to Ring 3 the very first time. After the thread has
+//!    been entered once, Ring-3 → Ring-0 → Ring-3 transitions use the
+//!    `syscall`/`sysret` path (see `arch::x86_64::syscall`).
 
 use core::arch::global_asm;
 
@@ -114,6 +114,9 @@ global_asm!(
 // Rust compiler cannot intervene in the placement of `user_rip`
 // and `user_rsp` between the moment we name them as operands and
 // the moment they are actually pushed onto the stack.
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn first_user_enter_inline(user_rip: u64, user_rsp: u64) -> ! {
     core::arch::asm!(
         "cli",
@@ -448,6 +451,9 @@ pub fn enter_first_user_thread(pml4_phys: u64, user_rip: u64, user_rsp: u64) -> 
         );
     }
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe fn __user_entry_enter_first(root_table_phys: u64, user_rip: u64, user_rsp: u64) -> ! {
     enter_first_user_thread(root_table_phys, user_rip, user_rsp)
@@ -483,6 +489,9 @@ pub fn __user_entry_user_rflags() -> u64 {
     USER_RFLAGS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe fn __user_entry_enter(user_rip: u64, user_rsp: u64) -> ! {
     first_user_enter_inline(user_rip, user_rsp)

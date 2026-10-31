@@ -61,6 +61,9 @@ pub trait PagingArch {
     fn translate_virt(va: u64) -> Option<u64>;
     fn invalidate_tlb(va: u64);
     fn flush_tlb();
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn load_page_root(root_pfn: u64);
     fn read_page_root_pfn() -> u64;
     const PAGE_SIZE: u64 = 4096;

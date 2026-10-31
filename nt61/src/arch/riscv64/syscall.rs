@@ -284,6 +284,9 @@ fn handle(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Flush the instruction cache for a [start, start+len) region.
 ///
 /// On RISC-V we need a `fence.i` after self-modifying code. The

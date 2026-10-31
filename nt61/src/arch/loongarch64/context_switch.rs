@@ -201,6 +201,9 @@ pub unsafe extern "C" fn KiSwapContext(out: *mut ContextFrame, incoming: *const 
     );
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Externally-callable alias for the kernel scheduler; behaves like
 /// the x86_64 `swap_context` (publishes *out_rsp, jumps to new_rsp).
 #[no_mangle]

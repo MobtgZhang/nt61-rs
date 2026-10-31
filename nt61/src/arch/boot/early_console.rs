@@ -3,6 +3,9 @@
 //! On LoongArch64 the firmware leaves the UART MMIO region
 //! unreachable while paging is on, so the trampoline below briefly
 //! clears CRMD.PG; every other architecture is a plain wrapper.
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write one byte to the platform's debug serial sink.
 ///
 /// Safe to call from any context — including before
@@ -13,7 +16,7 @@
 pub unsafe fn early_write_byte(c: u8) {
     #[cfg(target_arch = "x86_64")]
     {
-        let _ = crate::hal::x86_64::serial::write_char(c);
+        crate::hal::x86_64::serial::write_char(c);
     }
     #[cfg(target_arch = "aarch64")]
     {

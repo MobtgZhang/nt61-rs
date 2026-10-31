@@ -61,6 +61,9 @@ pub fn cpu_count() -> u32 {
     CPU_COUNT.load(Ordering::Relaxed)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// BSP entry point. `pml4_pfn` is the kernel page table.
 pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
     crate::arch::boot::early_write_str(b"[SMP] enter\r\n");
@@ -252,7 +255,7 @@ pub unsafe fn smp_boot_aps(pml4_pfn: u64) {
 /// confirm). `apic_id` is the LAPIC ID from the MADT.
 fn start_ap(apic_id: u8, trampoline_phys: u64) -> bool {
     // 1. INIT IPI.
-    send_ipi(apic_id, 0x0000_0000 | 0x0000_5000); // INIT, no shorthand
+    send_ipi(apic_id, 0x0000_5000); // INIT, no shorthand
     delay_ms(10);
     // 2. First SIPI.
     let sipi = 0x0000_0600 | ((trampoline_phys >> 12) & 0xFF) as u32;
@@ -384,6 +387,9 @@ core::arch::global_asm!(
     "_ap_entry_long: ret",
 );
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Patch the trampoline with the kernel's PML4 physical address
 /// and the per-AP stack/index. The trampoline is copied into a
 /// 4 KiB low-memory page by `smp_boot_aps`; the caller's
@@ -407,6 +413,9 @@ pub unsafe fn patch_trampoline(pml4_paddr: u64, ap_stack: u64, ap_index: u64) {
     core::ptr::write_volatile(&raw mut _trampoline_ap_index, ap_index);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Stub: would be the AP entry point. The trampoline would set up
 /// its own GDT/IDT/TSS and call into the scheduler.
 #[no_mangle]
@@ -416,6 +425,9 @@ pub unsafe extern "C" fn ap_entry() -> ! {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// 64-bit long-mode AP entry. Called by the trampoline after the
 /// AP has switched to long mode. Sets up a per-CPU GDT/TSS,
 /// allocates a per-CPU area, installs `IA32_GS_BASE`, and parks
@@ -570,6 +582,9 @@ pub extern "Rust" fn __smp_cpu_count() -> u32 {
     cpu_count()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "Rust" fn __smp_boot_secondary(pml4_pfn: u64) {
     smp_boot_aps(pml4_pfn);

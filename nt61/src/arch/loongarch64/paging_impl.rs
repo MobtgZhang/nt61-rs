@@ -21,6 +21,9 @@ impl PagingArch for () {
     fn flush_tlb() {
         crate::arch::loongarch64::paging::flush_tlb()
     }
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn load_page_root(root_pfn: u64) {
         crate::arch::loongarch64::paging::load_page_root(root_pfn)
     }

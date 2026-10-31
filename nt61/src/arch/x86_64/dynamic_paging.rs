@@ -233,12 +233,18 @@ pub unsafe fn set_cr3(pml4_phys: u64) {
     core::arch::asm!("mov cr3, {0}", in(reg) pml4_phys, options(nostack, preserves_flags));
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Invalidate a single TLB entry
 #[inline]
 pub unsafe fn invlpg(virt: u64) {
     core::arch::asm!("invlpg [{0}]", in(reg) virt, options(nostack, preserves_flags));
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Invalidate the entire TLB
 #[inline]
 pub unsafe fn invlpg_all() {
@@ -378,14 +384,14 @@ pub fn calculate_page_table_requirements(memory_bytes: u64) -> (u64, u64) {
 
     // Each PT entry covers 4KB
 
-    let pml4_needed = (memory_bytes + PML4_COVERAGE - 1) / PML4_COVERAGE;
+    let pml4_needed = memory_bytes.div_ceil(PML4_COVERAGE);
 
     let _ = &pml4_needed;
     let _ = &pml4_needed;
-    let pdpt_needed = (memory_bytes + PDPT_COVERAGE - 1) / PDPT_COVERAGE;
+    let pdpt_needed = memory_bytes.div_ceil(PDPT_COVERAGE);
     let _ = &pdpt_needed;
     let _ = &pdpt_needed;
-    let pd_needed = (memory_bytes + PD_COVERAGE - 1) / PD_COVERAGE;
+    let pd_needed = memory_bytes.div_ceil(PD_COVERAGE);
     let _ = &pd_needed;
     let _ = &pd_needed;
 

@@ -117,6 +117,9 @@ pub struct SpecVersion {
     pub minor: u32,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Probe whether the given EID is implemented.
 ///
 /// Returns `true` if the firmware returns SBI_SUCCESS for `BASE::PROBE`.
@@ -125,6 +128,9 @@ pub unsafe fn probe(_eid: u64) -> bool {
     r.error == 0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get the SBI specification version.
 pub unsafe fn spec_version() -> SpecVersion {
     let r = sbi_call(eid::BASE, 0 /* GET_SPEC_VERSION */, 0, 0, 0, 0, 0, 0);
@@ -133,26 +139,41 @@ pub unsafe fn spec_version() -> SpecVersion {
     SpecVersion { major, minor }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Return the firmware's vendor ID string encoded as a u64.
 pub unsafe fn impl_id() -> u64 {
     sbi_call(eid::BASE, 1 /* GET_IMP_ID */, 0, 0, 0, 0, 0, 0).value as u64
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Return the JEDEC machine vendor ID (`mvendorid`).
 pub unsafe fn mvendorid() -> u64 {
     sbi_call(eid::BASE, 4 /* GET_MVENDORID */, 0, 0, 0, 0, 0, 0).value as u64
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Return the machine architecture ID (`marchid`).
 pub unsafe fn marchid() -> u64 {
     sbi_call(eid::BASE, 5 /* GET_MARCHID */, 0, 0, 0, 0, 0, 0).value as u64
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Return the machine implementation ID (`mimpid`).
 pub unsafe fn mimpid() -> u64 {
     sbi_call(eid::BASE, 6 /* GET_MIMPID */, 0, 0, 0, 0, 0, 0).value as u64
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Return the current hart ID (`mhartid`).
 pub unsafe fn current_hartid() -> u64 {
     sbi_call(eid::BASE, 7 /* GET_CURRENT_HARTID */, 0, 0, 0, 0, 0, 0).value as u64
@@ -162,6 +183,9 @@ pub unsafe fn current_hartid() -> u64 {
 // Time extension (TIME)
 // =====================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Program the next timer interrupt (stime_value).
 ///
 /// Uses the legacy EID 0x00 by default because it is universally
@@ -211,12 +235,18 @@ pub unsafe fn hsm_hart_start(hartid: u64, start_addr: u64, opaque: u64) -> SbiRe
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Stop the calling hart. Used for shutdown sequences where the
 /// firmware will power off the hart.
 pub unsafe fn hsm_hart_stop() -> SbiRet {
     sbi_call(eid::HSM, 1 /* HART_STOP */, 0, 0, 0, 0, 0, 0)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get the hart's status (started / stopped).
 pub unsafe fn hsm_hart_status(hartid: u64) -> SbiRet {
     sbi_call(
@@ -235,6 +265,9 @@ pub unsafe fn hsm_hart_status(hartid: u64) -> SbiRet {
 // IPI extension
 // =====================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Send a software IPI to the harts listed in `hart_mask` (one bit
 /// per hart, hart 0 = bit 0).
 pub unsafe fn ipi_send(hart_mask: u64) -> SbiRet {
@@ -252,6 +285,9 @@ pub enum ResetType {
     WarmReboot = 2,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn system_reset(ty: ResetType) -> SbiRet {
     sbi_call(
         eid::SRST,
@@ -269,6 +305,9 @@ pub unsafe fn system_reset(ty: ResetType) -> SbiRet {
 // Convenience: shutdown
 // =====================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Convenience wrapper — request a clean shutdown via SBI SRST.
 pub unsafe fn shutdown() -> ! {
     let _ = system_reset(ResetType::Shutdown);

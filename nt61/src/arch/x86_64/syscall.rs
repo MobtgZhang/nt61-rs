@@ -188,14 +188,23 @@ pub static mut SYSCALL_ENTRY_SNAP: SyscallEntrySnap = SyscallEntrySnap {
 //  without any runtime address patching.)
 
 // Back-compat aliases for the existing print sites.
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline(always)]
 pub unsafe fn syscall_entry_rax_snap() -> u64 {
     core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rax)
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline(always)]
 pub unsafe fn syscall_entry_rip_snap() -> u64 {
     core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rip)
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline(always)]
 pub unsafe fn syscall_entry_rip_byte_snap() -> [u8; 8] {
     core::ptr::read_volatile(&raw const SYSCALL_ENTRY_SNAP.rip_bytes)
@@ -594,8 +603,7 @@ fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
         },
         nums::NT_TRIM_PROCESS_WORKING_SET => {
             // NT_TRIM_PROCESS_WORKING_SET(handle, min_ws, max_ws)
-            crate::mm::working_set::mm_trim_process_working_set(arg0(tf) as u64, arg1(tf) as i64)
-                as i64
+            crate::mm::working_set::mm_trim_process_working_set(arg0(tf), arg1(tf) as i64) as i64
         }
 
         // ---- Virtual Memory ----
@@ -970,7 +978,7 @@ fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
         nums::NT_QUERY_SYSTEM_TIME => {
             // Write the current wall-clock time as a 64-bit
             // FILETIME (100-ns intervals since 1601-01-01 UTC).
-            let system_time = arg0(tf) as u64;
+            let system_time = arg0(tf);
             if !validate_write(system_time, 8) {
                 return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION
                     as SyscallResult;
@@ -990,8 +998,8 @@ fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
             // FILETIME to program into the CMOS RTC; arg1, if non-null,
             // receives the previous system time. Both are probed before
             // any dereference.
-            let system_time = arg0(tf) as u64;
-            let previous_time = arg1(tf) as u64;
+            let system_time = arg0(tf);
+            let previous_time = arg1(tf);
             if system_time == 0 || !validate_read(system_time, 8) {
                 return STATUS_ACCESS_VIOLATION as SyscallResult;
             }
@@ -1029,8 +1037,8 @@ fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
         nums::NT_QUERY_PERFORMANCE_COUNTER => {
             // Write the TSC counter and (optionally) the TSC
             // frequency so callers can convert to seconds.
-            let counter = arg0(tf) as u64;
-            let frequency = arg1(tf) as u64;
+            let counter = arg0(tf);
+            let frequency = arg1(tf);
             if !validate_write(counter, 8) {
                 return crate::arch::x86_64::syscall_validation::STATUS_ACCESS_VIOLATION
                     as SyscallResult;
@@ -1614,7 +1622,7 @@ fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
                     }
                     count as i64
                 }
-                Err(()) => crate::libs::ntdll::status::STATUS_NOT_FOUND as i64,
+                Err(_) => crate::libs::ntdll::status::STATUS_NOT_FOUND as i64,
             }
         }
 
@@ -1647,7 +1655,7 @@ fn dispatch_service(syscall_num: u32, tf: &TrapFrame) -> SyscallResult {
                 Ok(path) => path,
                 Err(status) => return status as i64,
             };
-            let out_ptr = arg2(tf) as u64;
+            let out_ptr = arg2(tf);
             let out_len = arg3(tf) as usize;
             if out_len == 0 || crate::mm::user_copy::probe_user_write(out_ptr, out_len).is_err() {
                 return crate::libs::ntdll::status::STATUS_INVALID_PARAMETER as i64;
@@ -1749,7 +1757,10 @@ fn validate_output(pointer: u64, length: usize) -> bool {
 // triple is `x86_64-unknown-none`, where plain `extern "C"` maps to
 // the SysV ABI, so the ABI must be pinned explicitly or the stub's
 // arguments are silently misread (RDI/RSI instead of RCX/RDX).
-pub extern "win64" fn syscall_dispatch(syscall_num: u64, tf: *mut TrapFrame) -> u64 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe extern "win64" fn syscall_dispatch(syscall_num: u64, tf: *mut TrapFrame) -> u64 {
     static FIRST_DIAGNOSTIC: AtomicBool = AtomicBool::new(false);
     if !FIRST_DIAGNOSTIC.swap(true, Ordering::SeqCst) {
         unsafe {
@@ -3660,7 +3671,7 @@ pub mod win7_sp1_syscalls {
     ];
 
     /// Windows 7 SP1 x64 win32k syscall table.
-    pub const WIN32K_SYSCALLS: [SyscallIndexEntry; 827] = [
+    pub static WIN32K_SYSCALLS: [SyscallIndexEntry; 827] = [
         SyscallIndexEntry {
             number: 0x1000,
             name: "NtUserGetThreadState",
@@ -7034,7 +7045,7 @@ pub mod syscall_nums {
     //!   - CSV file: x64/csv/nt.csv
     //!   - Values: Windows 7 (SP1) column
     //
-    //! Win32k (Shadow SSDT) syscall numbers are defined separately in:
+    //!     Win32k (Shadow SSDT) syscall numbers are defined separately in:
     //!   - `src/ke/shadow_ssdt.rs` (win32k syscall numbers in range 0x1000-0x1FFF)
     //
     //! ## Syscall Number Ranges

@@ -146,9 +146,8 @@ pub fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Ve
                             );
                             return Err("pool alloc failed");
                         }
-                        let mut buf_slice = unsafe { core::slice::from_raw_parts_mut(ptr, size) };
-                        match crate::fs::fat32::read_file(fs, cluster, size as u32, &mut buf_slice)
-                        {
+                        let buf_slice = unsafe { core::slice::from_raw_parts_mut(ptr, size) };
+                        match crate::fs::fat32::read_file(fs, cluster, size as u32, buf_slice) {
                             Ok(n) if n >= 2 && buf_slice[0] == b'M' && buf_slice[1] == b'Z' => {
                                 boot_println!("[SAFE-CMD] FAT32 cmd.exe read OK ({} bytes)", n);
                                 let mut v =
@@ -219,7 +218,7 @@ pub fn load_cmd_exe_from_disk() -> Result<core::mem::ManuallyDrop<alloc::vec::Ve
                 Some(f) => f,
                 None => return Err("system EXT get_mounted_fs returned None"),
             };
-            match crate::fs::ext2::read_whole_file(fs, CMD_EXE_DISK_PATH) {
+            match unsafe { crate::fs::ext2::read_whole_file(fs, CMD_EXE_DISK_PATH) } {
                 Ok(data) => {
                     if data.len() >= 2 && data[0] == b'M' && data[1] == b'Z' {
                         boot_println!("[SAFE-CMD] EXT cmd.exe read OK ({} bytes)", data.len());

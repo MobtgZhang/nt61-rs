@@ -93,16 +93,61 @@ pub fn run_boot_animation() {
     use crate::drivers::bootvid::{paint_progress_bar, vid_clean_up};
 
     const ANIMATION_STEPS: u32 = 20;
-    const SPIN_PER_STEP: u64 = 8_000_000;
     for step in 0..ANIMATION_STEPS {
         let percent = (step + 1) * 100 / ANIMATION_STEPS;
         paint_progress_bar(percent);
-        let mut spin: u64 = 0;
-        while spin < SPIN_PER_STEP {
-            core::hint::spin_loop();
-            spin += 1;
-        }
+        boot_delay_ms(100);
     }
 
     vid_clean_up();
+}
+
+fn boot_delay_ms(milliseconds: u64) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let start = crate::hal::x86_64::pit::get_system_time_us();
+        let target = start.saturating_add(milliseconds.saturating_mul(1_000));
+        while crate::hal::x86_64::pit::get_system_time_us() < target {
+            core::hint::spin_loop();
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        let start = crate::hal::aarch64::timer::time_ms();
+        let target = start.saturating_add(milliseconds);
+        while crate::hal::aarch64::timer::time_ms() < target {
+            core::hint::spin_loop();
+        }
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    {
+        use crate::arch::riscv64::pit::{time, TIMER_TICKS_PER_MS};
+        let start = time();
+        let target = start.wrapping_add(milliseconds.saturating_mul(TIMER_TICKS_PER_MS));
+        while time().wrapping_sub(start) < milliseconds.saturating_mul(TIMER_TICKS_PER_MS) {
+            core::hint::spin_loop();
+        }
+        let _ = target;
+    }
+
+    #[cfg(target_arch = "loongarch64")]
+    {
+        // QEMU `virt` exposes the stable counter at CSR 0x20. The
+        // emulated platform uses 100 MHz, which gives the same 2 s
+        // animation cadence as x86_64 and AArch64.
+        const COUNTER_HZ: u64 = 100_000_000;
+        let mut counter: u64;
+        unsafe { core::arch::asm!("csrrd {}, 0x20", out(reg) counter) };
+        let start = counter;
+        let delta = milliseconds.saturating_mul(COUNTER_HZ / 1000);
+        loop {
+            unsafe { core::arch::asm!("csrrd {}, 0x20", out(reg) counter) };
+            if counter.wrapping_sub(start) >= delta {
+                break;
+            }
+            core::hint::spin_loop();
+        }
+    }
 }

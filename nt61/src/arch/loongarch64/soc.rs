@@ -75,6 +75,9 @@ impl SoCInfo {
 
 static SOC: SoCInfo = SoCInfo::new();
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read one word of CPUCFG. The LoongArch encoding for `CPUCFG rd, idx`
 /// is the pseudo-op form `cpucfg <rd>, <idx>`. We emit the equivalent
 /// csrrd-like mnemonic using the raw opcode via a fixed template here.

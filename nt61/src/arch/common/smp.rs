@@ -30,6 +30,9 @@ pub trait SmpArch {
 // preconditions are met.
 unsafe extern "Rust" {
     fn __smp_cpu_count() -> u32;
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn __smp_boot_secondary(pml4_pfn: u64);
     fn __smp_get_current_cpu_id() -> u32;
 }

@@ -134,7 +134,7 @@ pub const FPU_STATE_SIZE: usize = 832;
 
 // Compile-time assertion: FPU_STATE_SIZE must be a multiple of 64 bytes
 const _: () = assert!(
-    FPU_STATE_SIZE % 64 == 0,
+    FPU_STATE_SIZE.is_multiple_of(64),
     "FPU_STATE_SIZE must be 64-byte aligned for XSAVE/XRSTOR"
 );
 
@@ -316,7 +316,7 @@ pub fn seed_thread_context(stack_top: u64, entry: u64, arg0: u64) -> u64 {
 ///   - Both threads are in a valid state
 ///   - The new thread has a valid stack
 ///   - FPU state buffers are properly allocated
-pub fn ki_swap_context(
+pub unsafe fn ki_swap_context(
     out_rsp: *mut u64,
     new_rsp: u64,
     current_thread: *mut crate::ps::thread::Ethread,
@@ -418,7 +418,7 @@ pub fn init_thread_fpu_state() -> Option<&'static mut ThreadStateBuffer> {
 
     // Verify 64-byte alignment (XSAVE requires 64-byte alignment)
     // Non-paged pool allocations are typically page-aligned, but we verify at runtime
-    if (buffer as u64) % 64 != 0 {
+    if !(buffer as u64).is_multiple_of(64) {
         // // kprintln!("[CONTEXT] WARNING: FPU buffer 0x{:016x} not 64-byte aligned!", buffer as u64);
         // ThreadStateBuffer itself is #[repr(align(64))], so if the allocator
         // gives us a misaligned pointer, we need to handle it.
@@ -442,8 +442,10 @@ pub fn init_thread_fpu_state() -> Option<&'static mut ThreadStateBuffer> {
 
 /// Free FPU state buffer
 pub fn free_thread_fpu_state(buffer: *mut ThreadStateBuffer) {
-    if !buffer.is_null() {
-        let _ = crate::mm::pool::free(buffer as *mut u8);
+    unsafe {
+        if !buffer.is_null() {
+            let _ = crate::mm::pool::free(buffer as *mut u8);
+        }
     }
 }
 
@@ -513,9 +515,12 @@ pub unsafe fn restore_debug_registers(state: &DebugState) {
     );
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get pointer to debug state within ThreadStateBuffer
 #[inline]
-pub fn get_debug_state_ptr(buffer: *mut ThreadStateBuffer) -> *mut DebugState {
+pub unsafe fn get_debug_state_ptr(buffer: *mut ThreadStateBuffer) -> *mut DebugState {
     if buffer.is_null() {
         return core::ptr::null_mut();
     }

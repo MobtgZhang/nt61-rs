@@ -6,6 +6,9 @@
 use super::syscall_validation::{probe_for_read, probe_for_write, probe_for_write_aligned};
 use crate::libs::ntdll::types::{HANDLE, NTSTATUS};
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// All user-mode pointers are validated before access.
 pub unsafe fn nt_read_file_validated(
     file_handle: HANDLE,
@@ -36,6 +39,9 @@ pub unsafe fn nt_read_file_validated(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn nt_write_file_validated(
     file_handle: HANDLE,
     buffer: *const u8,
@@ -65,6 +71,9 @@ pub unsafe fn nt_write_file_validated(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn nt_allocate_virtual_memory_validated(
     process_handle: HANDLE,
     base_address: *mut *mut u8,
@@ -98,6 +107,9 @@ pub unsafe fn nt_allocate_virtual_memory_validated(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn nt_create_file_validated(
     file_handle: *mut HANDLE,
     _desired_access: u32,

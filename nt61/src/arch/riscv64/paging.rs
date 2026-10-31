@@ -169,6 +169,9 @@ fn identity_ranges_mapped_in_root(root_pfn: u64) -> bool {
     })
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Sv39 walk used exclusively by `identity_map_region`.
 ///
 /// New intermediate pages are allocated from the bootstrap pool. This
@@ -196,6 +199,9 @@ unsafe fn identity_l1_pte_for_at(root_phys: u64, va: u64) -> *mut u64 {
     (l1_phys as *mut u64).add(l1_idx)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Sv39 walk used exclusively by `identity_map_region`.
 ///
 /// New intermediate pages are allocated from the bootstrap pool. This
@@ -375,6 +381,9 @@ fn is_leaf(e: u64) -> bool {
     (e & (PTE_R | PTE_W | PTE_X)) != 0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Walk the Sv39 page tables for `va` and return a writable pointer
 /// to the leaf PTE. Allocates any missing intermediate along the
 /// way.
@@ -462,6 +471,9 @@ unsafe fn leaf_pte_for_at(root_phys: u64, va: u64) -> *mut u64 {
     l2_pte
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Walk the current root table for `va`.
 unsafe fn leaf_pte_for(va: u64) -> *mut u64 {
     leaf_pte_for_at(root_phys(), va)
@@ -821,6 +833,9 @@ fn map_root_tables_into_self(dst_pfn: u64) {
     let _ = mapped;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn load_page_root(pml4_pfn: u64) {
     let pa = pfn_to_phys(pml4_pfn);
     crate::arch::riscv64::csr::sstatus::set(crate::arch::riscv64::csr::sstatus::SUM);

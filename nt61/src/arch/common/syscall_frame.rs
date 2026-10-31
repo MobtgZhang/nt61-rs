@@ -20,6 +20,9 @@ impl SyscallFrame {
         frame
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     #[cfg(target_arch = "x86_64")]
     pub unsafe fn from_trap_frame(frame: &TrapFrame) -> Self {
         use crate::arch::x86_64::syscall::{arg0, arg1, arg2, arg3, stack_arg};
@@ -41,6 +44,9 @@ impl SyscallFrame {
         Self::from_args(arguments)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     #[cfg(not(target_arch = "x86_64"))]
     pub unsafe fn from_trap_frame(_frame: &TrapFrame) -> Self {
         Self::default()

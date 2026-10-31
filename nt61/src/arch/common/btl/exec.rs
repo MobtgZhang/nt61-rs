@@ -37,9 +37,7 @@ pub(crate) mod test_support {
         })
     }
 
-    pub fn run_mov_imm_add_imm(
-        memory: &mut dyn super::GuestMemory,
-    ) -> (ExecOutcome, u64) {
+    pub fn run_mov_imm_add_imm(memory: &mut dyn super::GuestMemory) -> (ExecOutcome, u64) {
         let code = [
             0x48, 0xB8, 42, 0, 0, 0, 0, 0, 0, 0, 0x48, 0x83, 0xC0, 8, 0xC3,
         ];
@@ -97,6 +95,12 @@ impl GuestState {
     }
 }
 
+impl Default for GuestState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 const FLAG_CF: u32 = 0;
 const FLAG_PF: u32 = 2;
 const FLAG_ZF: u32 = 6;
@@ -106,7 +110,7 @@ const FLAG_OF: u32 = 11;
 const MASK8: u64 = 0xFF;
 
 fn parity8(v: u64) -> bool {
-    (v & MASK8).count_ones() % 2 == 0
+    (v & MASK8).count_ones().is_multiple_of(2)
 }
 
 /// Set ZF/SF/PF from the result; CF/OF per operation.
@@ -164,7 +168,7 @@ fn eval_cond(state: &GuestState, cond: BranchCond) -> bool {
 fn effective_address(state: &GuestState, mem: &MemOperand) -> u64 {
     let base = mem.base.map(|b| state.reg(b)).unwrap_or(0);
     let index = mem.index.map(|i| state.reg(i)).unwrap_or(0);
-    base.wrapping_add((index as u64) * mem.scale as u64)
+    base.wrapping_add(index * mem.scale as u64)
         .wrapping_add(mem.disp as u64)
 }
 
@@ -234,7 +238,9 @@ pub fn execute_block(
                 match mem_read(memory, addr, mem.width) {
                     Some(v) => state.set_reg(dst, v),
                     None => {
-                        return ExecOutcome::MemoryFault { guest_va: inst.guest_va }
+                        return ExecOutcome::MemoryFault {
+                            guest_va: inst.guest_va,
+                        }
                     }
                 }
             }
@@ -242,7 +248,9 @@ pub fn execute_block(
                 let addr = effective_address(state, mem);
                 let v = state.reg(src);
                 if !mem_write(memory, addr, v, mem.width) {
-                    return ExecOutcome::MemoryFault { guest_va: inst.guest_va };
+                    return ExecOutcome::MemoryFault {
+                        guest_va: inst.guest_va,
+                    };
                 }
             }
             IROp::AluReg { op, dst, src } => {
@@ -271,7 +279,9 @@ pub fn execute_block(
                         }
                     }
                     None => {
-                        return ExecOutcome::MemoryFault { guest_va: inst.guest_va }
+                        return ExecOutcome::MemoryFault {
+                            guest_va: inst.guest_va,
+                        }
                     }
                 }
             }
@@ -283,7 +293,9 @@ pub fn execute_block(
                 let new_sp = state.reg(X86Reg::Rsp).wrapping_sub(8);
                 state.set_reg(X86Reg::Rsp, new_sp);
                 if !mem_write(memory, new_sp, state.reg(src), 8) {
-                    return ExecOutcome::MemoryFault { guest_va: inst.guest_va };
+                    return ExecOutcome::MemoryFault {
+                        guest_va: inst.guest_va,
+                    };
                 }
             }
             IROp::Pop { dst } => {
@@ -294,7 +306,9 @@ pub fn execute_block(
                         state.set_reg(X86Reg::Rsp, sp.wrapping_add(8));
                     }
                     None => {
-                        return ExecOutcome::MemoryFault { guest_va: inst.guest_va }
+                        return ExecOutcome::MemoryFault {
+                            guest_va: inst.guest_va,
+                        }
                     }
                 }
             }
@@ -313,7 +327,9 @@ pub fn execute_block(
                 let new_sp = state.reg(X86Reg::Rsp).wrapping_sub(8);
                 state.set_reg(X86Reg::Rsp, new_sp);
                 if !mem_write(memory, new_sp, ret_rip, 8) {
-                    return ExecOutcome::MemoryFault { guest_va: inst.guest_va };
+                    return ExecOutcome::MemoryFault {
+                        guest_va: inst.guest_va,
+                    };
                 }
                 state.rip = target;
                 return ExecOutcome::Retired { next_rip: target };
@@ -327,7 +343,9 @@ pub fn execute_block(
                         return ExecOutcome::Retired { next_rip: v };
                     }
                     None => {
-                        return ExecOutcome::MemoryFault { guest_va: inst.guest_va }
+                        return ExecOutcome::MemoryFault {
+                            guest_va: inst.guest_va,
+                        }
                     }
                 }
             }
@@ -338,13 +356,17 @@ pub fn execute_block(
             | IROp::SimdMov { .. }
             | IROp::SimdStore { .. }
             | IROp::SimdArith { .. } => {
-                return ExecOutcome::Unsupported { guest_va: inst.guest_va };
+                return ExecOutcome::Unsupported {
+                    guest_va: inst.guest_va,
+                };
             }
         }
         // Default advance to the next instruction's guest VA.
         state.rip = inst.guest_va + inst.guest_len as u64;
     }
-    ExecOutcome::Retired { next_rip: state.rip }
+    ExecOutcome::Retired {
+        next_rip: state.rip,
+    }
 }
 
 #[cfg(test)]
@@ -398,11 +420,7 @@ mod tests {
 
     #[test]
     fn guest_sequence_executes_for_each_host_architecture() {
-        for arch in [
-            HostArch::Aarch64,
-            HostArch::LoongArch64,
-            HostArch::RiscV64,
-        ] {
+        for arch in [HostArch::Aarch64, HostArch::LoongArch64, HostArch::RiscV64] {
             assert_eq!(arch.argument_register_count(), 8);
             assert!(!arch.argument_register_names()[0].is_empty());
 

@@ -86,6 +86,9 @@ pub fn init_for_thread(state: &mut FpuState) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Save the current FPU + V state into `state`.
 ///
 /// Marked `unsafe` because it must run with preemption disabled
@@ -139,6 +142,9 @@ pub unsafe fn fpu_save(state: &mut FpuState) {
     state.valid = true;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Restore FPU + V state from `state` into the CPU.
 #[inline(never)]
 pub unsafe fn fpu_restore(state: &FpuState) {
@@ -170,6 +176,9 @@ pub unsafe fn fpu_restore(state: &FpuState) {
     asm!("csrw sstatus, {}", in(reg) sstatus, options(nostack));
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Enable the FPU by setting `sstatus.FS = 1` (initial state).
 /// The first floating-point instruction will transition FS to
 /// "dirty" (3) and trigger a save on context switch.
@@ -184,6 +193,9 @@ pub unsafe fn enable_fpu() {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Enable the V extension by setting `sstatus.VS = 1`.
 pub unsafe fn enable_vector() {
     unsafe {
@@ -191,6 +203,9 @@ pub unsafe fn enable_vector() {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Disable both FPU and V extension in `sstatus` — used during
 /// the context-switch save path so subsequent traps go to the
 /// kernel's FP-not-enabled handler.

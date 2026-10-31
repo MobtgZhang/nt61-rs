@@ -87,10 +87,16 @@ pub fn ensure_low_identity_map(pa_base: u64, size: u64) -> bool {
     mapped
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(not(target_arch = "x86_64"))]
 #[inline]
 pub unsafe fn force_writable_identity_map(_pfn: PfnNumber) {}
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(not(target_arch = "x86_64"))]
 #[inline]
 pub unsafe fn arm_write_watchpoint(_pfn: PfnNumber) {}
@@ -106,6 +112,9 @@ pub fn current_recursive_self_map_is_supported() -> bool {
     cfg!(target_arch = "x86_64")
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 pub unsafe fn arm_write_watchpoint(pfn: PfnNumber) {

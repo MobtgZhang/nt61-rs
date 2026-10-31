@@ -514,7 +514,7 @@ impl<'a> Decoder<'a> {
                 match src {
                     // MOV r64, imm32 (sign-extended with REX.W).
                     Ok(dst_reg) => {
-                        let imm = self.fetch_le32()? as i32 as i64;
+                        let imm = self.fetch_le32()? as i64;
                         Some(IROp::MovImm { dst: dst_reg, imm })
                     }
                     // Store-immediate is not modelled in the IR.

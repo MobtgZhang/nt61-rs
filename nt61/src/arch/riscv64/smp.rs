@@ -36,6 +36,9 @@ pub fn cpu_count() -> u32 {
     a.max(b).max(1)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// SBI HSM hart_start (re-exported here for callers that already
 /// imported from this module).
 pub unsafe fn sbi_hsm_hart_start(hart_id: u64, start_addr: u64, opaque: u64) -> i64 {
@@ -60,6 +63,9 @@ global_asm!(
     "  tail __smp_secondary_entry_rust",
 );
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn __smp_secondary_entry_rust(_hart: u64, _stack_top: u64) -> ! {
     // Publish this hart's per-CPU base in `tp`.

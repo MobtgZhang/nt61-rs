@@ -76,15 +76,6 @@ pub fn return_to_firmware() -> ! {
 }
 
 pub fn execute_command(buffer: *const u8, length: usize) -> Result<bool, &'static str> {
-    let diagnostic = alloc::format!(
-        "[CMD-HOST] ptr={:#x} len={:#x} range={} root={:#x} trans={:#x?}\r\n",
-        buffer as usize,
-        length,
-        crate::mm::user_copy::is_user_range(buffer as u64, length),
-        crate::arch::read_current_page_root(),
-        crate::arch::translate_virt(buffer as u64)
-    );
-    crate::hal::serial::write_string_always(&diagnostic);
     if buffer.is_null() {
         crate::servers::cmd::diagnostic_command_failure(b"NULL");
         return Err("null command pointer");

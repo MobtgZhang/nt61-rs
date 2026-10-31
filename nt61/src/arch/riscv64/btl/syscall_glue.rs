@@ -56,9 +56,8 @@ pub fn btl_syscall_dispatch(
     guest_regs[crate::arch::common::btl::ir::X86Reg::R9 as usize] = a3;
 
     let mut memory = super::mem::guest_memory();
-    let outcome = unsafe {
-        dispatch_nt_syscall(GuestAbi::X86_64, num as u32, &guest_regs, &mut memory)
-    };
+    let outcome =
+        unsafe { dispatch_nt_syscall(GuestAbi::X86_64, num as u32, &guest_regs, &mut memory) };
     match outcome {
         BridgeOutcome::Dispatched(status) => BtlSyscallResult::Handled {
             result: status as u64,
@@ -97,7 +96,12 @@ mod tests {
             register_syscall(TEST_SERVICE as usize, capture_handler, 1, "btl_rv64").unwrap();
         }
         let result = btl_syscall_dispatch(TEST_SERVICE, 0x2468, 0, 0, 0, 0);
-        assert_eq!(result, BtlSyscallResult::Handled { result: STATUS_SUCCESS as u64 });
+        assert_eq!(
+            result,
+            BtlSyscallResult::Handled {
+                result: STATUS_SUCCESS as u64
+            }
+        );
     }
 
     #[test]

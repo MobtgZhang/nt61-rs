@@ -39,6 +39,9 @@ static mut PER_CPU_0: PerCpuArea = PerCpuArea::new(0);
 // Exported functions (used by arch/common/percpu.rs via extern "Rust")
 // =====================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialize the per-CPU area for `cpu_id` and install it as the `tp`
 /// register. For BSP (cpu_id=0) uses the static `PER_CPU_0`; for APs
 /// allocates a new page from the kernel pool.
@@ -78,6 +81,9 @@ pub fn init_storage() {
     PER_CPU_PAGES[0].store(core::ptr::addr_of_mut!(PER_CPU_0) as u64, Ordering::Release);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Allocate and zero a per-CPU area page for the given CPU id.
 pub unsafe fn allocate(cpu_id: u32) -> u64 {
     if cpu_id as usize >= MAX_PER_CPU {

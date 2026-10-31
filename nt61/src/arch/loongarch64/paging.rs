@@ -179,6 +179,9 @@ impl PagingState {
 
 static PAGING_STATE: Spinlock<PagingState> = Spinlock::new(PagingState::new());
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn leaf_table_for(state: &mut PagingState, key: LeafTableKey) -> Option<*mut u64> {
     for (index, slot) in state.leaf_keys.iter().enumerate() {
         let existing = slot.unwrap_or(LeafTableKey {
@@ -316,6 +319,9 @@ fn root_phys() -> u64 {
     pa & 0x0000_FFFF_FFFF_F000
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Walk the LoongArch 4-level page tables for `va` and return a
 /// writable pointer to the leaf PTE.
 unsafe fn leaf_pte_for_at(root_pa: u64, va: u64) -> *mut u64 {
@@ -398,6 +404,9 @@ unsafe fn leaf_pte_for_at(root_pa: u64, va: u64) -> *mut u64 {
     leaf_table.add(phys_pte_idx)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn leaf_pte_for(va: u64) -> *mut u64 {
     leaf_pte_for_at(root_phys(), va)
 }
@@ -561,6 +570,9 @@ pub fn page_is_mapped_in_root(root_pfn: u64, va: u64) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn load_page_root(pml4_pfn: u64) {
     let pa = pfn_to_phys(pml4_pfn);
     let is_system_root = {

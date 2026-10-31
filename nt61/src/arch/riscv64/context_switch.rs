@@ -304,6 +304,9 @@ pub unsafe extern "C" fn swap_context_full(
     );
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "riscv64")]
 unsafe fn save_context_to_cpu_context(out: *mut super::context::CpuContext) {
     use core::arch::asm;
@@ -334,6 +337,9 @@ unsafe fn save_context_to_cpu_context(out: *mut super::context::CpuContext) {
     );
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "riscv64")]
 unsafe fn restore_context_from_cpu_context(incoming: *const super::context::CpuContext) {
     use core::arch::asm;

@@ -105,6 +105,9 @@ static HOST_HANDOFF_PAGE: HostHandoffPage = HostHandoffPage {
 /// the loader for the exact image size.
 pub const HOST_HANDOFF_SLOT_VADDR: u64 = 0x7a3ff000;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Address of the trampoline function, exposed as a `u64` so the
 /// disk image's `mov rax, [rdx]; call rax` can pick it up.
 ///
@@ -113,7 +116,7 @@ pub const HOST_HANDOFF_SLOT_VADDR: u64 = 0x7a3ff000;
 /// binary and its load address depends on the bootloader).
 #[inline(never)]
 #[no_mangle]
-pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
+pub unsafe extern "C" fn ntoskrnl_kisystemstartup_thunk(
     boot_info: *const crate::boot_types::BootInfo,
 ) -> ! {
     // =======================================================================
@@ -548,6 +551,9 @@ pub extern "C" fn ntoskrnl_kisystemstartup_thunk(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Install the trampoline pointer into the low-memory slot and
 /// return its virtual address (the value the disk image reads
 /// `[RDX]` from).

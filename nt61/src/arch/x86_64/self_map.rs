@@ -526,6 +526,9 @@ pub fn install_with_identity_map(pml4_pfn: PfnNumber) -> Result<(), SelfMapError
     Ok(())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Walk user PML4[0..256] and force U=1 on every PML4/PDPT/PD entry
 /// we find. This makes the entire low-half identity-mapped region
 /// user-accessible. Used when the user PML4 is created by copying
@@ -623,6 +626,9 @@ pub unsafe fn force_writable_identity_map(pfn: PfnNumber) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Walk user PML4 entries and force user-accessible bits.
 pub unsafe fn force_user_accessible(pfn: PfnNumber) {
     let pml4_phys = pfn << 12;

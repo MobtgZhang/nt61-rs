@@ -109,6 +109,9 @@ pub fn __user_entry_user_rflags() -> u64 {
     RISCV_SSTATUS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Transfer control to U-mode. Never returns.
 #[no_mangle]
 pub unsafe fn __user_entry_enter(user_rip: u64, user_rsp: u64) -> ! {
@@ -234,6 +237,9 @@ pub fn enter_first_user_thread(satp_root: u64, user_rip: u64, user_rsp: u64) -> 
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn __user_entry_enter_first(root_table_phys: u64, user_rip: u64, user_rsp: u64) -> ! {
     enter_first_user_thread(root_table_phys, user_rip, user_rsp)
 }

@@ -29,6 +29,9 @@ use core::arch::asm;
 // read
 // =====================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read any 64-bit CSR by raw address. Use the typed helpers below
 /// for documentation / type-checking.
 ///
@@ -127,6 +130,9 @@ csr_read!(csrr_0xf12, 0xF12);
 csr_read!(csrr_0xf13, 0xF13);
 csr_read!(csrr_0xf14, 0xF14);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write any 64-bit CSR by raw address. Same dispatch rule as
 /// [`csrr`]: the typical callers (typed helpers) pass compile-time
 /// constants that resolve to direct `csrw <imm>, rs1` instructions.
@@ -173,6 +179,9 @@ csr_write!(csrw_0x144, 0x144);
 csr_write!(csrw_0x10a, 0x10A);
 csr_write!(csrw_0x180, 0x180);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Set bits in a CSR (atomic OR).
 #[inline(always)]
 pub unsafe fn csrs(addr: u16, mask: u64) {
@@ -205,6 +214,9 @@ csr_set!(csrs_0x104, 0x104);
 csr_set!(csrs_0x144, 0x144);
 csr_set!(csrs_0x10a, 0x10A);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Clear bits in a CSR (atomic AND-NOT).
 #[inline(always)]
 pub unsafe fn csrc(addr: u16, mask: u64) {

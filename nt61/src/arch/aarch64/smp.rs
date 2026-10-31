@@ -74,6 +74,9 @@ pub fn get_method() -> SmpMethod {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Real PSCI CPU_ON — place secondary cores at `entry` with the
 /// `context_id` (passed in `x0` to the entry) through the SMCCC
 /// interface. Returns the SMCCC return code in the lower 32 bits;
@@ -106,6 +109,9 @@ pub unsafe fn psci_cpu_on(target_cpu: u64, entry: u64, context_id: u64) -> i64 {
 /// used as a fallback on boards that do not expose it.
 pub const SPIN_TABLE_RELEASE_ADDR: u64 = 0xD000_0000;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Release a secondary CPU through the spin-table mechanism.
 ///
 /// The Phytium FT-2000/4 protocol writes the entry point to the
@@ -135,6 +141,9 @@ pub extern "Rust" fn __smp_cpu_count() -> u32 {
     cpu_count()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "Rust" fn __smp_boot_secondary(pml4_pfn: u64) {
     SECONDARY_ROOT_PFN.store((pml4_pfn & 0x000F_FFFF_FFFF) as u32, Ordering::Release);

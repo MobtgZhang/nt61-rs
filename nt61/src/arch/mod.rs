@@ -315,6 +315,9 @@ pub fn platform_timer() -> PlatformTimer {
     PlatformTimer::Generic
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialize the architecture-specific paging implementation.
 ///
 /// Most targets install their paging root during early hardware
@@ -342,16 +345,25 @@ pub fn map_page(va: u64, pa: u64, flags: u64) -> bool {
     return loongarch64::paging::map_page(va, pa, flags);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "riscv64")]
 pub unsafe fn map_page_in_root(root_pfn: u64, va: u64, pa: u64, flags: u64) -> bool {
     riscv64::paging::map_page_in_root(root_pfn, va, pa, flags)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "loongarch64")]
 pub unsafe fn map_page_in_root(root_pfn: u64, va: u64, pa: u64, flags: u64) -> bool {
     loongarch64::paging::map_page_in_root(root_pfn, va, pa, flags)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(not(any(target_arch = "riscv64", target_arch = "loongarch64")))]
 pub unsafe fn map_page_in_root(root_pfn: u64, va: u64, pa: u64, flags: u64) -> bool {
     let previous_root = read_page_root_pfn();
@@ -424,7 +436,7 @@ pub fn leaf_entry(va: u64) -> Option<u64> {
 pub fn page_user_accessible(entry: u64, require_write: bool) -> bool {
     #[cfg(target_arch = "x86_64")]
     {
-        return (entry & 4) != 0 && (!require_write || (entry & 2) != 0);
+        (entry & 4) != 0 && (!require_write || (entry & 2) != 0)
     }
     #[cfg(target_arch = "aarch64")]
     {
@@ -1165,6 +1177,9 @@ pub fn get_cpu_id() -> u32 {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Load the page-table root for the current address space. The
 /// supplied PFN is the physical page frame number of the PML4 (or
 /// platform equivalent). After this call the MMU will translate
@@ -1347,6 +1362,9 @@ pub fn read_current_page_root() -> u64 {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Switch the current thread's stack pointer to `new_rsp`, saving
 /// the old value through `out_rsp`. The unified facade over
 /// `arch::<arch>::context_switch::swap_context`.

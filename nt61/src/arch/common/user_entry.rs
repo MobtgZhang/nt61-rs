@@ -44,12 +44,18 @@ const fn machine_code() -> [u8; 8] {
     ]
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Transfer a prepared thread to user mode. Never returns.
 #[inline(always)]
 pub unsafe fn enter_user_mode(user_rip: u64, user_rsp: u64) -> ! {
     dispatch_enter_user_mode(user_rip, user_rsp)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Enter a prepared process after attaching its root page table.
 ///
 /// The root-table argument is the platform's canonical root-table
@@ -119,7 +125,7 @@ fn create_stub_process() -> *mut crate::ps::process::Eprocess {
         crate::arch::halt_loop();
     });
 
-    let root_table_phys = (*process).pml4_phys;
+    let root_table_phys = process.pml4_phys;
     if !crate::userspace::minimal_stub::install_into_pml4(root_table_phys) {
         crate::boot_println!("FATAL: install_into_pml4 failed");
         crate::arch::halt_loop();
@@ -128,12 +134,18 @@ fn create_stub_process() -> *mut crate::ps::process::Eprocess {
     process
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn dispatch_enter_user_mode(user_rip: u64, user_rsp: u64) -> ! {
     unsafe { crate::arch::x86_64::user_entry::__user_entry_enter(user_rip, user_rsp) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn dispatch_enter_first_user_thread(
@@ -150,12 +162,18 @@ unsafe fn dispatch_enter_first_user_thread(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn dispatch_enter_user_mode(user_rip: u64, user_rsp: u64) -> ! {
     unsafe { crate::arch::aarch64::user_entry::__user_entry_enter(user_rip, user_rsp) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn dispatch_enter_first_user_thread(
@@ -172,12 +190,18 @@ unsafe fn dispatch_enter_first_user_thread(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "riscv64")]
 #[inline(always)]
 unsafe fn dispatch_enter_user_mode(user_rip: u64, user_rsp: u64) -> ! {
     unsafe { crate::arch::riscv64::user_entry::__user_entry_enter(user_rip, user_rsp) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "riscv64")]
 #[inline(always)]
 unsafe fn dispatch_enter_first_user_thread(
@@ -194,12 +218,18 @@ unsafe fn dispatch_enter_first_user_thread(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "loongarch64")]
 #[inline(always)]
 unsafe fn dispatch_enter_user_mode(user_rip: u64, user_rsp: u64) -> ! {
     unsafe { crate::arch::loongarch64::user_entry::__user_entry_enter(user_rip, user_rsp) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(target_arch = "loongarch64")]
 #[inline(always)]
 unsafe fn dispatch_enter_first_user_thread(

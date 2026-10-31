@@ -14,6 +14,9 @@ impl SmapGuard {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Probe a NUL-terminated UTF-16 string before copying it into the kernel.
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn probe_for_read_unicode_string(address: u64, max_chars: usize) -> Result<usize, i32> {
@@ -23,6 +26,9 @@ pub unsafe fn probe_for_read_unicode_string(address: u64, max_chars: usize) -> R
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn probe_for_read_unicode_string(
     _address: u64,
