@@ -189,10 +189,11 @@ impl FlushManager {
             return Ok(());
         }
 
-        if self.strategy == FlushStrategy::Lazy && !flags.recursive {
-            if !self.should_flush_lazy(hive_id, timestamp) {
-                return Ok(());
-            }
+        if self.strategy == FlushStrategy::Lazy
+            && !flags.recursive
+            && !self.should_flush_lazy(hive_id, timestamp)
+        {
+            return Ok(());
         }
 
         state.begin_flush()?;
@@ -251,8 +252,7 @@ impl FlushManager {
     pub fn flush_sam(&self) -> bool {
         let timestamp = crate::hal::common::pit::get_system_time_ms();
         self.record_modification(3, timestamp);
-        self.flush_hive(3, FlushFlags::default(), timestamp)
-            .is_ok()
+        self.flush_hive(3, FlushFlags::default(), timestamp).is_ok()
     }
 
     pub fn get_dirty_hives(&self) -> Vec<usize> {

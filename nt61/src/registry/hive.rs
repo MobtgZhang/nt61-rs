@@ -144,12 +144,14 @@ pub struct Value {
 
 impl Value {
     pub fn as_utf16_string(&self) -> Option<String> {
-        if self.data.len() < 2 || self.data.len() % 2 != 0 {
+        if self.data.len() < 2 || !self.data.len().is_multiple_of(2) {
             return None;
         }
         let units: Vec<u16> = self
             .data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .take_while(|&u| u != 0)
             .collect();
@@ -570,7 +572,7 @@ fn decode_hive_name(data: &[u8]) -> String {
         return String::new();
     }
 
-    if data.len() % 2 != 0 {
+    if !data.len().is_multiple_of(2) {
         return String::from_utf8_lossy(data).into_owned();
     }
 
@@ -582,7 +584,9 @@ fn decode_hive_name(data: &[u8]) -> String {
     // encoding. Decode the units and fall back to lossy ASCII only when
     // they are not valid UTF-16.
     let units: Vec<u16> = data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     match String::from_utf16(&units) {

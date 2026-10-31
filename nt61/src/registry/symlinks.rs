@@ -67,7 +67,7 @@ impl SymbolicLink {
     }
 
     pub fn from_value_data(source_offset: u32, data: &[u8]) -> Result<Self, HiveError> {
-        if data.len() % 2 != 0 {
+        if !data.len().is_multiple_of(2) {
             return Err(HiveError::BadUtf16);
         }
 
@@ -118,7 +118,7 @@ impl SymlinkManager {
         let mut depth = 0;
         let mut path_chain = Vec::new();
 
-        while depth < MAX_SYMLINK_DEPTH {
+        if depth < MAX_SYMLINK_DEPTH {
             if let Some(link) = self.links.get(&current_offset) {
                 path_chain.push(link.target_path.clone());
 

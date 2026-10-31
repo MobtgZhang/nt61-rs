@@ -13,24 +13,13 @@ use alloc::vec::Vec;
 
 use super::hive::HiveError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VirtualizationFlags {
     pub enabled: bool,
     pub virtual_source: bool,
     pub virtual_target: bool,
     /// Store is per-user
     pub per_user: bool,
-}
-
-impl Default for VirtualizationFlags {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            virtual_source: false,
-            virtual_target: false,
-            per_user: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +33,6 @@ pub enum VirtualStore {
 
 impl VirtualStore {
     /// Get the virtual store path for a user
-
     pub fn per_user_path(user_sid: &str) -> String {
         format!(
             "\\Registry\\User\\{}\\Software\\Classes\\VirtualStore",

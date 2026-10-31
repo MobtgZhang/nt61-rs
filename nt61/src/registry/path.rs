@@ -130,8 +130,8 @@ impl ParsedPath {
         let (hive_name, subkey_str) = if trimmed.to_ascii_uppercase().starts_with("REGISTRY") {
             // Full path: \Registry\Machine\System\...
             let remainder = &trimmed[8..]; // skip "Registry"
-            if remainder.starts_with('\\') {
-                let after_backslash = &remainder[1..]; // skip the backslash
+            if let Some(after_backslash) = remainder.strip_prefix('\\') {
+                // skip the backslash
 
                 // Check for Machine or User prefix and skip it
                 // Track whether the path went through \Registry\User\ so

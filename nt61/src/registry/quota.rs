@@ -177,10 +177,10 @@ impl QuotaManager {
             return Err(HiveError::OutOfBounds);
         }
 
-        if hive_id < self.hive_usage.len() {
-            if self.hive_usage[hive_id].used() + size > self.limits.max_hive_size {
-                return Err(HiveError::OutOfBounds);
-            }
+        if hive_id < self.hive_usage.len()
+            && self.hive_usage[hive_id].used() + size > self.limits.max_hive_size
+        {
+            return Err(HiveError::OutOfBounds);
         }
 
         Ok(())

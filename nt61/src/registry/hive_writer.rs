@@ -99,7 +99,7 @@ impl HiveWriter {
             None => {
                 self.hbin_headers.push(0);
                 self.body
-                    .extend(core::iter::repeat(0u8).take(HBIN_HEADER_SIZE));
+                    .extend(core::iter::repeat_n(0u8, HBIN_HEADER_SIZE));
                 0
             }
         };
@@ -110,7 +110,7 @@ impl HiveWriter {
             self.body.resize(hbin_end, 0);
             self.hbin_headers.push(self.body.len());
             self.body
-                .extend(core::iter::repeat(0u8).take(HBIN_HEADER_SIZE));
+                .extend(core::iter::repeat_n(0u8, HBIN_HEADER_SIZE));
         }
         Ok(())
     }
@@ -135,7 +135,7 @@ impl HiveWriter {
         self.body.extend_from_slice(id);
         self.body.extend_from_slice(&[0, 0]);
         self.body.extend_from_slice(payload);
-        self.body.extend(core::iter::repeat(0u8).take(pad));
+        self.body.extend(core::iter::repeat_n(0u8, pad));
 
         Ok(file_off)
     }
@@ -147,8 +147,7 @@ impl HiveWriter {
         let file_off = (HBIN_BASE + self.body.len()) as u32;
         self.body
             .extend_from_slice(&(-(total_size as i32)).to_le_bytes());
-        self.body
-            .extend(core::iter::repeat(0u8).take(total_size - 4));
+        self.body.extend(core::iter::repeat_n(0u8, total_size - 4));
         Ok(file_off)
     }
 
@@ -391,7 +390,7 @@ impl HiveWriter {
         // below once the final HBIN count is known.
         self.hbin_headers.push(0);
         self.body
-            .extend(core::iter::repeat(0u8).take(HBIN_HEADER_SIZE));
+            .extend(core::iter::repeat_n(0u8, HBIN_HEADER_SIZE));
 
         // Write the tree (returns absolute file offset of root nk)
         let root_abs = self.write_key(root, 0)?;
