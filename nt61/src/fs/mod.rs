@@ -2,6 +2,7 @@
 //
 //! Virtual File System and file system implementations
 //! Implements NT-style I/O manager with file system drivers
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 // FS module uses NT-driver naming (FCB, VCB, IRP_MJ_*, ...).
 
@@ -65,17 +66,16 @@ impl DeviceSelection {
                 let count = crate::drivers::storage::device_count();
                 for i in 0..count {
                     if let Some(device) = crate::drivers::storage::get_device(i) {
-                        let matches = match (self, device.device_type) {
+                        let matches = matches!(
+                            (self, device.device_type),
                             (
                                 DeviceSelection::ByType(StorageDeviceType::RamDisk),
                                 crate::drivers::storage::StorageDeviceType::RamDisk,
-                            ) => true,
-                            (
+                            ) | (
                                 DeviceSelection::ByType(StorageDeviceType::AhciDisk),
                                 crate::drivers::storage::StorageDeviceType::AhciDisk,
-                            ) => true,
-                            _ => false,
-                        };
+                            )
+                        );
                         if matches && device.present {
                             return Some(i);
                         }
@@ -313,6 +313,12 @@ impl FileSystemRegistry {
     }
 }
 
+impl Default for FileSystemRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// File system driver structure
 pub struct FileSystemDriver {
     pub name: [u16; 8],
@@ -357,6 +363,12 @@ impl Vcb {
             sector_size: 512,
             cluster_size: 4096,
         }
+    }
+}
+
+impl Default for Vcb {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -408,6 +420,12 @@ impl UnicodeString {
             maximum_length: 0,
             buffer: core::ptr::null_mut(),
         }
+    }
+}
+
+impl Default for UnicodeString {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -508,8 +526,11 @@ pub fn mount(
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Unmount a file system
-pub fn unmount(fs: *mut FileSystem) {
+pub unsafe fn unmount(fs: *mut FileSystem) {
     if !fs.is_null() {
         unsafe {
             // Flush buffers, close handles, etc.
@@ -521,47 +542,49 @@ pub fn unmount(fs: *mut FileSystem) {
 
 /// Initialize file systems
 pub fn init() {
-    // Register FAT32 driver
-    crate::boot_println!("[FS-INIT] registering FAT32");
-    fat32::register_driver();
+    unsafe {
+        // Register FAT32 driver
+        crate::boot_println!("[FS-INIT] registering FAT32");
+        fat32::register_driver();
 
-    // Register NTFS driver
-    crate::boot_println!("[FS-INIT] registering NTFS");
-    ntfs::register_driver();
+        // Register NTFS driver
+        crate::boot_println!("[FS-INIT] registering NTFS");
+        ntfs::register_driver();
 
-    // Register EXT2/EXT3/EXT4 driver (shares infrastructure with ext2).
-    // ext2 / ext3 / ext4 are gated to x86_64 because the AHCI
-    // controller used by them is x86_64-only in this build.
-    crate::boot_println!("[FS-INIT] registering EXT2");
-    ext2::register_driver();
+        // Register EXT2/EXT3/EXT4 driver (shares infrastructure with ext2).
+        // ext2 / ext3 / ext4 are gated to x86_64 because the AHCI
+        // controller used by them is x86_64-only in this build.
+        crate::boot_println!("[FS-INIT] registering EXT2");
+        ext2::register_driver();
 
-    // Bring up the VFS layer (creates the root VfsNode).
-    crate::boot_println!("[FS-INIT] calling vfs::init");
-    vfs::init();
-    crate::boot_println!("[FS-INIT] vfs::init returned");
+        // Bring up the VFS layer (creates the root VfsNode).
+        crate::boot_println!("[FS-INIT] calling vfs::init");
+        vfs::init();
+        crate::boot_println!("[FS-INIT] vfs::init returned");
 
-    // Mount the ESP (Z:) — always FAT32 by UEFI convention.
-    crate::boot_println!("[FS-INIT] calling mount_esp_partition");
-    mount_esp_partition();
-    crate::boot_println!("[FS-INIT] mount_esp_partition returned");
+        // Mount the ESP (Z:) — always FAT32 by UEFI convention.
+        crate::boot_println!("[FS-INIT] calling mount_esp_partition");
+        mount_esp_partition();
+        crate::boot_println!("[FS-INIT] mount_esp_partition returned");
 
-    // Mount the System partition (C:). The actual filesystem type
-    // (FAT32 / NTFS / ext2/3/4) is probed at runtime by
-    // `mount_partition_detected`, so this single call covers the
-    // (FAT32,FAT32), (FAT32,NTFS) and (FAT32,ext4) image layouts.
-    crate::boot_println!("[FS-INIT] calling mount_system_partition");
-    mount_system_partition();
-    crate::boot_println!("[FS-INIT] mount_system_partition returned");
+        // Mount the System partition (C:). The actual filesystem type
+        // (FAT32 / NTFS / ext2/3/4) is probed at runtime by
+        // `mount_partition_detected`, so this single call covers the
+        // (FAT32,FAT32), (FAT32,NTFS) and (FAT32,ext4) image layouts.
+        crate::boot_println!("[FS-INIT] calling mount_system_partition");
+        mount_system_partition();
+        crate::boot_println!("[FS-INIT] mount_system_partition returned");
 
-    // Populate the BOOT_PARTITION_REGISTRY so callers (cmd.exe loader,
-    // SMSS subsystem, etc.) can ask "what FS type is C:?" without
-    // having to re-probe the boot sector every time.
-    let sys_ptype = match sys_mirror_address() {
-        Some(base) => detect_fs_type(base),
-        None => FsType::Unknown,
-    };
-    crate::boot_println!("[FS-INIT] BOOT_PARTITION_REGISTRY: system={:?}", sys_ptype);
-    set_boot_partition_registry(sys_ptype);
+        // Populate the BOOT_PARTITION_REGISTRY so callers (cmd.exe loader,
+        // SMSS subsystem, etc.) can ask "what FS type is C:?" without
+        // having to re-probe the boot sector every time.
+        let sys_ptype = match sys_mirror_address() {
+            Some(base) => detect_fs_type(base),
+            None => FsType::Unknown,
+        };
+        crate::boot_println!("[FS-INIT] BOOT_PARTITION_REGISTRY: system={:?}", sys_ptype);
+        set_boot_partition_registry(sys_ptype);
+    }
 }
 
 /// FAT32 device backed by an in-memory snapshot of the ESP.
@@ -651,15 +674,17 @@ pub fn esp_capture_range() -> Option<(*const u8, usize)> {
 /// before `fs::init()` has populated the registry (e.g. inside the
 /// ntoskrnl trampoline before `mm::init` has run).
 pub fn detect_system_partition_type() -> FsType {
-    let reg = BOOT_PARTITION_REGISTRY.lock();
-    if let Some(t) = *reg {
-        return t;
-    }
-    drop(reg);
-    // Fallback: probe the live mirror.
-    match sys_mirror_address() {
-        Some(base) => detect_fs_type(base),
-        None => FsType::Unknown,
+    unsafe {
+        let reg = BOOT_PARTITION_REGISTRY.lock();
+        if let Some(t) = *reg {
+            return t;
+        }
+        drop(reg);
+        // Fallback: probe the live mirror.
+        match sys_mirror_address() {
+            Some(base) => detect_fs_type(base),
+            None => FsType::Unknown,
+        }
     }
 }
 
@@ -778,7 +803,7 @@ fn read_file_from_ext(path: &str) -> Option<Vec<u8>> {
         return None;
     }
     let filesystem = ext2::get_mounted_fs()?;
-    let mut buffer = ext2::read_whole_file(filesystem, path).ok()?;
+    let mut buffer = unsafe { ext2::read_whole_file(filesystem, path) }.ok()?;
     if buffer.len() > MAX_SYSTEM_FILE_SIZE {
         return None;
     }
@@ -868,6 +893,9 @@ pub fn allocate_mount_context(context: MountContext) -> *mut MountContext {
     ptr
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Decode the per-mount context stored by a filesystem driver.
 pub unsafe fn mount_context_from_device(device: *mut ()) -> Option<&'static MountContext> {
     if device.is_null() {
@@ -907,7 +935,7 @@ pub fn set_active_partition_ramdisk(base: Option<*const u8>) {
 }
 /// read the active partition pointer.
 pub fn active_partition_ramdisk() -> Option<*const u8> {
-    ACTIVE_PARTITION_RAMDISK.lock().clone()
+    *ACTIVE_PARTITION_RAMDISK.lock()
 }
 /// Set the size (in bytes) of the active partition mirror.
 pub fn set_active_partition_size(size: usize) {
@@ -1030,17 +1058,17 @@ pub fn sys_ramdisk_block_size() -> u32 {
 /// read a sector from the System partition mirror (used by the
 /// polled CMD shell's BAT executor so it can read files that
 /// live on `C:\`, e.g. `tests\autoexec.bat`). `sector` is
-/// partition-relative. Returns `Err(())` when the mirror is not
+/// partition-relative. Returns `Err(STATUS_UNSUCCESSFUL)` when the mirror is not
 /// mounted.
-pub fn sys_ramdisk_read_sector(sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
+pub fn sys_ramdisk_read_sector(sector: u64, buffer: &mut [u8]) -> Result<(), NTSTATUS> {
     if buffer.len() < 512 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let n = sys_ramdisk_read(sector * 512, buffer);
     if n >= 512 {
         Ok(())
     } else {
-        Err(())
+        Err(STATUS_UNSUCCESSFUL)
     }
 }
 
@@ -1050,15 +1078,17 @@ pub fn sys_ramdisk_read_sector(sector: u64, buffer: &mut [u8]) -> Result<(), ()>
 /// partition during early boot. Sector-level writes keep the MFT and
 /// directory indexes coherent because every mutation is applied to the
 /// same buffer that the reader uses.
-pub fn sys_ramdisk_write_sector(sector: u64, buffer: &[u8]) -> Result<(), ()> {
+pub fn sys_ramdisk_write_sector(sector: u64, buffer: &[u8]) -> Result<(), NTSTATUS> {
     if buffer.len() < 512 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let mut guard = SYS_RAMDISK.lock();
-    let disk = guard.as_mut().ok_or(())?;
-    let offset = (sector as usize).checked_mul(512).ok_or(())?;
+    let disk = guard.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
+    let offset = (sector as usize)
+        .checked_mul(512)
+        .ok_or(STATUS_UNSUCCESSFUL)?;
     if offset + buffer.len() > disk.size {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     unsafe {
         let destination = disk.base.add(offset) as *mut u8;
@@ -1097,15 +1127,15 @@ pub fn ramdisk_image_read(offset: u64, buf: &mut [u8]) -> usize {
 }
 
 /// read a 512-byte sector from the ISO boot RAM disk.
-pub fn ramdisk_image_read_sector(sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
+pub fn ramdisk_image_read_sector(sector: u64, buffer: &mut [u8]) -> Result<(), NTSTATUS> {
     if buffer.len() < 512 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let n = ramdisk_image_read(sector * 512, buffer);
     if n >= 512 {
         Ok(())
     } else {
-        Err(())
+        Err(STATUS_UNSUCCESSFUL)
     }
 }
 
@@ -1145,16 +1175,17 @@ pub fn mount_esp_from_bootinfo(boot_info: &crate::boot_types::BootInfo) {
             boot_info.esp_image_base
         );
     }
-    if boot_info.sys_image_base != 0 && boot_info.sys_image_size != 0 {
-        if !crate::mm::vas::ensure_low_identity_map(
+    if boot_info.sys_image_base != 0
+        && boot_info.sys_image_size != 0
+        && !crate::mm::vas::ensure_low_identity_map(
             boot_info.sys_image_base,
             boot_info.sys_image_size,
-        ) {
-            crate::boot_println!(
-                "[FS] ERROR: failed to identity-map SYS capture buffer at pa=0x{:x}",
-                boot_info.sys_image_base
-            );
-        }
+        )
+    {
+        crate::boot_println!(
+            "[FS] ERROR: failed to identity-map SYS capture buffer at pa=0x{:x}",
+            boot_info.sys_image_base
+        );
     }
     // read-back probe: dereference one byte at the ESP image base
     // before handing the pointer to `esp_ramdisk_read`. If this
@@ -1300,6 +1331,9 @@ impl FsType {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read the boot sector of a partition mirror and identify which
 /// filesystem driver should own it.
 ///
@@ -1314,7 +1348,7 @@ impl FsType {
 /// `base_ptr` is the physical base of the mirror and must be
 /// dereferenceable (see `ensure_low_identity_map` for the paging
 /// setup that makes the winload-captured buffers safe to read).
-pub fn detect_fs_type(base_ptr: *const u8) -> FsType {
+pub unsafe fn detect_fs_type(base_ptr: *const u8) -> FsType {
     if base_ptr.is_null() {
         return FsType::Unknown;
     }
@@ -1367,132 +1401,131 @@ pub fn detect_fs_type(base_ptr: *const u8) -> FsType {
 /// dispatching to the right driver based on the detected filesystem
 /// type. Returns `true` if a driver claimed the partition.
 fn mount_partition_detected(drive_letter: u16, base_ptr: *const u8, ramdisk: PartRamdisk) -> bool {
-    let fs_type = detect_fs_type(base_ptr);
-    let _ = ramdisk;
-    crate::boot_println!(
-        "[MOUNT] drive={}: detected {} (base=0x{:x})",
-        drive_letter as u8 as char,
-        fs_type.as_str(),
-        base_ptr as u64
-    );
-    match fs_type {
-        FsType::Fat32 => {
-            let path = [drive_letter, 0];
-            let size = match ramdisk {
-                PartRamdisk::System => *sys_partition_size().lock(),
-                PartRamdisk::Esp => esp_mirror_size().unwrap_or(0),
-            };
-            let context = MountContext::new(base_ptr, size);
-            let res = fat32::mount(core::ptr::null_mut(), &path, Some(context));
-            match res {
-                Some(_fs) => {
-                    crate::boot_println!(
-                        "[MOUNT] drive={}: FAT32 mounted",
-                        drive_letter as u8 as char
-                    );
-                    true
-                }
-                None => {
-                    crate::boot_println!(
-                        "[MOUNT] drive={}: FAT32 mount failed",
-                        drive_letter as u8 as char
-                    );
-                    false
-                }
-            }
-        }
-        FsType::Ntfs => {
-            let path = [drive_letter, 0];
-            let size = match ramdisk {
-                PartRamdisk::System => *sys_partition_size().lock(),
-                PartRamdisk::Esp => esp_mirror_size().unwrap_or(0),
-            };
-            let context = MountContext::new(base_ptr, size);
-            let res = crate::fs::ntfs::mount(core::ptr::null_mut(), &path, Some(context));
-            match res {
-                Some(_fs) => {
-                    crate::boot_println!(
-                        "[MOUNT] drive={}: NTFS mounted",
-                        drive_letter as u8 as char
-                    );
-                    true
-                }
-                None => {
-                    crate::boot_println!(
-                        "[MOUNT] drive={}: NTFS mount failed",
-                        drive_letter as u8 as char
-                    );
-                    false
-                }
-            }
-        }
-        FsType::Ext2 | FsType::Ext3 | FsType::Ext4 => {
-            // EXT2/3/4 driver reads via `drivers::storage::ramdisk::read`,
-            // which expects the system partition mirror to be installed
-            // there. `ramdisk` tells us whether the caller already wired
-            // ESP/SYS into the global RAM_DISK, or whether this is the
-            // system partition that still needs registering.
-            if ramdisk == PartRamdisk::System {
-                let disk_size = match ramdisk.kind_size() {
-                    Some(s) => s,
+    unsafe {
+        let fs_type = detect_fs_type(base_ptr);
+        let _ = ramdisk;
+        crate::boot_println!(
+            "[MOUNT] drive={}: detected {} (base=0x{:x})",
+            drive_letter as u8 as char,
+            fs_type.as_str(),
+            base_ptr as u64
+        );
+        match fs_type {
+            FsType::Fat32 => {
+                let path = [drive_letter, 0];
+                let size = match ramdisk {
+                    PartRamdisk::System => *sys_partition_size().lock(),
+                    PartRamdisk::Esp => esp_mirror_size().unwrap_or(0),
+                };
+                let context = MountContext::new(base_ptr, size);
+                let res = fat32::mount(core::ptr::null_mut(), &path, Some(context));
+                match res {
+                    Some(_fs) => {
+                        crate::boot_println!(
+                            "[MOUNT] drive={}: FAT32 mounted",
+                            drive_letter as u8 as char
+                        );
+                        true
+                    }
                     None => {
                         crate::boot_println!(
-                            "[MOUNT] drive={}: EXT4 mount skipped (no size info)",
+                            "[MOUNT] drive={}: FAT32 mount failed",
+                            drive_letter as u8 as char
+                        );
+                        false
+                    }
+                }
+            }
+            FsType::Ntfs => {
+                let path = [drive_letter, 0];
+                let size = match ramdisk {
+                    PartRamdisk::System => *sys_partition_size().lock(),
+                    PartRamdisk::Esp => esp_mirror_size().unwrap_or(0),
+                };
+                let context = MountContext::new(base_ptr, size);
+                let res = crate::fs::ntfs::mount(core::ptr::null_mut(), &path, Some(context));
+                match res {
+                    Some(_fs) => {
+                        crate::boot_println!(
+                            "[MOUNT] drive={}: NTFS mounted",
+                            drive_letter as u8 as char
+                        );
+                        true
+                    }
+                    None => {
+                        crate::boot_println!(
+                            "[MOUNT] drive={}: NTFS mount failed",
+                            drive_letter as u8 as char
+                        );
+                        false
+                    }
+                }
+            }
+            FsType::Ext2 | FsType::Ext3 | FsType::Ext4 => {
+                // EXT2/3/4 driver reads via `drivers::storage::ramdisk::read`,
+                // which expects the system partition mirror to be installed
+                // there. `ramdisk` tells us whether the caller already wired
+                // ESP/SYS into the global RAM_DISK, or whether this is the
+                // system partition that still needs registering.
+                if ramdisk == PartRamdisk::System {
+                    let disk_size = match ramdisk.kind_size() {
+                        Some(s) => s,
+                        None => {
+                            crate::boot_println!(
+                                "[MOUNT] drive={}: EXT4 mount skipped (no size info)",
+                                drive_letter as u8 as char
+                            );
+                            return false;
+                        }
+                    };
+                    let sector_size = ramdisk.kind_sector_size().unwrap_or(512);
+                    let ok = crate::drivers::storage::ramdisk::install_from_external(
+                        base_ptr as *mut u8,
+                        disk_size,
+                        sector_size,
+                        /*read_only=*/ true,
+                    );
+                    if !ok {
+                        crate::boot_println!(
+                            "[MOUNT] drive={}: EXT4 install_from_external failed",
                             drive_letter as u8 as char
                         );
                         return false;
                     }
+                }
+                // ext2::mount's first argument is the device pointer; the
+                // driver ignores it and goes through `drivers::storage::ramdisk`.
+                let size = match ramdisk {
+                    PartRamdisk::System => *sys_partition_size().lock(),
+                    PartRamdisk::Esp => esp_mirror_size().unwrap_or(0),
                 };
-                let sector_size = match ramdisk.kind_sector_size() {
-                    Some(s) => s,
-                    None => 512,
-                };
-                let ok = crate::drivers::storage::ramdisk::install_from_external(
-                    base_ptr as *mut u8,
-                    disk_size,
-                    sector_size,
-                    /*read_only=*/ true,
+                let context = MountContext::new(base_ptr, size);
+                match crate::fs::ext2::mount(core::ptr::null_mut(), 0, Some(context)) {
+                    Some(_fs) => {
+                        crate::boot_println!(
+                            "[MOUNT] drive={}: {} mounted",
+                            drive_letter as u8 as char,
+                            fs_type.as_str()
+                        );
+                        true
+                    }
+                    None => {
+                        crate::boot_println!(
+                            "[MOUNT] drive={}: {} mount failed",
+                            drive_letter as u8 as char,
+                            fs_type.as_str()
+                        );
+                        false
+                    }
+                }
+            }
+            FsType::Unknown => {
+                crate::boot_println!(
+                    "[MOUNT] drive={}: unknown filesystem type, NOT mounted",
+                    drive_letter as u8 as char
                 );
-                if !ok {
-                    crate::boot_println!(
-                        "[MOUNT] drive={}: EXT4 install_from_external failed",
-                        drive_letter as u8 as char
-                    );
-                    return false;
-                }
+                false
             }
-            // ext2::mount's first argument is the device pointer; the
-            // driver ignores it and goes through `drivers::storage::ramdisk`.
-            let size = match ramdisk {
-                PartRamdisk::System => *sys_partition_size().lock(),
-                PartRamdisk::Esp => esp_mirror_size().unwrap_or(0),
-            };
-            let context = MountContext::new(base_ptr, size);
-            match crate::fs::ext2::mount(core::ptr::null_mut(), 0, Some(context)) {
-                Some(_fs) => {
-                    crate::boot_println!(
-                        "[MOUNT] drive={}: {} mounted",
-                        drive_letter as u8 as char,
-                        fs_type.as_str()
-                    );
-                    true
-                }
-                None => {
-                    crate::boot_println!(
-                        "[MOUNT] drive={}: {} mount failed",
-                        drive_letter as u8 as char,
-                        fs_type.as_str()
-                    );
-                    false
-                }
-            }
-        }
-        FsType::Unknown => {
-            crate::boot_println!(
-                "[MOUNT] drive={}: unknown filesystem type, NOT mounted",
-                drive_letter as u8 as char
-            );
-            false
         }
     }
 }

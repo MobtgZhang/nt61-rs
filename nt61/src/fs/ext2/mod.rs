@@ -17,6 +17,7 @@
 //! - dir.rs: Directory operations
 //! - extent.rs: ext4 extent tree (optional)
 //! - journal.rs: ext3 journaling (optional)
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -117,6 +118,12 @@ impl Ext2FileSystem {
     }
 }
 
+impl Default for Ext2FileSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// File handle for open files
 pub struct Ext2Handle {
     /// Inode number
@@ -158,10 +165,13 @@ impl Ext2Handle {
 // Device I/O
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read a sector from the device
-pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
+pub unsafe fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), NTSTATUS> {
     if buffer.len() < 512 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     // CRITICAL: Mask IRQ0 (PIT timer) during disk reads to prevent IRQ interference.
@@ -171,12 +181,13 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
     // Prefer the *active* partition mirror, when one is set by
     // the dispatcher in `fs::mod`. This is what lets EXT2 mount
     // and read from the system partition properly.
-    let result = if let Some(context) = unsafe { crate::fs::mount_context_from_device(device) } {
+
+    if let Some(context) = unsafe { crate::fs::mount_context_from_device(device) } {
         let base = context.base;
         let off = (sector as usize) * 512;
         let max_size = context.size;
         if off + 512 > max_size {
-            Err(())
+            Err(STATUS_UNSUCCESSFUL)
         } else {
             // Dispatch to sys_ramdisk_read for the system partition
             let sys_base = crate::fs::sys_mirror_address();
@@ -186,14 +197,14 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
                 if n >= 512 {
                     Ok(())
                 } else {
-                    Err(())
+                    Err(STATUS_UNSUCCESSFUL)
                 }
             } else {
                 let n = crate::fs::esp_ramdisk_read(off as u64, buffer);
                 if n >= 512 {
                     Ok(())
                 } else {
-                    Err(())
+                    Err(STATUS_UNSUCCESSFUL)
                 }
             }
         }
@@ -207,18 +218,16 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
             if crate::drivers::storage::read_ahci_sector(sector as u32, buffer) {
                 Ok(())
             } else {
-                Err(())
+                Err(STATUS_UNSUCCESSFUL)
             }
         }
-    };
-
-    result
+    }
 }
 
 /// write a sector to the device
-pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), ()> {
+pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), NTSTATUS> {
     if buffer.len() < 512 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     // Try RAM disk first
@@ -231,11 +240,11 @@ pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), 
     // AHCI write needs mutable buffer - create a copy
     let mut buf = [0u8; 512];
     buf.copy_from_slice(&buffer[..512]);
-    if crate::drivers::storage::ahci::write_sector(0, 0, sector as u32, &mut buf) {
+    if crate::drivers::storage::ahci::write_sector(0, 0, sector as u32, &buf) {
         return Ok(());
     }
 
-    Err(())
+    Err(STATUS_UNSUCCESSFUL)
 }
 
 // ============================================================================
@@ -255,7 +264,7 @@ pub fn mount(
         Some(context) => crate::fs::allocate_mount_context(context) as *mut (),
         None => device,
     };
-    let sb = match superblock::read_superblock(device, offset) {
+    let sb = match unsafe { superblock::read_superblock(device, offset) } {
         Some(s) => s,
         None => {
             // kprintln!("[EXT2] Failed to read superblock");
@@ -318,12 +327,10 @@ pub fn mount(
     }
 
     // Replay journal if needed (ext3/ext4)
-    if fs.has_journal() {
-        if journal::journal_needs_recovery(&fs.superblock) {
-            // kprintln!("[EXT2] Journal needs recovery, replaying...");
-            if let Ok(_count) = journal::replay_journal(device, &fs.superblock) {
-                // kprintln!("[EXT2] Replayed {} blocks", count);
-            }
+    if fs.has_journal() && journal::journal_needs_recovery(&fs.superblock) {
+        // kprintln!("[EXT2] Journal needs recovery, replaying...");
+        if let Ok(_count) = unsafe { journal::replay_journal(device, &fs.superblock) } {
+            // kprintln!("[EXT2] Replayed {} blocks", count);
         }
     }
 
@@ -335,8 +342,11 @@ pub fn mount(
     Some(unsafe { &mut *fs_ptr })
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Unmount an ext2 filesystem
-pub fn unmount(_fs: *mut Ext2FileSystem) {
+pub unsafe fn unmount(_fs: *mut Ext2FileSystem) {
     if !_fs.is_null() {
         // kprintln!("[EXT2] Filesystem unmounted");
         // In a full implementation, we would:
@@ -350,85 +360,101 @@ pub fn unmount(_fs: *mut Ext2FileSystem) {
 // File Operations
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Open a file by path
-pub fn open_file(fs: &Ext2FileSystem, path: &[u8]) -> Option<Ext2Handle> {
+pub unsafe fn open_file(fs: &Ext2FileSystem, path: &[u8]) -> Option<Ext2Handle> {
     // Look up the path
     let inode_num = dir::path_lookup(fs.base.device, &fs.superblock, path)?;
 
     // read the inode
-    let inode = inode::read_inode(fs.base.device, &fs.superblock, inode_num)?;
+    let inode = unsafe { inode::read_inode(fs.base.device, &fs.superblock, inode_num) }?;
 
     Some(Ext2Handle::new(inode_num, &inode, &fs.superblock))
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Open a file by inode number
-pub fn open_by_inode(fs: &Ext2FileSystem, inode_num: u32) -> Option<Ext2Handle> {
-    let inode = inode::read_inode(fs.base.device, &fs.superblock, inode_num)?;
+pub unsafe fn open_by_inode(fs: &Ext2FileSystem, inode_num: u32) -> Option<Ext2Handle> {
+    let inode = unsafe { inode::read_inode(fs.base.device, &fs.superblock, inode_num) }?;
     Some(Ext2Handle::new(inode_num, &inode, &fs.superblock))
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read from a file handle
-pub fn read_file(fs: &Ext2FileSystem, handle: &mut Ext2Handle, buffer: &mut [u8]) -> usize {
+pub unsafe fn read_file(fs: &Ext2FileSystem, handle: &mut Ext2Handle, buffer: &mut [u8]) -> usize {
     if handle.at_eof() {
         return 0;
     }
 
-    let bytes_to_read = core::cmp::min(buffer.len(), (handle.remaining() as usize).min(usize::MAX));
+    let bytes_to_read = core::cmp::min(buffer.len(), handle.remaining() as usize);
 
-    let bytes_read = inode::read_file_data(
-        fs.base.device,
-        &fs.superblock,
-        &handle.inode,
-        handle.current_position,
-        &mut buffer[..bytes_to_read],
-    );
+    let bytes_read = unsafe {
+        inode::read_file_data(
+            fs.base.device,
+            &fs.superblock,
+            &handle.inode,
+            handle.current_position,
+            &mut buffer[..bytes_to_read],
+        )
+    };
 
     handle.current_position += bytes_read as u64;
     bytes_read
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read from a file at a specific offset
-pub fn read_file_at(
+pub unsafe fn read_file_at(
     fs: &Ext2FileSystem,
     inode_num: u32,
     offset: u64,
     buffer: &mut [u8],
 ) -> Option<usize> {
-    let inode = inode::read_inode(fs.base.device, &fs.superblock, inode_num)?;
+    let inode = unsafe { inode::read_inode(fs.base.device, &fs.superblock, inode_num) }?;
 
     let file_size = inode.get_size(&fs.superblock);
     if offset >= file_size {
         return Some(0);
     }
 
-    let bytes_to_read = core::cmp::min(
-        buffer.len(),
-        ((file_size - offset) as usize).min(usize::MAX),
-    );
+    let bytes_to_read = core::cmp::min(buffer.len(), (file_size - offset) as usize);
 
-    let bytes_read = inode::read_file_data(
-        fs.base.device,
-        &fs.superblock,
-        &inode,
-        offset,
-        &mut buffer[..bytes_to_read],
-    );
+    let bytes_read = unsafe {
+        inode::read_file_data(
+            fs.base.device,
+            &fs.superblock,
+            &inode,
+            offset,
+            &mut buffer[..bytes_to_read],
+        )
+    };
 
     Some(bytes_read)
 }
 
 /// List directory contents
 pub fn list_directory(fs: &Ext2FileSystem, inode_num: u32) -> Option<Vec<dir::Ext2DirEntryInfo>> {
-    dir::list_directory(fs.base.device, &fs.superblock, inode_num)
+    unsafe { dir::list_directory(fs.base.device, &fs.superblock, inode_num) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get file or directory info
-pub fn get_entry(fs: &Ext2FileSystem, path: &[u8]) -> Option<dir::Ext2DirEntryInfo> {
+pub unsafe fn get_entry(fs: &Ext2FileSystem, path: &[u8]) -> Option<dir::Ext2DirEntryInfo> {
     let inode_num = dir::path_lookup(fs.base.device, &fs.superblock, path)?;
     let entries = dir::list_directory(fs.base.device, &fs.superblock, inode_num)?;
 
     // Return the last component's entry
-    let name = path.split(|&c| c == b'/').last()?;
+    let name = path.split(|&c| c == b'/').next_back()?;
     if name.is_empty() {
         return None;
     }
@@ -436,10 +462,13 @@ pub fn get_entry(fs: &Ext2FileSystem, path: &[u8]) -> Option<dir::Ext2DirEntryIn
     entries.into_iter().find(|e| e.name.as_bytes() == name)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read an entire file by path. Returns the raw bytes or an error message.
 /// The `path` is converted internally from Windows-style ("C:\Windows\file")
 /// to ext2-style ("/Windows/file").
-pub fn read_whole_file(
+pub unsafe fn read_whole_file(
     fs: &Ext2FileSystem,
     path: &str,
 ) -> Result<alloc::vec::Vec<u8>, &'static str> {
@@ -453,7 +482,7 @@ pub fn read_whole_file(
     };
 
     // read inode
-    let inode = match inode::read_inode(fs.base.device, &fs.superblock, inode_num) {
+    let inode = match unsafe { inode::read_inode(fs.base.device, &fs.superblock, inode_num) } {
         Some(i) => i,
         None => return Err("ext2: read_inode failed"),
     };
@@ -464,7 +493,7 @@ pub fn read_whole_file(
     }
 
     let mut buf: Vec<u8> = alloc::vec![0u8; file_size];
-    let n = inode::read_file_data(fs.base.device, &fs.superblock, &inode, 0, &mut buf);
+    let n = unsafe { inode::read_file_data(fs.base.device, &fs.superblock, &inode, 0, &mut buf) };
     if n == 0 {
         return Err("ext2: read_file_data returned 0");
     }
@@ -478,7 +507,7 @@ pub fn read_whole_file(
 
 /// Resolve a path to an inode number
 pub fn resolve_path(fs: &Ext2FileSystem, path: &[u8]) -> Option<u32> {
-    dir::path_lookup(fs.base.device, &fs.superblock, path)
+    unsafe { dir::path_lookup(fs.base.device, &fs.superblock, path) }
 }
 
 /// Check if a path exists
@@ -486,26 +515,32 @@ pub fn path_exists(fs: &Ext2FileSystem, path: &[u8]) -> bool {
     resolve_path(fs, path).is_some()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if path is a directory
-pub fn is_directory(fs: &Ext2FileSystem, path: &[u8]) -> bool {
+pub unsafe fn is_directory(fs: &Ext2FileSystem, path: &[u8]) -> bool {
     let inode_num = match resolve_path(fs, path) {
         Some(n) => n,
         None => return false,
     };
-    let inode = match inode::read_inode(fs.base.device, &fs.superblock, inode_num) {
+    let inode = match unsafe { inode::read_inode(fs.base.device, &fs.superblock, inode_num) } {
         Some(i) => i,
         None => return false,
     };
     inode.is_dir()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if path is a regular file
-pub fn is_file(fs: &Ext2FileSystem, path: &[u8]) -> bool {
+pub unsafe fn is_file(fs: &Ext2FileSystem, path: &[u8]) -> bool {
     let inode_num = match resolve_path(fs, path) {
         Some(n) => n,
         None => return false,
     };
-    let inode = match inode::read_inode(fs.base.device, &fs.superblock, inode_num) {
+    let inode = match unsafe { inode::read_inode(fs.base.device, &fs.superblock, inode_num) } {
         Some(i) => i,
         None => return false,
     };
@@ -534,8 +569,8 @@ pub fn clear_mounted_fs() {
 /// Convert a Windows-style path ("C:\Windows\file") to an ext2-style
 /// path ("/Windows/file"). Strips the leading drive prefix if present.
 fn win_path_to_ext2(path: &str) -> alloc::string::String {
-    let p = path.trim_start_matches(|c| c == 'C' || c == 'c');
-    let p = p.trim_start_matches(|c| c == ':' || c == '\\' || c == '/');
+    let p = path.trim_start_matches(['C', 'c']);
+    let p = p.trim_start_matches([':', '\\', '/']);
     let p = p.replace('\\', "/");
     if p.is_empty() || !p.starts_with('/') {
         alloc::format!("/{}", p)

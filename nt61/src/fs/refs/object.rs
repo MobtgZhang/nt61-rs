@@ -157,6 +157,12 @@ impl ObjectIdTable {
     }
 }
 
+impl Default for ObjectIdTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// An object ID entry
 pub struct ObjectIdEntry {
     /// Object ID key

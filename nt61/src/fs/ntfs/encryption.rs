@@ -4,6 +4,7 @@
 //! File Encryption Key (FEK). The FEK is wrapped with the user's RSA
 //! public key and stored in the $EFS ($LOGGED_UTILITY_STREAM) attribute
 //! alongside a Data Decryption Field (DDF) and Data Recovery Field (DRF).
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use crate::crypto::cipher::Cbc;
 use crate::crypto::csprng;
@@ -62,9 +63,9 @@ impl EfsStreamHeader {
         out
     }
 
-    pub fn from_bytes(data: &[u8]) -> Result<Self, ()> {
+    pub fn from_bytes(data: &[u8]) -> Result<Self, NTSTATUS> {
         if data.len() < EFS_STREAM_HEADER_SIZE {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         Ok(Self {
             version: u32::from_le_bytes([data[0], data[1], data[2], data[3]]),
@@ -87,10 +88,12 @@ pub fn is_encrypted(attributes: u32) -> bool {
     (attributes & FILE_ATTRIBUTE_ENCRYPTED) != 0
 }
 
-pub fn parse_efs_stream(stream_data: &[u8]) -> Result<(EfsStreamHeader, Vec<EfsKeyEntry>), ()> {
+pub fn parse_efs_stream(
+    stream_data: &[u8],
+) -> Result<(EfsStreamHeader, Vec<EfsKeyEntry>), NTSTATUS> {
     let header = EfsStreamHeader::from_bytes(stream_data)?;
     if header.version != EFS_VERSION {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let mut entries = Vec::new();
     if header.ddf_offset > 0 {
@@ -103,9 +106,9 @@ pub fn parse_efs_stream(stream_data: &[u8]) -> Result<(EfsStreamHeader, Vec<EfsK
     Ok((header, entries))
 }
 
-fn parse_key_entries(data: &[u8]) -> Result<Vec<EfsKeyEntry>, ()> {
+fn parse_key_entries(data: &[u8]) -> Result<Vec<EfsKeyEntry>, NTSTATUS> {
     if data.len() < EFS_FIELD_HEADER_SIZE {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let entry_count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
     let mut entries = Vec::new();
@@ -149,13 +152,13 @@ fn parse_key_entries(data: &[u8]) -> Result<Vec<EfsKeyEntry>, ()> {
     Ok(entries)
 }
 
-pub fn encrypt_file_data(data: &[u8], fek: &[u8]) -> Result<Vec<u8>, ()> {
+pub fn encrypt_file_data(data: &[u8], fek: &[u8]) -> Result<Vec<u8>, NTSTATUS> {
     if fek.len() != FEK_LENGTH_AES256 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let mut iv = [0u8; CBC_IV_LENGTH];
     if !csprng::fill(&mut iv) {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let pad_len = CBC_IV_LENGTH - (data.len() % CBC_IV_LENGTH);
     let mut padded = Vec::with_capacity(data.len() + pad_len);
@@ -166,19 +169,19 @@ pub fn encrypt_file_data(data: &[u8], fek: &[u8]) -> Result<Vec<u8>, ()> {
     let mut key = [0u8; 32];
     key.copy_from_slice(fek);
     let mut cbc = Cbc::new_aes256(&key, &iv);
-    let ciphertext = cbc.encrypt(&padded).map_err(|_| ())?;
+    let ciphertext = cbc.encrypt(&padded).map_err(|_| STATUS_UNSUCCESSFUL)?;
     let mut output = Vec::with_capacity(CBC_IV_LENGTH + ciphertext.len());
     output.extend_from_slice(&iv);
     output.extend_from_slice(&ciphertext);
     Ok(output)
 }
 
-pub fn decrypt_file_data(encrypted_data: &[u8], fek: &[u8]) -> Result<Vec<u8>, ()> {
+pub fn decrypt_file_data(encrypted_data: &[u8], fek: &[u8]) -> Result<Vec<u8>, NTSTATUS> {
     if fek.len() != FEK_LENGTH_AES256 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     if encrypted_data.len() < CBC_IV_LENGTH {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let mut iv = [0u8; CBC_IV_LENGTH];
     iv.copy_from_slice(&encrypted_data[..CBC_IV_LENGTH]);
@@ -186,13 +189,13 @@ pub fn decrypt_file_data(encrypted_data: &[u8], fek: &[u8]) -> Result<Vec<u8>, (
     let mut key = [0u8; 32];
     key.copy_from_slice(fek);
     let mut cbc = Cbc::new_aes256(&key, &iv);
-    let padded = cbc.decrypt(ciphertext).map_err(|_| ())?;
+    let padded = cbc.decrypt(ciphertext).map_err(|_| STATUS_UNSUCCESSFUL)?;
     if padded.is_empty() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let pad_len = *padded.last().unwrap() as usize;
     if pad_len == 0 || pad_len > CBC_IV_LENGTH || pad_len > padded.len() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     Ok(padded[..padded.len() - pad_len].to_vec())
 }
@@ -226,7 +229,7 @@ pub fn generate_fek() -> Vec<u8> {
 /// blob produced by \`rsa_public_key_bytes\`. PKCS#1 v1.5 padding is
 /// applied by the RSA layer, so the wrapped FEK is indistinguishable from
 /// random data to anyone without the private key.
-pub fn encrypt_fek_with_public_key(fek: &[u8], public_key: &[u8]) -> Result<Vec<u8>, ()> {
+pub fn encrypt_fek_with_public_key(fek: &[u8], public_key: &[u8]) -> Result<Vec<u8>, NTSTATUS> {
     let key = parse_rsa_public_key(public_key)?;
     Ok(key.encrypt(fek))
 }
@@ -239,7 +242,7 @@ pub fn encrypt_fek_with_public_key(fek: &[u8], public_key: &[u8]) -> Result<Vec<
 pub fn decrypt_fek_with_private_key(
     encrypted_fek: &[u8],
     private_key: &[u8],
-) -> Result<Vec<u8>, ()> {
+) -> Result<Vec<u8>, NTSTATUS> {
     let key = parse_rsa_private_key(private_key)?;
     Ok(key.decrypt(encrypted_fek))
 }
@@ -271,12 +274,12 @@ fn rsa_component_blob(components: &[&BigUint]) -> Vec<u8> {
 }
 
 /// Decode a blob produced by \`rsa_component_blob\`.
-fn parse_rsa_components(blob: &[u8], component_count: usize) -> Result<Vec<BigUint>, ()> {
+fn parse_rsa_components(blob: &[u8], component_count: usize) -> Result<Vec<BigUint>, NTSTATUS> {
     let mut components = Vec::with_capacity(component_count);
     let mut offset = 0usize;
     for _ in 0..component_count {
         if blob.len() < offset + 4 {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         let length = u32::from_le_bytes([
             blob[offset],
@@ -286,7 +289,7 @@ fn parse_rsa_components(blob: &[u8], component_count: usize) -> Result<Vec<BigUi
         ]) as usize;
         offset += 4;
         if blob.len() < offset + length {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         components.push(BigUint::from_bytes(&blob[offset..offset + length]));
         offset += length;
@@ -296,7 +299,7 @@ fn parse_rsa_components(blob: &[u8], component_count: usize) -> Result<Vec<BigUi
 
 /// Parse an \`(modulus || exponent)\` blob produced by
 /// \`rsa_public_key_bytes\`.
-fn parse_rsa_public_key(blob: &[u8]) -> Result<RsaPublicKey, ()> {
+fn parse_rsa_public_key(blob: &[u8]) -> Result<RsaPublicKey, NTSTATUS> {
     let components = parse_rsa_components(blob, 2)?;
     Ok(RsaPublicKey {
         n: components[0].clone(),
@@ -306,7 +309,7 @@ fn parse_rsa_public_key(blob: &[u8]) -> Result<RsaPublicKey, ()> {
 
 /// Parse the full private-key blob produced by
 /// \`rsa_private_key_bytes\` (n, e, d, p, q, dp, dq, qi).
-fn parse_rsa_private_key(blob: &[u8]) -> Result<RsaPrivateKey, ()> {
+fn parse_rsa_private_key(blob: &[u8]) -> Result<RsaPrivateKey, NTSTATUS> {
     let components = parse_rsa_components(blob, 8)?;
     Ok(RsaPrivateKey {
         n: components[0].clone(),
@@ -320,7 +323,11 @@ fn parse_rsa_private_key(blob: &[u8]) -> Result<RsaPrivateKey, ()> {
     })
 }
 
-pub fn create_efs_stream(fek: &[u8], user_sid: &[u8], public_key: &[u8]) -> Result<Vec<u8>, ()> {
+pub fn create_efs_stream(
+    fek: &[u8],
+    user_sid: &[u8],
+    public_key: &[u8],
+) -> Result<Vec<u8>, NTSTATUS> {
     let encrypted_fek = encrypt_fek_with_public_key(fek, public_key)?;
     let entry_length = EFS_KEY_ENTRY_HEADER_SIZE + user_sid.len() + encrypted_fek.len();
     let mut entry = Vec::with_capacity(entry_length);

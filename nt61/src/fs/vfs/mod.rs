@@ -2,6 +2,7 @@
 //
 //! Provides the abstraction layer between file operations and file systems
 //! Implements NT-style object-based file system interface
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use crate::fs::{FileObject, UnicodeString, Vcb};
 use crate::ke::sync::Spinlock;
@@ -47,6 +48,12 @@ impl VfsNode {
             byte_offset: 0,
             allocation_size: 0,
         }
+    }
+}
+
+impl Default for VfsNode {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -137,6 +144,12 @@ impl VfsRoot {
     }
 }
 
+impl Default for VfsRoot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Open modes
 #[derive(Debug, Clone, Copy)]
 pub enum OpenMode {
@@ -206,7 +219,7 @@ impl<'a> PathIterator<'a> {
 
     /// Check if this is an absolute path (starts with separator)
     pub fn is_absolute(&self) -> bool {
-        self.path.iter().any(|&c| c == PATH_SEPARATOR)
+        self.path.contains(&PATH_SEPARATOR)
     }
 
     /// Get next path component
@@ -225,25 +238,23 @@ impl<'a> PathIterator<'a> {
         let mut end = start;
 
         // Check for "." or ".."
-        if self.path[end] == b'.' as u16 {
-            if end + 1 < self.path.len() {
-                if self.path[end + 1] == b'.' as u16 {
-                    // ".." found
-                    if end + 2 >= self.path.len() || self.path[end + 2] == PATH_SEPARATOR {
-                        self.position = end + 2;
-                        return Some(PathComponent {
-                            component_type: PathComponentType::DotDot,
-                            name: &self.path[start..end + 2],
-                        });
-                    }
-                } else if self.path[end + 1] == PATH_SEPARATOR || end + 1 == self.path.len() {
-                    // "." found
-                    self.position = end + 1;
+        if self.path[end] == b'.' as u16 && end + 1 < self.path.len() {
+            if self.path[end + 1] == b'.' as u16 {
+                // ".." found
+                if end + 2 >= self.path.len() || self.path[end + 2] == PATH_SEPARATOR {
+                    self.position = end + 2;
                     return Some(PathComponent {
-                        component_type: PathComponentType::Dot,
-                        name: &self.path[start..end + 1],
+                        component_type: PathComponentType::DotDot,
+                        name: &self.path[start..end + 2],
                     });
                 }
+            } else if self.path[end + 1] == PATH_SEPARATOR || end + 1 == self.path.len() {
+                // "." found
+                self.position = end + 1;
+                return Some(PathComponent {
+                    component_type: PathComponentType::Dot,
+                    name: &self.path[start..end + 1],
+                });
             }
         }
 
@@ -273,9 +284,9 @@ pub fn parse_path(path: &[u16]) -> PathIterator<'_> {
 }
 
 /// Validate path length
-pub fn validate_path(path: &[u16]) -> Result<(), ()> {
+pub fn validate_path(path: &[u16]) -> Result<(), NTSTATUS> {
     if path.len() > MAX_PATH_LENGTH {
-        Err(())
+        Err(STATUS_UNSUCCESSFUL)
     } else {
         Ok(())
     }
@@ -349,8 +360,8 @@ pub fn resolve_path(path: &[u16]) -> Option<&'static mut VfsNode> {
             PathComponentType::DotDot => {
                 // ".." means parent directory
                 unsafe {
-                    if !(*current).parent.is_null() {
-                        current = &mut *(*current).parent;
+                    if !current.parent.is_null() {
+                        current = &mut *current.parent;
                     }
                 }
             }
@@ -376,7 +387,7 @@ fn find_child_internal(parent: &VfsNode, name: &[u16]) -> Option<&'static mut Vf
         }
 
         unsafe {
-            if (*node_ptr).parent != parent as *const VfsNode as *mut VfsNode {
+            if !core::ptr::eq((*node_ptr).parent, parent) {
                 continue;
             }
 
@@ -407,40 +418,38 @@ pub fn get_root() -> Option<&'static mut VfsNode> {
 
 /// create VFS node
 pub fn create_node(node_type: VfsNodeType, name: &[u16]) -> Option<&'static mut VfsNode> {
-    let mut root = ROOT_DIR.lock();
+    unsafe {
+        let mut root = ROOT_DIR.lock();
 
-    let node = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<VfsNode>(),
-    ) as *mut VfsNode;
+        let node = crate::mm::pool::allocate(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<VfsNode>(),
+        ) as *mut VfsNode;
 
-    if node.is_null() {
-        return None;
-    }
+        if node.is_null() {
+            return None;
+        }
 
-    let name_size = core::mem::size_of::<u16>().saturating_mul(name.len());
-    let name_buffer =
-        crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, name_size) as *mut u16;
-    if name_buffer.is_null() {
-        crate::mm::pool::free(node as *mut u8);
-        return None;
-    }
-    if !name.is_empty() {
-        unsafe {
+        let name_size = core::mem::size_of::<u16>().saturating_mul(name.len());
+        let name_buffer =
+            crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, name_size) as *mut u16;
+        if name_buffer.is_null() {
+            crate::mm::pool::free(node as *mut u8);
+            return None;
+        }
+        if !name.is_empty() {
             core::ptr::copy_nonoverlapping(name.as_ptr(), name_buffer, name.len());
         }
-    }
-    if root.node_count >= root.nodes.len() {
-        crate::mm::pool::free(name_buffer as *mut u8);
-        crate::mm::pool::free(node as *mut u8);
-        return None;
-    }
+        if root.node_count >= root.nodes.len() {
+            crate::mm::pool::free(name_buffer as *mut u8);
+            crate::mm::pool::free(node as *mut u8);
+            return None;
+        }
 
-    let index = root.node_count;
-    root.nodes[index] = node;
-    root.node_count += 1;
+        let index = root.node_count;
+        root.nodes[index] = node;
+        root.node_count += 1;
 
-    unsafe {
         (*node).node_type = node_type;
         (*node).flags = 0;
         (*node).reference_count = 1;
@@ -452,9 +461,9 @@ pub fn create_node(node_type: VfsNodeType, name: &[u16]) -> Option<&'static mut 
         (*node).name.maximum_length = (name.len() * 2) as u16;
         (*node).byte_offset = 0;
         (*node).allocation_size = 0;
-    }
 
-    unsafe { node.as_mut() }
+        node.as_mut()
+    }
 }
 
 /// Add volume to VFS
@@ -567,11 +576,9 @@ pub fn get_children(parent: *mut VfsNode, buffer: &mut [usize]) -> usize {
         }
 
         unsafe {
-            if (*node_ptr).parent == parent {
-                if count < buffer.len() {
-                    buffer[count] = i;
-                    count += 1;
-                }
+            if (*node_ptr).parent == parent && count < buffer.len() {
+                buffer[count] = i;
+                count += 1;
             }
         }
     }
@@ -641,6 +648,9 @@ pub fn create_volume(name: &[u16]) -> Option<&'static mut VfsNode> {
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// create file
 /// Creates a new file node under the specified parent directory.
 /// The `create_option` parameter specifies behavior when the file already exists:
@@ -648,7 +658,7 @@ pub fn create_volume(name: &[u16]) -> Option<&'static mut VfsNode> {
 /// - FileCreate: Fail if exists
 /// - FileOpenIf: Open if exists, create if not
 /// - FileOverwriteIf: Open and truncate if exists
-pub fn create_file(
+pub unsafe fn create_file(
     parent: *mut VfsNode,
     name: &[u16],
     create_option: CreateOption,
@@ -665,9 +675,9 @@ pub fn create_file(
             // create new file
             let node = create_node(VfsNodeType::File, name)?;
             unsafe {
-                (*node).parent = parent;
+                node.parent = parent;
                 if !parent.is_null() {
-                    (*node).vcb = (*parent).vcb;
+                    node.vcb = (*parent).vcb;
                 }
             }
             Some(node)
@@ -679,9 +689,9 @@ pub fn create_file(
             }
             let node = create_node(VfsNodeType::File, name)?;
             unsafe {
-                (*node).parent = parent;
+                node.parent = parent;
                 if !parent.is_null() {
-                    (*node).vcb = (*parent).vcb;
+                    node.vcb = (*parent).vcb;
                 }
             }
             Some(node)
@@ -693,9 +703,9 @@ pub fn create_file(
             }
             let node = create_node(VfsNodeType::File, name)?;
             unsafe {
-                (*node).parent = parent;
+                node.parent = parent;
                 if !parent.is_null() {
-                    (*node).vcb = (*parent).vcb;
+                    node.vcb = (*parent).vcb;
                 }
             }
             Some(node)
@@ -711,9 +721,9 @@ pub fn create_file(
             if matches!(create_option, CreateOption::FileOverwriteIf) {
                 let node = create_node(VfsNodeType::File, name)?;
                 unsafe {
-                    (*node).parent = parent;
+                    node.parent = parent;
                     if !parent.is_null() {
-                        (*node).vcb = (*parent).vcb;
+                        node.vcb = (*parent).vcb;
                     }
                 }
                 Some(node)
@@ -732,20 +742,26 @@ pub fn create_file(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// create directory
-pub fn create_directory(parent: *mut VfsNode, name: &[u16]) -> Option<&'static mut VfsNode> {
+pub unsafe fn create_directory(parent: *mut VfsNode, name: &[u16]) -> Option<&'static mut VfsNode> {
     let node = create_node(VfsNodeType::Directory, name)?;
 
     unsafe {
-        (*node).parent = parent;
-        (*node).vcb = (*parent).vcb;
+        node.parent = parent;
+        node.vcb = (*parent).vcb;
     }
 
     Some(node)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Delete node
-pub fn delete_node(node: *mut VfsNode) {
+pub unsafe fn delete_node(node: *mut VfsNode) {
     unsafe {
         // Recursively delete all children first, so the parent does
         // not hold dangling pointers after its own free.
@@ -919,29 +935,29 @@ fn path_to_utf16(path: &str) -> alloc::vec::Vec<u16> {
 }
 
 /// read up to `buffer.len()` bytes of a VFS file into `buffer`.
-pub fn vfs_read(path: &str, buffer: &mut [u8]) -> Result<usize, ()> {
+pub fn vfs_read(path: &str, buffer: &mut [u8]) -> Result<usize, NTSTATUS> {
     let wide = path_to_utf16(path);
-    let node = lookup_path(&wide).ok_or(())?;
+    let node = lookup_path(&wide).ok_or(STATUS_UNSUCCESSFUL)?;
     if node.node_type != VfsNodeType::File {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let result = read_file_sectors_into(0, buffer, node.byte_offset as u64);
     if result.status != 0 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     Ok(result.bytes_read)
 }
 
 /// write `bytes` to a VFS file.
-pub fn vfs_write(path: &str, bytes: &[u8]) -> Result<usize, ()> {
+pub fn vfs_write(path: &str, bytes: &[u8]) -> Result<usize, NTSTATUS> {
     let wide = path_to_utf16(path);
-    let node = lookup_path(&wide).ok_or(())?;
+    let node = lookup_path(&wide).ok_or(STATUS_UNSUCCESSFUL)?;
     if node.node_type != VfsNodeType::File {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let result = write_file_sectors_from(0, bytes, node.byte_offset as u64);
     if result.status != 0 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     Ok(result.bytes_written)
 }

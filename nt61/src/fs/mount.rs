@@ -88,6 +88,12 @@ impl MountPoint {
     }
 }
 
+impl Default for MountPoint {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static MOUNT_TABLE: Spinlock<[MountPoint; MAX_MOUNT_POINTS]> =
     Spinlock::new([const { MountPoint::new() }; MAX_MOUNT_POINTS]);
 
@@ -146,38 +152,38 @@ pub fn scan_and_mount_all() {
                     }
                 }
             }
-            FilesystemType::EXT2 | FilesystemType::EXT3 | FilesystemType::EXT4 => {
-                if mount_ext(partition.disk_index, partition.starting_offset, fs_type) {
-                    mp.mounted = true;
-                    // Read the ext2 superblock at partition offset 1024
-                    // to extract the volume label and free-space estimate.
-                    let mut sb_buf = [0u8; 512];
-                    let sb_lba = partition.starting_offset + 2; // 1024 bytes / 512
-                    if crate::drivers::storage::disk::disk_read(
-                        partition.disk_index,
-                        sb_lba * 512,
-                        512,
-                        &mut sb_buf,
-                    ) > 0
-                    {
-                        // Volume label is a 16-byte NUL-padded string at
-                        // the ext2 superblock offset 120 (LE16 volume_name).
-                        let label_raw = &sb_buf[120..136];
-                        let label_len = label_raw.iter().position(|&b| b == 0).unwrap_or(16);
-                        let label = core::str::from_utf8(&label_raw[..label_len]).unwrap_or("");
-                        if !label.is_empty() {
-                            mp.volume_label = alloc::string::String::from(label);
-                        }
-                        // Free blocks at offset 12 (u32), block size shift
-                        // at offset 24 (u32) → free bytes ≈ free_blocks ×
-                        // (1 << log2(block_size)).
-                        let free_blocks =
-                            u32::from_le_bytes([sb_buf[12], sb_buf[13], sb_buf[14], sb_buf[15]]);
-                        let block_shift =
-                            u32::from_le_bytes([sb_buf[24], sb_buf[25], sb_buf[26], sb_buf[27]]);
-                        let block_size = 1024u64 << block_shift.min(6);
-                        mp.free_bytes = free_blocks as u64 * block_size;
+            FilesystemType::EXT2 | FilesystemType::EXT3 | FilesystemType::EXT4
+                if mount_ext(partition.disk_index, partition.starting_offset, fs_type) =>
+            {
+                mp.mounted = true;
+                // Read the ext2 superblock at partition offset 1024
+                // to extract the volume label and free-space estimate.
+                let mut sb_buf = [0u8; 512];
+                let sb_lba = partition.starting_offset + 2; // 1024 bytes / 512
+                if crate::drivers::storage::disk::disk_read(
+                    partition.disk_index,
+                    sb_lba * 512,
+                    512,
+                    &mut sb_buf,
+                ) > 0
+                {
+                    // Volume label is a 16-byte NUL-padded string at
+                    // the ext2 superblock offset 120 (LE16 volume_name).
+                    let label_raw = &sb_buf[120..136];
+                    let label_len = label_raw.iter().position(|&b| b == 0).unwrap_or(16);
+                    let label = core::str::from_utf8(&label_raw[..label_len]).unwrap_or("");
+                    if !label.is_empty() {
+                        mp.volume_label = alloc::string::String::from(label);
                     }
+                    // Free blocks at offset 12 (u32), block size shift
+                    // at offset 24 (u32) → free bytes ≈ free_blocks ×
+                    // (1 << log2(block_size)).
+                    let free_blocks =
+                        u32::from_le_bytes([sb_buf[12], sb_buf[13], sb_buf[14], sb_buf[15]]);
+                    let block_shift =
+                        u32::from_le_bytes([sb_buf[24], sb_buf[25], sb_buf[26], sb_buf[27]]);
+                    let block_size = 1024u64 << block_shift.min(6);
+                    mp.free_bytes = free_blocks as u64 * block_size;
                 }
             }
             _ => {}
@@ -223,31 +229,31 @@ pub fn detect_filesystem(disk_index: usize, starting_lba: u64) -> FilesystemType
         512,
         &mut superblock,
     ) == 512
+        && superblock[56] == 0x53
+        && superblock[57] == 0xEF
     {
-        if superblock[56] == 0x53 && superblock[57] == 0xEF {
-            let incompat_features = u32::from_le_bytes([
-                superblock[96],
-                superblock[97],
-                superblock[98],
-                superblock[99],
-            ]);
+        let incompat_features = u32::from_le_bytes([
+            superblock[96],
+            superblock[97],
+            superblock[98],
+            superblock[99],
+        ]);
 
-            if (incompat_features & 0x40) != 0 || (incompat_features & 0x80) != 0 {
-                return FilesystemType::EXT4;
-            }
-
-            let compat_features = u32::from_le_bytes([
-                superblock[92],
-                superblock[93],
-                superblock[94],
-                superblock[95],
-            ]);
-            if (compat_features & 0x04) != 0 {
-                return FilesystemType::EXT3;
-            }
-
-            return FilesystemType::EXT2;
+        if (incompat_features & 0x40) != 0 || (incompat_features & 0x80) != 0 {
+            return FilesystemType::EXT4;
         }
+
+        let compat_features = u32::from_le_bytes([
+            superblock[92],
+            superblock[93],
+            superblock[94],
+            superblock[95],
+        ]);
+        if (compat_features & 0x04) != 0 {
+            return FilesystemType::EXT3;
+        }
+
+        return FilesystemType::EXT2;
     }
 
     if &boot_sector[3..7] == b"ReFS" {

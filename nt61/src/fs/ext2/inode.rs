@@ -14,6 +14,7 @@
 //
 //! ## Inode Table
 //! Inodes are stored in the inode table within each block group.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -389,7 +390,7 @@ pub fn inode_table_offset(sb: &Ext2SuperBlock, inode_num: u32) -> u64 {
     let block_size = sb.get_block_size() as u64;
 
     // Calculate which group this inode is in
-    let group = ((inode_num - 1) as u64) / (inodes_per_group as u64);
+    let group = ((inode_num - 1) as u64) / inodes_per_group;
 
     // Get group descriptor for this group
     // For simplicity, we'll calculate based on standard layout
@@ -406,213 +407,234 @@ pub fn inode_table_offset(sb: &Ext2SuperBlock, inode_num: u32) -> u64 {
     let inode_table_block = group_start + gdt_size / block_size;
 
     // Calculate offset within inode table
-    let inode_index = ((inode_num - 1) as u64) % (inodes_per_group as u64);
+    let inode_index = ((inode_num - 1) as u64) % inodes_per_group;
     let byte_offset = inode_index * inode_size;
 
     // Convert to absolute LBA (assuming 512-byte sectors)
     (inode_table_block * block_size + byte_offset) / 512
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read an inode from disk
-pub fn read_inode(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> Option<Ext2Inode> {
-    if inode_num == 0 || inode_num > sb.inodes_count {
-        // kprintln!("[EXT2] Invalid inode number: {}", inode_num);
-        return None;
+pub unsafe fn read_inode(
+    device: *mut (),
+    sb: &Ext2SuperBlock,
+    inode_num: u32,
+) -> Option<Ext2Inode> {
+    unsafe {
+        if inode_num == 0 || inode_num > sb.inodes_count {
+            // kprintln!("[EXT2] Invalid inode number: {}", inode_num);
+            return None;
+        }
+
+        let inode_size = sb.get_inode_size() as usize;
+        let inodes_per_group = sb.inodes_per_group as usize;
+
+        // Calculate which group this inode is in
+        let group = ((inode_num - 1) as usize / inodes_per_group) as u32;
+
+        // read group descriptor to get inode table location
+        let group_desc = read_group_descriptor(device, sb, group)?;
+
+        // Calculate byte offset within inode table
+        let inode_index = (inode_num - 1) as usize % inodes_per_group;
+        let byte_offset = inode_index * inode_size;
+
+        // Calculate block and sector
+        let block_size = sb.get_block_size() as usize;
+        let inode_table_start = group_desc.get_inode_table_block() as usize;
+        let block_offset = byte_offset % block_size;
+        let block_num = inode_table_start + byte_offset / block_size;
+
+        // read the block containing this inode
+        let mut buffer = vec![0u8; block_size];
+        let sector = block_num * (block_size / 512);
+
+        if super::superblock::read_sector(device, sector as u64, &mut buffer).is_err() {
+            // kprintln!("[EXT2] Failed to read inode {} block", inode_num);
+            return None;
+        }
+
+        // Parse inode from buffer
+        let inode_ptr = buffer.as_ptr().add(block_offset) as *const Ext2Inode;
+        Some(core::ptr::read_unaligned(inode_ptr))
     }
-
-    let inode_size = sb.get_inode_size() as usize;
-    let inodes_per_group = sb.inodes_per_group as usize;
-
-    // Calculate which group this inode is in
-    let group = ((inode_num - 1) as usize / inodes_per_group) as u32;
-
-    // read group descriptor to get inode table location
-    let group_desc = read_group_descriptor(device, sb, group)?;
-
-    // Calculate byte offset within inode table
-    let inode_index = ((inode_num - 1) as usize % inodes_per_group) as usize;
-    let byte_offset = inode_index * inode_size;
-
-    // Calculate block and sector
-    let block_size = sb.get_block_size() as usize;
-    let inode_table_start = group_desc.get_inode_table_block() as usize;
-    let block_offset = byte_offset % block_size;
-    let block_num = inode_table_start + byte_offset / block_size;
-
-    // read the block containing this inode
-    let mut buffer = vec![0u8; block_size];
-    let sector = block_num * (block_size / 512);
-
-    if super::superblock::read_sector(device, sector as u64, &mut buffer).is_err() {
-        // kprintln!("[EXT2] Failed to read inode {} block", inode_num);
-        return None;
-    }
-
-    // Parse inode from buffer
-    let inode_ptr = unsafe { buffer.as_ptr().add(block_offset) } as *const Ext2Inode;
-    Some(unsafe { core::ptr::read_unaligned(inode_ptr) })
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write an inode to disk
-pub fn write_inode(
+pub unsafe fn write_inode(
     device: *mut (),
     sb: &Ext2SuperBlock,
     inode_num: u32,
     inode: &Ext2Inode,
-) -> Result<(), ()> {
-    if inode_num == 0 || inode_num > sb.inodes_count {
-        return Err(());
-    }
-
-    let inode_size = sb.get_inode_size() as usize;
-    let inodes_per_group = sb.inodes_per_group as usize;
-
-    // Calculate which group this inode is in
-    let group = ((inode_num - 1) as usize / inodes_per_group) as u32;
-
-    // read group descriptor to get inode table location
-    let group_desc = match read_group_descriptor(device, sb, group) {
-        Some(gd) => gd,
-        None => return Err(()),
-    };
-
-    // Calculate byte offset within inode table
-    let inode_index = ((inode_num - 1) as usize % inodes_per_group) as usize;
-    let byte_offset = inode_index * inode_size;
-
-    // Calculate block and sector
-    let block_size = sb.get_block_size() as usize;
-    let inode_table_start = group_desc.get_inode_table_block() as usize;
-    let block_offset = byte_offset % block_size;
-    let block_num = inode_table_start + byte_offset / block_size;
-
-    // read-modify-write the block
-    let mut buffer = vec![0u8; block_size];
-    let sector = block_num * (block_size / 512);
-
-    if super::superblock::read_sector(device, sector as u64, &mut buffer).is_err() {
-        return Err(());
-    }
-
-    // Copy inode into buffer
+) -> Result<(), NTSTATUS> {
     unsafe {
+        if inode_num == 0 || inode_num > sb.inodes_count {
+            return Err(STATUS_UNSUCCESSFUL);
+        }
+
+        let inode_size = sb.get_inode_size() as usize;
+        let inodes_per_group = sb.inodes_per_group as usize;
+
+        // Calculate which group this inode is in
+        let group = ((inode_num - 1) as usize / inodes_per_group) as u32;
+
+        // read group descriptor to get inode table location
+        let group_desc = match read_group_descriptor(device, sb, group) {
+            Some(gd) => gd,
+            None => return Err(STATUS_UNSUCCESSFUL),
+        };
+
+        // Calculate byte offset within inode table
+        let inode_index = (inode_num - 1) as usize % inodes_per_group;
+        let byte_offset = inode_index * inode_size;
+
+        // Calculate block and sector
+        let block_size = sb.get_block_size() as usize;
+        let inode_table_start = group_desc.get_inode_table_block() as usize;
+        let block_offset = byte_offset % block_size;
+        let block_num = inode_table_start + byte_offset / block_size;
+
+        // read-modify-write the block
+        let mut buffer = vec![0u8; block_size];
+        let sector = block_num * (block_size / 512);
+
+        if super::superblock::read_sector(device, sector as u64, &mut buffer).is_err() {
+            return Err(STATUS_UNSUCCESSFUL);
+        }
+
+        // Copy inode into buffer
+
         core::ptr::copy_nonoverlapping(
             inode as *const Ext2Inode as *const u8,
             buffer.as_mut_ptr().add(block_offset),
             inode_size,
         );
-    }
 
-    // write back
-    if super::superblock::write_sector(device, sector as u64, &buffer).is_err() {
-        return Err(());
-    }
+        // write back
+        if super::superblock::write_sector(device, sector as u64, &buffer).is_err() {
+            return Err(STATUS_UNSUCCESSFUL);
+        }
 
-    Ok(())
+        Ok(())
+    }
 }
 
 // ============================================================================
 // Block Number to LBA Conversion
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Convert a file's logical block number to an absolute LBA (sector number)
 /// This handles extents (ext4) first, then falls back to direct/indirect blocks
-pub fn logical_to_lba(
+pub unsafe fn logical_to_lba(
     device: *mut (),
     sb: &Ext2SuperBlock,
     inode: &Ext2Inode,
     block_num: u32,
 ) -> Option<u64> {
-    let block_size = sb.get_block_size();
+    unsafe {
+        let block_size = sb.get_block_size();
 
-    // Try extent-based lookup first (ext4)
-    if inode.has_extents() || sb.has_extents() {
-        if let Some(physical) = extent_lookup(device, sb, inode, block_num) {
-            return Some(physical * (block_size / 512) as u64);
+        // Try extent-based lookup first (ext4)
+        if inode.has_extents() || sb.has_extents() {
+            if let Some(physical) = extent_lookup(device, sb, inode, block_num) {
+                return Some(physical * (block_size / 512) as u64);
+            }
         }
+
+        // Fall back to traditional block pointer approach (ext2/ext3)
+        let entries_per_block = block_size / 4; // 4 bytes per block pointer
+
+        // Direct blocks (0-11)
+        if block_num < EXT2_NDIR_BLOCKS as u32 {
+            let block = inode.get_direct_block(block_num as usize)?;
+            if block == 0 {
+                return None;
+            }
+            return Some(block as u64 * (block_size / 512) as u64);
+        }
+
+        // Single indirect blocks (12)
+        let single_indirect = inode.get_indirect_block();
+        if block_num < (EXT2_NDIR_BLOCKS as u32).saturating_add(entries_per_block) {
+            if single_indirect == 0 {
+                return None;
+            }
+
+            // read indirect block
+            let mut indirect_buffer = vec![0u8; block_size as usize];
+            let indirect_sector = single_indirect as u64 * (block_size / 512) as u64;
+            if super::superblock::read_sector(device, indirect_sector, &mut indirect_buffer)
+                .is_err()
+            {
+                return None;
+            }
+
+            let index = (block_num - EXT2_NDIR_BLOCKS as u32) as usize;
+            let block_ptr = indirect_buffer.as_ptr().add(index * 4) as *const u32;
+            let block = u32::from_le(core::ptr::read_unaligned(block_ptr));
+            if block == 0 {
+                return None;
+            }
+            return Some(block as u64 * (block_size / 512) as u64);
+        }
+
+        // Double indirect blocks (13)
+        let double_indirect = inode.get_double_indirect_block();
+        let entries_per_block_u32 = entries_per_block;
+        let double_start = EXT2_NDIR_BLOCKS as u32 + entries_per_block_u32;
+        let double_end = double_start + entries_per_block_u32 * entries_per_block_u32;
+
+        if block_num < double_end {
+            if double_indirect == 0 {
+                return None;
+            }
+
+            // read first level indirect block
+            let mut double_buffer = vec![0u8; block_size as usize];
+            let double_sector = double_indirect as u64 * (block_size / 512) as u64;
+            if super::superblock::read_sector(device, double_sector, &mut double_buffer).is_err() {
+                return None;
+            }
+
+            let index1 = (block_num - double_start) / entries_per_block_u32;
+            let block_ptr1 = double_buffer.as_ptr().add((index1 as usize) * 4) as *const u32;
+            let indirect_block = u32::from_le(core::ptr::read_unaligned(block_ptr1));
+            if indirect_block == 0 {
+                return None;
+            }
+
+            // read second level indirect block
+            let mut indirect_buffer = vec![0u8; block_size as usize];
+            let indirect_sector = indirect_block as u64 * (block_size / 512) as u64;
+            if super::superblock::read_sector(device, indirect_sector, &mut indirect_buffer)
+                .is_err()
+            {
+                return None;
+            }
+
+            let index2 = (block_num - double_start) % entries_per_block_u32;
+            let block_ptr2 = indirect_buffer.as_ptr().add((index2 as usize) * 4) as *const u32;
+            let block = u32::from_le(core::ptr::read_unaligned(block_ptr2));
+            if block == 0 {
+                return None;
+            }
+            return Some(block as u64 * (block_size / 512) as u64);
+        }
+
+        // Triple indirect blocks (14)
+        // For simplicity, return None for blocks in triple indirect range
+        // Full implementation would be similar to double indirect
+        None
     }
-
-    // Fall back to traditional block pointer approach (ext2/ext3)
-    let entries_per_block = block_size / 4; // 4 bytes per block pointer
-
-    // Direct blocks (0-11)
-    if block_num < EXT2_NDIR_BLOCKS as u32 {
-        let block = inode.get_direct_block(block_num as usize)?;
-        if block == 0 {
-            return None;
-        }
-        return Some(block as u64 * (block_size / 512) as u64);
-    }
-
-    // Single indirect blocks (12)
-    let single_indirect = inode.get_indirect_block();
-    if block_num < (EXT2_NDIR_BLOCKS as u32).saturating_add(entries_per_block) {
-        if single_indirect == 0 {
-            return None;
-        }
-
-        // read indirect block
-        let mut indirect_buffer = vec![0u8; block_size as usize];
-        let indirect_sector = single_indirect as u64 * (block_size / 512) as u64;
-        if super::superblock::read_sector(device, indirect_sector, &mut indirect_buffer).is_err() {
-            return None;
-        }
-
-        let index = (block_num - EXT2_NDIR_BLOCKS as u32) as usize;
-        let block_ptr = unsafe { indirect_buffer.as_ptr().add(index * 4) } as *const u32;
-        let block = u32::from_le(unsafe { core::ptr::read_unaligned(block_ptr) });
-        if block == 0 {
-            return None;
-        }
-        return Some(block as u64 * (block_size / 512) as u64);
-    }
-
-    // Double indirect blocks (13)
-    let double_indirect = inode.get_double_indirect_block();
-    let entries_per_block_u32 = entries_per_block as u32;
-    let double_start = EXT2_NDIR_BLOCKS as u32 + entries_per_block_u32;
-    let double_end = double_start + entries_per_block_u32 * entries_per_block_u32;
-
-    if block_num < double_end {
-        if double_indirect == 0 {
-            return None;
-        }
-
-        // read first level indirect block
-        let mut double_buffer = vec![0u8; block_size as usize];
-        let double_sector = double_indirect as u64 * (block_size / 512) as u64;
-        if super::superblock::read_sector(device, double_sector, &mut double_buffer).is_err() {
-            return None;
-        }
-
-        let index1 = (block_num - double_start) / entries_per_block_u32;
-        let block_ptr1 = unsafe { double_buffer.as_ptr().add((index1 as usize) * 4) } as *const u32;
-        let indirect_block = u32::from_le(unsafe { core::ptr::read_unaligned(block_ptr1) });
-        if indirect_block == 0 {
-            return None;
-        }
-
-        // read second level indirect block
-        let mut indirect_buffer = vec![0u8; block_size as usize];
-        let indirect_sector = indirect_block as u64 * (block_size / 512) as u64;
-        if super::superblock::read_sector(device, indirect_sector, &mut indirect_buffer).is_err() {
-            return None;
-        }
-
-        let index2 = (block_num - double_start) % entries_per_block_u32;
-        let block_ptr2 =
-            unsafe { indirect_buffer.as_ptr().add((index2 as usize) * 4) } as *const u32;
-        let block = u32::from_le(unsafe { core::ptr::read_unaligned(block_ptr2) });
-        if block == 0 {
-            return None;
-        }
-        return Some(block as u64 * (block_size / 512) as u64);
-    }
-
-    // Triple indirect blocks (14)
-    // For simplicity, return None for blocks in triple indirect range
-    // Full implementation would be similar to double indirect
-    None
 }
 
 /// Look up a physical block number using the extent tree (ext4)
@@ -623,29 +645,31 @@ fn extent_lookup(
     inode: &Ext2Inode,
     logical_block: u32,
 ) -> Option<u64> {
-    let block_size = sb.get_block_size() as usize;
+    unsafe {
+        let block_size = sb.get_block_size() as usize;
 
-    // In ext4, the extent header is stored in the inode's block array at index 0
-    // We need to read the first block which contains the extent header
-    let extent_block_num = inode.get_direct_block(0)?;
+        // In ext4, the extent header is stored in the inode's block array at index 0
+        // We need to read the first block which contains the extent header
+        let extent_block_num = inode.get_direct_block(0)?;
 
-    // read the extent header block
-    let extent_sector = extent_block_num as u64 * (block_size / 512) as u64;
-    let mut extent_data = vec![0u8; block_size];
+        // read the extent header block
+        let extent_sector = extent_block_num as u64 * (block_size / 512) as u64;
+        let mut extent_data = vec![0u8; block_size];
 
-    if super::superblock::read_sector(device, extent_sector, &mut extent_data).is_err() {
-        return None;
+        if super::superblock::read_sector(device, extent_sector, &mut extent_data).is_err() {
+            return None;
+        }
+
+        // Parse extent header
+        let header = &*(extent_data.as_ptr() as *const Ext4ExtentHeader);
+
+        if !header.is_valid() {
+            return None;
+        }
+
+        // Walk the extent tree to find the block
+        find_in_extent_node(device, &extent_data, header.depth, logical_block)
     }
-
-    // Parse extent header
-    let header = unsafe { &*(extent_data.as_ptr() as *const Ext4ExtentHeader) };
-
-    if !header.is_valid() {
-        return None;
-    }
-
-    // Walk the extent tree to find the block
-    find_in_extent_node(device, &extent_data, header.depth, logical_block)
 }
 
 /// Recursively search an extent node for a logical block
@@ -656,114 +680,122 @@ fn find_in_extent_node(
     depth: u16,
     logical_block: u32,
 ) -> Option<u64> {
-    let header = unsafe { &*(data.as_ptr() as *const Ext4ExtentHeader) };
+    unsafe {
+        let header = &*(data.as_ptr() as *const Ext4ExtentHeader);
 
-    if header.magic != Ext4ExtentHeader::new(0, 0).magic {
-        // Invalid header
-        return None;
-    }
+        if header.magic != Ext4ExtentHeader::new(0, 0).magic {
+            // Invalid header
+            return None;
+        }
 
-    let num_entries = header.entries as usize;
-    let header_size = core::mem::size_of::<Ext4ExtentHeader>();
-    let extent_size = core::mem::size_of::<super::extent::Ext4Extent>();
-    let index_size = core::mem::size_of::<super::extent::Ext4ExtentIdx>();
+        let num_entries = header.entries as usize;
+        let header_size = core::mem::size_of::<Ext4ExtentHeader>();
+        let extent_size = core::mem::size_of::<super::extent::Ext4Extent>();
+        let index_size = core::mem::size_of::<super::extent::Ext4ExtentIdx>();
 
-    for i in 0..num_entries {
-        if depth == 0 {
-            // Leaf node - extent entries
-            let entry_offset = header_size + i * extent_size;
-            if entry_offset + extent_size > data.len() {
-                break;
-            }
-
-            let extent =
-                unsafe { &*(data.as_ptr().add(entry_offset) as *const super::extent::Ext4Extent) };
-
-            if extent.covers(logical_block) {
-                return extent.logical_to_physical(logical_block);
-            }
-        } else {
-            // Index node - extent index entries
-            let entry_offset = header_size + i * index_size;
-            if entry_offset + index_size > data.len() {
-                break;
-            }
-
-            let index = unsafe {
-                &*(data.as_ptr().add(entry_offset) as *const super::extent::Ext4ExtentIdx)
-            };
-
-            // Check if this index covers our logical block
-            if logical_block >= index.ei_block {
-                // We need to search this child node
-                let child_block = index.get_child_block();
-                let child_sector = child_block * 512; // Assuming 512-byte sectors
-
-                let block_size = 4096; // Default block size
-                let mut child_data = vec![0u8; block_size];
-
-                if super::superblock::read_sector(device, child_sector, &mut child_data).is_err() {
-                    continue;
+        for i in 0..num_entries {
+            if depth == 0 {
+                // Leaf node - extent entries
+                let entry_offset = header_size + i * extent_size;
+                if entry_offset + extent_size > data.len() {
+                    break;
                 }
 
-                if let Some(physical) =
-                    find_in_extent_node(device, &child_data, depth - 1, logical_block)
-                {
-                    return Some(physical);
+                let extent =
+                    &*(data.as_ptr().add(entry_offset) as *const super::extent::Ext4Extent);
+
+                if extent.covers(logical_block) {
+                    return extent.logical_to_physical(logical_block);
+                }
+            } else {
+                // Index node - extent index entries
+                let entry_offset = header_size + i * index_size;
+                if entry_offset + index_size > data.len() {
+                    break;
+                }
+
+                let index =
+                    &*(data.as_ptr().add(entry_offset) as *const super::extent::Ext4ExtentIdx);
+
+                // Check if this index covers our logical block
+                if logical_block >= index.ei_block {
+                    // We need to search this child node
+                    let child_block = index.get_child_block();
+                    let child_sector = child_block * 512; // Assuming 512-byte sectors
+
+                    let block_size = 4096; // Default block size
+                    let mut child_data = vec![0u8; block_size];
+
+                    if super::superblock::read_sector(device, child_sector, &mut child_data)
+                        .is_err()
+                    {
+                        continue;
+                    }
+
+                    if let Some(physical) =
+                        find_in_extent_node(device, &child_data, depth - 1, logical_block)
+                    {
+                        return Some(physical);
+                    }
                 }
             }
         }
-    }
 
-    None
+        None
+    }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read data from a file at a given offset
-pub fn read_file_data(
+pub unsafe fn read_file_data(
     device: *mut (),
     sb: &Ext2SuperBlock,
     inode: &Ext2Inode,
     offset: u64,
     buffer: &mut [u8],
 ) -> usize {
-    let block_size = sb.get_block_size() as u64;
-    let file_size = inode.get_size(sb);
+    unsafe {
+        let block_size = sb.get_block_size() as u64;
+        let file_size = inode.get_size(sb);
 
-    if offset >= file_size {
-        return 0;
-    }
-
-    let bytes_to_read = core::cmp::min(buffer.len() as u64, file_size - offset) as usize;
-
-    let mut bytes_read = 0;
-    let mut current_offset = offset;
-
-    while bytes_read < bytes_to_read {
-        let block_num = (current_offset / block_size) as u32;
-        let block_offset = (current_offset % block_size) as usize;
-
-        let lba = match logical_to_lba(device, sb, inode, block_num) {
-            Some(l) => l,
-            None => break,
-        };
-
-        // read one block
-        let mut block_data = vec![0u8; block_size as usize];
-        if super::superblock::read_sector(device, lba, &mut block_data).is_err() {
-            break;
+        if offset >= file_size {
+            return 0;
         }
 
-        // Copy data to output buffer
-        let copy_len = core::cmp::min(
-            bytes_to_read - bytes_read,
-            (block_size as usize) - block_offset,
-        );
-        buffer[bytes_read..bytes_read + copy_len]
-            .copy_from_slice(&block_data[block_offset..block_offset + copy_len]);
+        let bytes_to_read = core::cmp::min(buffer.len() as u64, file_size - offset) as usize;
 
-        bytes_read += copy_len;
-        current_offset += copy_len as u64;
+        let mut bytes_read = 0;
+        let mut current_offset = offset;
+
+        while bytes_read < bytes_to_read {
+            let block_num = (current_offset / block_size) as u32;
+            let block_offset = (current_offset % block_size) as usize;
+
+            let lba = match logical_to_lba(device, sb, inode, block_num) {
+                Some(l) => l,
+                None => break,
+            };
+
+            // read one block
+            let mut block_data = vec![0u8; block_size as usize];
+            if super::superblock::read_sector(device, lba, &mut block_data).is_err() {
+                break;
+            }
+
+            // Copy data to output buffer
+            let copy_len = core::cmp::min(
+                bytes_to_read - bytes_read,
+                (block_size as usize) - block_offset,
+            );
+            buffer[bytes_read..bytes_read + copy_len]
+                .copy_from_slice(&block_data[block_offset..block_offset + copy_len]);
+
+            bytes_read += copy_len;
+            current_offset += copy_len as u64;
+        }
+
+        bytes_read
     }
-
-    bytes_read
 }

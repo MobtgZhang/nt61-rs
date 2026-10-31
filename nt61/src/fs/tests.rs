@@ -426,53 +426,57 @@ fn test_read_write_lock() -> bool {
 // =============================================================================
 
 fn test_file_create() -> bool {
-    use crate::fs::vfs;
+    unsafe {
+        use crate::fs::vfs;
 
-    let root = match vfs::get_root() {
-        Some(root) => root,
-        None => {
-            crate::boot_println!("    File create: no VFS root (OK)");
-            return true;
-        }
-    };
+        let root = match vfs::get_root() {
+            Some(root) => root,
+            None => {
+                crate::boot_println!("    File create: no VFS root (OK)");
+                return true;
+            }
+        };
 
-    let name = utf16_path("testcreate.txt");
-    let node = match vfs::create_file(root, &name, vfs::CreateOption::CreateNew) {
-        Some(node) => node,
-        None => {
-            crate::boot_println!("    File create: error (acceptable)");
-            return true;
-        }
-    };
+        let name = utf16_path("testcreate.txt");
+        let node = match vfs::create_file(root, &name, vfs::CreateOption::CreateNew) {
+            Some(node) => node,
+            None => {
+                crate::boot_println!("    File create: error (acceptable)");
+                return true;
+            }
+        };
 
-    crate::boot_println!("    File create: node type {:?}", node.node_type);
-    true
+        crate::boot_println!("    File create: node type {:?}", node.node_type);
+        true
+    }
 }
 
 fn test_file_delete() -> bool {
-    use crate::fs::vfs;
+    unsafe {
+        use crate::fs::vfs;
 
-    let root = match vfs::get_root() {
-        Some(root) => root,
-        None => return true,
-    };
+        let root = match vfs::get_root() {
+            Some(root) => root,
+            None => return true,
+        };
 
-    let name = utf16_path("testdelete.txt");
-    let node = match vfs::create_file(root, &name, vfs::CreateOption::CreateNew) {
-        Some(node) => node,
-        None => return true,
-    };
+        let name = utf16_path("testdelete.txt");
+        let node = match vfs::create_file(root, &name, vfs::CreateOption::CreateNew) {
+            Some(node) => node,
+            None => return true,
+        };
 
-    let node_ptr = node as *mut _;
-    vfs::delete_node(node_ptr);
+        let node_ptr = node as *mut _;
+        vfs::delete_node(node_ptr);
 
-    if vfs::lookup_child(root, &name).is_some() {
-        crate::boot_println!("    File delete: node still present");
-        return false;
+        if vfs::lookup_child(root, &name).is_some() {
+            crate::boot_println!("    File delete: node still present");
+            return false;
+        }
+
+        crate::boot_println!("    File delete: OK");
+        true
     }
-
-    crate::boot_println!("    File delete: OK");
-    true
 }
 
 fn test_file_rename() -> bool {

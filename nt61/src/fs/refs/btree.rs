@@ -16,6 +16,7 @@
 //! - Key entries
 //! - Value entries (optional)
 //! - Free space
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -229,6 +230,12 @@ impl RefsBtreePage {
     }
 }
 
+impl Default for RefsBtreePage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ============================================================================
 // B+ Tree Operations
 // ============================================================================
@@ -378,7 +385,7 @@ pub fn parse_page(buffer: &[u8], lba: u64) -> Option<RefsBtreePage> {
     })
 }
 
-pub fn serialize_page(page: &RefsBtreePage, page_size: usize) -> Result<Vec<u8>, ()> {
+pub fn serialize_page(page: &RefsBtreePage, page_size: usize) -> Result<Vec<u8>, NTSTATUS> {
     let mut buffer = vec![0u8; page_size];
     let mut cursor = 0usize;
     buffer[cursor..cursor + 4].copy_from_slice(&page.header.magic.to_le_bytes());
@@ -388,8 +395,7 @@ pub fn serialize_page(page: &RefsBtreePage, page_size: usize) -> Result<Vec<u8>,
     cursor += 2;
     buffer[cursor..cursor + 2].copy_from_slice(&page.header.page_count.to_le_bytes());
     cursor += 2;
-    buffer[cursor..cursor + 2]
-        .copy_from_slice(&(page.keys.len() as u16).to_le_bytes());
+    buffer[cursor..cursor + 2].copy_from_slice(&(page.keys.len() as u16).to_le_bytes());
     cursor += 2;
     buffer[cursor..cursor + 2].copy_from_slice(&page.header.value_length.to_le_bytes());
     cursor += 2;
@@ -406,7 +412,7 @@ pub fn serialize_page(page: &RefsBtreePage, page_size: usize) -> Result<Vec<u8>,
 
     let data_base = cursor;
     if cursor + page.key_data.len() + page.value_data.len() > page_size {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     buffer[cursor..cursor + page.key_data.len()].copy_from_slice(&page.key_data);
     cursor += page.key_data.len();
@@ -545,18 +551,18 @@ fn append_entry(
     page: &mut RefsBtreePage,
     key: &RefsBtreeKey,
     value: &RefsBtreeValue,
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     if key.total_size() > REFS_BCBT_MAX_KEY_SIZE
         || value.data.len() > u16::MAX as usize
         || page.keys.len() >= u16::MAX as usize
     {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let key_offset = page.key_data.len().min(u16::MAX as usize);
     let value_offset = page.value_data.len().min(u16::MAX as usize);
     if key_offset + key.total_size() > u16::MAX as usize {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     page.key_data.extend_from_slice(&key.as_bytes());
@@ -576,19 +582,19 @@ fn insert_entry_at(
     position: usize,
     key: &RefsBtreeKey,
     value: &RefsBtreeValue,
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     if position > page.keys.len()
         || key.total_size() > REFS_BCBT_MAX_KEY_SIZE
         || value.data.len() > u16::MAX as usize
         || page.keys.len() >= u16::MAX as usize
     {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let key_offset = page.key_data.len().min(u16::MAX as usize);
     let value_offset = page.value_data.len().min(u16::MAX as usize);
     if key_offset + key.total_size() > u16::MAX as usize {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     page.key_data.extend_from_slice(&key.as_bytes());
@@ -641,13 +647,13 @@ fn build_split_page(keys: &[RefsBtreeKeyEntry], page: &RefsBtreePage) -> RefsBtr
 ///
 /// The left half remains in `page`; the right half is returned together with
 /// the separator that the caller must insert into (or store in) the parent.
-pub fn split_page(page: &mut RefsBtreePage) -> Result<RefsBtreePageSplit, ()> {
+pub fn split_page(page: &mut RefsBtreePage) -> Result<RefsBtreePageSplit, NTSTATUS> {
     if page.keys.len() < 2 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let split_at = page.keys.len() / 2;
-    let separator = key_at(page, split_at).ok_or(())?;
+    let separator = key_at(page, split_at).ok_or(STATUS_UNSUCCESSFUL)?;
     let right_entries = page.keys.split_off(split_at);
 
     let mut right = build_split_page(&right_entries, page);
@@ -666,12 +672,12 @@ pub fn insert_key(
     page: &mut RefsBtreePage,
     key: &RefsBtreeKey,
     value: &RefsBtreeValue,
-) -> Result<Option<RefsBtreePage>, ()> {
+) -> Result<Option<RefsBtreePage>, NTSTATUS> {
     let mut position = 0usize;
     while position < page.keys.len() {
-        let current = key_at(page, position).ok_or(())?;
+        let current = key_at(page, position).ok_or(STATUS_UNSUCCESSFUL)?;
         match compare_keys(&current, key) {
-            core::cmp::Ordering::Equal => return Err(()),
+            core::cmp::Ordering::Equal => return Err(STATUS_UNSUCCESSFUL),
             core::cmp::Ordering::Greater => break,
             core::cmp::Ordering::Less => position += 1,
         }
@@ -680,7 +686,7 @@ pub fn insert_key(
     let needs_split = page.keys.len() >= REFS_BTREE_DEFAULT_PAGE_CAPACITY;
     if needs_split {
         let split = split_page(page)?;
-        let first_right = key_at(&split.right, 0).ok_or(())?;
+        let first_right = key_at(&split.right, 0).ok_or(STATUS_UNSUCCESSFUL)?;
         let target_is_right = compare_keys(&first_right, key) != core::cmp::Ordering::Greater;
         let mut right = split.right;
         if target_is_right {
@@ -701,9 +707,9 @@ pub fn insert_key(
 /// The caller is responsible for removing the separator and the right-child
 /// pointer from their common parent. Pages are only merged when the combined
 /// entry count is representable.
-pub fn merge_pages(left: &mut RefsBtreePage, right: &mut RefsBtreePage) -> Result<(), ()> {
+pub fn merge_pages(left: &mut RefsBtreePage, right: &mut RefsBtreePage) -> Result<(), NTSTATUS> {
     if left.keys.len() + right.keys.len() > u16::MAX as usize {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let right_keys = right.keys.clone();
@@ -715,9 +721,9 @@ pub fn merge_pages(left: &mut RefsBtreePage, right: &mut RefsBtreePage) -> Resul
             entry.value_offset as usize..(entry.value_offset as usize + entry.value_len as usize),
         );
         let (Some(key_bytes), Some(value_bytes)) = (key_bytes, value_bytes) else {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         };
-        let key = RefsBtreeKey::from_bytes(key_bytes).ok_or(())?;
+        let key = RefsBtreeKey::from_bytes(key_bytes).ok_or(STATUS_UNSUCCESSFUL)?;
         append_entry(left, &key, &RefsBtreeValue::new(value_bytes.to_vec()))?;
     }
 
@@ -732,8 +738,8 @@ pub fn merge_pages(left: &mut RefsBtreePage, right: &mut RefsBtreePage) -> Resul
 ///
 /// The entry array and backing data are compacted. B+ tree underflow is
 /// handled by the caller with [`merge_pages`] once it has located the sibling.
-pub fn delete_key(page: &mut RefsBtreePage, key: &RefsBtreeKey) -> Result<(), ()> {
-    let position = find_key_in_page(page, key).ok_or(())?;
+pub fn delete_key(page: &mut RefsBtreePage, key: &RefsBtreeKey) -> Result<(), NTSTATUS> {
+    let position = find_key_in_page(page, key).ok_or(STATUS_UNSUCCESSFUL)?;
     page.keys.remove(position);
     page.header.key_count = page.keys.len() as u16;
 
@@ -747,7 +753,7 @@ pub fn delete_key(page: &mut RefsBtreePage, key: &RefsBtreeKey) -> Result<(), ()
             entry.value_offset as usize..(entry.value_offset as usize + entry.value_len as usize),
         );
         let (Some(key_bytes), Some(value_bytes)) = (key_bytes, value_bytes) else {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         };
 
         entry.key_offset = page.key_data.len() as u16;
@@ -847,8 +853,7 @@ mod tests {
     fn insert_maintains_sorted_order_and_rejects_duplicates() {
         let mut page = RefsBtreePage::new();
         for id in [30u64, 10, 20] {
-            insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![id as u8]))
-                .unwrap();
+            insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![id as u8])).unwrap();
         }
 
         let ids: alloc::vec::Vec<u64> = (0..page.keys.len())
@@ -878,8 +883,7 @@ mod tests {
     fn delete_removes_entry_and_compacts_backing_data() {
         let mut page = RefsBtreePage::new();
         for id in [10u64, 20, 30] {
-            insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![id as u8; 7]))
-                .unwrap();
+            insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![id as u8; 7])).unwrap();
         }
 
         delete_key(&mut page, &key(20)).unwrap();
@@ -894,12 +898,10 @@ mod tests {
         let mut left = RefsBtreePage::new();
         let mut right = RefsBtreePage::new();
         for id in [10u64, 20] {
-            insert_key(&mut left, &key(id), &RefsBtreeValue::new(vec![]))
-                .unwrap();
+            insert_key(&mut left, &key(id), &RefsBtreeValue::new(vec![])).unwrap();
         }
         for id in [30u64, 40] {
-            insert_key(&mut right, &key(id), &RefsBtreeValue::new(vec![]))
-                .unwrap();
+            insert_key(&mut right, &key(id), &RefsBtreeValue::new(vec![])).unwrap();
         }
 
         merge_pages(&mut left, &mut right).unwrap();
@@ -914,8 +916,7 @@ mod tests {
     fn serialize_page_round_trips_entries() {
         let mut page = RefsBtreePage::new();
         for id in [10u64, 20, 30] {
-            insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![id as u8]))
-                .unwrap();
+            insert_key(&mut page, &key(id), &RefsBtreeValue::new(vec![id as u8])).unwrap();
         }
         page.lba = 31;
 

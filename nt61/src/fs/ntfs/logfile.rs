@@ -17,6 +17,7 @@
 //! 2. Scan forward from checkpoint to find all pending transactions
 //! 3. Replay (redo) committed transactions
 //! 4. Abort (undo) incomplete transactions
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 use crate::ke::sync::Spinlock;
@@ -33,10 +34,12 @@ pub fn init_log_file(max_log_size: usize) {
 }
 
 /// Access the global log file, if initialized.
-fn with_log_file<R>(f: impl FnOnce(&mut LogFile) -> Result<R, &'static str>) -> Result<R, ()> {
+fn with_log_file<R>(
+    f: impl FnOnce(&mut LogFile) -> Result<R, &'static str>,
+) -> Result<R, NTSTATUS> {
     let mut log = LOG_FILE.lock();
-    let log_file = log.as_mut().ok_or(())?;
-    f(log_file).map_err(|_| ())
+    let log_file = log.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
+    f(log_file).map_err(|_| STATUS_UNSUCCESSFUL)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -328,9 +331,7 @@ impl LogFile {
                     replay_result = replay(record, true);
                 }
             });
-        if replay_result.is_err() {
-            return replay_result;
-        }
+        replay_result?;
 
         // Incomplete transaction payloads were preserved in their
         // transaction records, not in the drained log buffer. Replay their
@@ -381,9 +382,9 @@ pub fn write_journal_record(
     _ntfs_device: *mut (),
     record_type: LogRecordType,
     data: &[u8],
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     if data.len() > 65536 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     with_log_file(|log_file| {
@@ -402,7 +403,7 @@ pub fn log_mft_update(
     record_num: u64,
     old_data: &[u8],
     new_data: &[u8],
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     // Build undo (old data) and redo (new data) payloads for the MFT record.
     let mut undo_data = Vec::with_capacity(8 + old_data.len());
     undo_data.extend_from_slice(&record_num.to_le_bytes());
@@ -421,7 +422,12 @@ pub fn log_mft_update(
 }
 
 /// Helper function to create a log record for data write operations
-pub fn log_data_write(ntfs_device: *mut (), vcn: u64, length: u64, data: &[u8]) -> Result<(), ()> {
+pub fn log_data_write(
+    ntfs_device: *mut (),
+    vcn: u64,
+    length: u64,
+    data: &[u8],
+) -> Result<(), NTSTATUS> {
     // Build the redo payload with VCN, length, and the actual data bytes.
     let mut redo_data = Vec::with_capacity(16 + data.len());
     redo_data.extend_from_slice(&vcn.to_le_bytes());
@@ -484,11 +490,7 @@ mod tests {
         let mut logfile = LogFile::new(1000);
         let txn = logfile.begin_transaction();
         logfile
-            .write_record(
-                txn,
-                LogRecordType::UpdateNonResidentValue,
-                vec![7, 7, 7],
-            )
+            .write_record(txn, LogRecordType::UpdateNonResidentValue, vec![7, 7, 7])
             .unwrap();
         logfile.commit_transaction(txn).unwrap();
 

@@ -21,13 +21,14 @@
 //! - Descriptor block(s)
 //! - Data block(s) (if any)
 //! - Commit block
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use alloc::vec;
 use alloc::vec::Vec;
 
 use super::inode::{read_inode, Ext2Inode};
-use super::write::write_superblock;
 use super::superblock::{Ext2SuperBlock, EXT2_FEATURE_INCOMPAT_RECOVER};
+use super::write::write_superblock;
 
 // ============================================================================
 // Journal Constants
@@ -137,6 +138,12 @@ impl JournalSuperBlock {
     }
 }
 
+impl Default for JournalSuperBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JournalHeader {
     /// create a new journal header
     pub fn new(block_type: u32) -> Self {
@@ -228,46 +235,51 @@ impl JournalState {
 // Journal Operations
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Open the journal and read the superblock
-pub fn open_journal(device: *mut (), sb: &Ext2SuperBlock) -> Option<JournalSuperBlock> {
-    let journal_inode = sb.journal_inode;
+pub unsafe fn open_journal(device: *mut (), sb: &Ext2SuperBlock) -> Option<JournalSuperBlock> {
+    unsafe {
+        let journal_inode = sb.journal_inode;
 
-    if journal_inode == 0 {
-        // kprintln!("[EXT3] No journal inode in superblock");
-        return None;
+        if journal_inode == 0 {
+            // kprintln!("[EXT3] No journal inode in superblock");
+            return None;
+        }
+
+        // read journal inode
+        let inode = read_inode(device, sb, journal_inode)?;
+
+        if inode.is_deleted() {
+            // kprintln!("[EXT3] Journal inode has been deleted");
+            return None;
+        }
+
+        // read journal superblock from the journal inode
+        let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
+        let _offset = 0usize;
+
+        // read first block of journal
+        let lba = super::inode::logical_to_lba(device, sb, &inode, 0)?;
+        if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
+            // kprintln!("[EXT3] Failed to read journal superblock");
+            return None;
+        }
+
+        // Parse journal superblock
+        let j_sb = core::ptr::read_unaligned(buffer.as_ptr() as *const JournalSuperBlock);
+
+        if !j_sb.is_valid() {
+            // kprintln!("[EXT3] Invalid journal superblock");
+            return None;
+        }
+
+        // kprintln!("[EXT3] Journal opened: {} blocks, max_trans={}",
+        //         j_sb.max_blocks, j_sb.max_transactions);
+
+        Some(j_sb)
     }
-
-    // read journal inode
-    let inode = read_inode(device, sb, journal_inode)?;
-
-    if inode.is_deleted() {
-        // kprintln!("[EXT3] Journal inode has been deleted");
-        return None;
-    }
-
-    // read journal superblock from the journal inode
-    let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
-    let _offset = 0usize;
-
-    // read first block of journal
-    let lba = super::inode::logical_to_lba(device, sb, &inode, 0)?;
-    if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
-        // kprintln!("[EXT3] Failed to read journal superblock");
-        return None;
-    }
-
-    // Parse journal superblock
-    let j_sb = unsafe { core::ptr::read_unaligned(buffer.as_ptr() as *const JournalSuperBlock) };
-
-    if !j_sb.is_valid() {
-        // kprintln!("[EXT3] Invalid journal superblock");
-        return None;
-    }
-
-    // kprintln!("[EXT3] Journal opened: {} blocks, max_trans={}",
-    //         j_sb.max_blocks, j_sb.max_transactions);
-
-    Some(j_sb)
 }
 
 fn read_journal_block(
@@ -276,13 +288,15 @@ fn read_journal_block(
     inode: &Ext2Inode,
     logical_block: u32,
 ) -> Option<alloc::vec::Vec<u8>> {
-    let lba = super::inode::logical_to_lba(device, sb, inode, logical_block)?;
-    let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
-    if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
-        return None;
-    }
+    unsafe {
+        let lba = super::inode::logical_to_lba(device, sb, inode, logical_block)?;
+        let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
+        if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
+            return None;
+        }
 
-    Some(buffer)
+        Some(buffer)
+    }
 }
 
 fn parse_descriptor_tags(block: &[u8], sequence: u32) -> Option<Vec<JournalTag>> {
@@ -308,7 +322,10 @@ fn parse_descriptor_tags(block: &[u8], sequence: u32) -> Option<Vec<JournalTag>>
     Some(tags)
 }
 
-fn find_commit_block(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn find_commit_block(
     device: *mut (),
     sb: &Ext2SuperBlock,
     inode: &Ext2Inode,
@@ -330,15 +347,18 @@ fn find_commit_block(
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Replay the journal after a crash. Only complete transactions with a
 /// matching commit block are copied to their destination filesystem blocks.
-pub fn replay_journal(device: *mut (), sb: &Ext2SuperBlock) -> Result<usize, ()> {
+pub unsafe fn replay_journal(device: *mut (), sb: &Ext2SuperBlock) -> Result<usize, NTSTATUS> {
     if !sb.has_journal() {
         return Ok(0);
     }
 
-    let j_sb = open_journal(device, sb).ok_or(())?;
-    let inode = read_inode(device, sb, sb.journal_inode).ok_or(())?;
+    let j_sb = unsafe { open_journal(device, sb) }.ok_or(STATUS_UNSUCCESSFUL)?;
+    let inode = unsafe { read_inode(device, sb, sb.journal_inode) }.ok_or(STATUS_UNSUCCESSFUL)?;
     let start = if j_sb.start != 0 {
         j_sb.start
     } else {
@@ -364,20 +384,24 @@ pub fn replay_journal(device: *mut (), sb: &Ext2SuperBlock) -> Result<usize, ()>
 
         match header.block_type {
             JBD2_DESCRIPTOR_BLOCK => {
-                let tags = parse_descriptor_tags(&block, header.sequence).ok_or(())?;
+                let tags =
+                    parse_descriptor_tags(&block, header.sequence).ok_or(STATUS_UNSUCCESSFUL)?;
                 let commit_block =
                     find_commit_block(device, sb, &inode, current_block, header.sequence, 128)
-                        .ok_or(())?;
+                        .ok_or(STATUS_UNSUCCESSFUL)?;
 
                 for (offset, tag) in tags.iter().enumerate() {
-                    let journal_logical = current_block.checked_add(1 + offset as u32).ok_or(())?;
+                    let journal_logical = current_block
+                        .checked_add(1 + offset as u32)
+                        .ok_or(STATUS_UNSUCCESSFUL)?;
                     if journal_logical >= commit_block {
                         break;
                     }
-                    let data = read_journal_block(device, sb, &inode, journal_logical).ok_or(())?;
+                    let data = read_journal_block(device, sb, &inode, journal_logical)
+                        .ok_or(STATUS_UNSUCCESSFUL)?;
                     let lba = tag.target_block as u64 * (sb.get_block_size() / 512) as u64;
                     if super::superblock::write_sector(device, lba, &data).is_err() {
-                        return Err(());
+                        return Err(STATUS_UNSUCCESSFUL);
                     }
                     replayed_count += 1;
                 }
@@ -405,9 +429,15 @@ pub fn clear_recovery_flag(sb: &mut Ext2SuperBlock) {
     sb.incompatible_features &= !EXT2_FEATURE_INCOMPAT_RECOVER;
 }
 
-pub fn clear_recovery_flag_on_device(device: *mut (), sb: &mut Ext2SuperBlock) -> Result<(), ()> {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn clear_recovery_flag_on_device(
+    device: *mut (),
+    sb: &mut Ext2SuperBlock,
+) -> Result<(), NTSTATUS> {
     clear_recovery_flag(sb);
-    write_superblock(device, sb)
+    unsafe { write_superblock(device, sb) }
 }
 
 /// Start a new journal transaction
@@ -426,7 +456,7 @@ pub fn journal_commit_transaction(
     _device: *mut (),
     _sb: &Ext2SuperBlock,
     _transaction_id: u32,
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     // In a full implementation, we would:
     // 1. write all modified blocks to journal
     // 2. write commit block
@@ -449,48 +479,53 @@ pub fn journal_abort_transaction(_device: *mut (), _sb: &Ext2SuperBlock, _transa
 // Journal Recovery
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Find the last valid transaction in the journal
-pub fn find_last_transaction(device: *mut (), sb: &Ext2SuperBlock) -> Option<u32> {
-    let j_sb = open_journal(device, sb)?;
+pub unsafe fn find_last_transaction(device: *mut (), sb: &Ext2SuperBlock) -> Option<u32> {
+    unsafe {
+        let j_sb = open_journal(device, sb)?;
 
-    // Start from the end and work backwards
-    let mut current_block = j_sb.first_block + j_sb.max_blocks - 1;
-    let mut last_valid_seq: Option<u32> = None;
+        // Start from the end and work backwards
+        let mut current_block = j_sb.first_block + j_sb.max_blocks - 1;
+        let mut last_valid_seq: Option<u32> = None;
 
-    while current_block > j_sb.first_block {
-        // read block
-        let inode = match read_inode(device, sb, sb.journal_inode) {
-            Some(i) => i,
-            None => break,
-        };
+        while current_block > j_sb.first_block {
+            // read block
+            let inode = match read_inode(device, sb, sb.journal_inode) {
+                Some(i) => i,
+                None => break,
+            };
 
-        let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
-        let lba = match super::inode::logical_to_lba(
-            device,
-            sb,
-            &inode,
-            current_block - j_sb.first_block,
-        ) {
-            Some(l) => l,
-            None => break,
-        };
+            let mut buffer = vec![0u8; JOURNAL_BLOCK_SIZE];
+            let lba = match super::inode::logical_to_lba(
+                device,
+                sb,
+                &inode,
+                current_block - j_sb.first_block,
+            ) {
+                Some(l) => l,
+                None => break,
+            };
 
-        if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
+            if super::superblock::read_sector(device, lba, &mut buffer).is_err() {
+                current_block -= 1;
+                continue;
+            }
+
+            let header = core::ptr::read_unaligned(buffer.as_ptr() as *const JournalHeader);
+
+            if header.is_valid() && header.is_commit() {
+                last_valid_seq = Some(header.sequence);
+                break;
+            }
+
             current_block -= 1;
-            continue;
         }
 
-        let header = unsafe { core::ptr::read_unaligned(buffer.as_ptr() as *const JournalHeader) };
-
-        if header.is_valid() && header.is_commit() {
-            last_valid_seq = Some(header.sequence);
-            break;
-        }
-
-        current_block -= 1;
+        last_valid_seq
     }
-
-    last_valid_seq
 }
 
 /// Get the journal sequence number for recovery

@@ -9,6 +9,7 @@
 //! - Hard limits (enforced) and soft limits (warning)
 //! - Quota exceeded events
 //! - $Quota metadata file stores quota information
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -72,10 +73,10 @@ impl QuotaEntry {
     }
 
     /// Allocate bytes to this user
-    pub fn allocate(&mut self, bytes: u64) -> Result<(), ()> {
+    pub fn allocate(&mut self, bytes: u64) -> Result<(), NTSTATUS> {
         if self.would_exceed(bytes) {
             self.exceeded = true;
-            Err(())
+            Err(STATUS_UNSUCCESSFUL)
         } else {
             self.quota_used += bytes;
             Ok(())
@@ -148,7 +149,7 @@ impl QuotaManager {
     }
 
     /// Allocate space for a user
-    pub fn allocate(&mut self, sid: &[u8], bytes: u64) -> Result<(), ()> {
+    pub fn allocate(&mut self, sid: &[u8], bytes: u64) -> Result<(), NTSTATUS> {
         if !self.state.is_enabled() {
             return Ok(()); // Quotas disabled
         }
@@ -213,6 +214,12 @@ impl QuotaManager {
     }
 }
 
+impl Default for QuotaManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct QuotaStatistics {
     pub state: QuotaState,
@@ -237,38 +244,43 @@ pub fn init_volume(volume_id: u64) {
     managers.insert(volume_id, QuotaManager::new());
 }
 
-pub fn enable_quotas(volume_id: u64, enforce: bool) -> Result<(), ()> {
+pub fn enable_quotas(volume_id: u64, enforce: bool) -> Result<(), NTSTATUS> {
     let mut managers = QUOTA_MANAGERS.lock();
-    let mgr = managers.get_mut(&volume_id).ok_or(())?;
+    let mgr = managers.get_mut(&volume_id).ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.enable(enforce);
     Ok(())
 }
 
-pub fn disable_quotas(volume_id: u64) -> Result<(), ()> {
+pub fn disable_quotas(volume_id: u64) -> Result<(), NTSTATUS> {
     let mut managers = QUOTA_MANAGERS.lock();
-    let mgr = managers.get_mut(&volume_id).ok_or(())?;
+    let mgr = managers.get_mut(&volume_id).ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.disable();
     Ok(())
 }
 
-pub fn set_default_quotas(volume_id: u64, limit: u64, threshold: u64) -> Result<(), ()> {
+pub fn set_default_quotas(volume_id: u64, limit: u64, threshold: u64) -> Result<(), NTSTATUS> {
     let mut managers = QUOTA_MANAGERS.lock();
-    let mgr = managers.get_mut(&volume_id).ok_or(())?;
+    let mgr = managers.get_mut(&volume_id).ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.set_defaults(limit, threshold);
     Ok(())
 }
 
 /// Set quota for a specific user on a volume
-pub fn set_user_quota(volume_id: u64, sid: &[u8], limit: u64, threshold: u64) -> Result<(), ()> {
+pub fn set_user_quota(
+    volume_id: u64,
+    sid: &[u8],
+    limit: u64,
+    threshold: u64,
+) -> Result<(), NTSTATUS> {
     let mut managers = QUOTA_MANAGERS.lock();
-    let mgr = managers.get_mut(&volume_id).ok_or(())?;
+    let mgr = managers.get_mut(&volume_id).ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.set_user_quota(sid, limit, threshold);
     Ok(())
 }
 
-pub fn allocate_space(volume_id: u64, sid: &[u8], bytes: u64) -> Result<(), ()> {
+pub fn allocate_space(volume_id: u64, sid: &[u8], bytes: u64) -> Result<(), NTSTATUS> {
     let mut managers = QUOTA_MANAGERS.lock();
-    let mgr = managers.get_mut(&volume_id).ok_or(())?;
+    let mgr = managers.get_mut(&volume_id).ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.allocate(sid, bytes)
 }
 

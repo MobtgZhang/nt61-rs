@@ -1,3 +1,4 @@
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 extern crate alloc;
 
 use alloc::vec;
@@ -17,41 +18,47 @@ struct DirectoryLocation {
 const SUPERBLOCK_SECTOR: u64 = 2;
 
 fn read_dir_buffer(device: *mut (), sb: &Ext2SuperBlock, inode: &Ext2Inode) -> Option<Vec<u8>> {
-    if !inode.is_dir() {
-        return None;
-    }
-
-    let block_size = sb.get_block_size() as usize;
-    let block_count = (inode.get_size(sb) as usize + block_size - 1) / block_size;
-    let mut buffer = vec![0u8; block_count * block_size];
-    for block in 0..block_count {
-        let lba = super::inode::logical_to_lba(device, sb, inode, block as u32)?;
-        if super::superblock::read_sector(
-            device,
-            lba,
-            &mut buffer[block * block_size..(block + 1) * block_size],
-        )
-        .is_err()
-        {
+    unsafe {
+        if !inode.is_dir() {
             return None;
         }
-    }
 
-    Some(buffer)
+        let block_size = sb.get_block_size() as usize;
+        let block_count = (inode.get_size(sb) as usize).div_ceil(block_size);
+        let mut buffer = vec![0u8; block_count * block_size];
+        for block in 0..block_count {
+            let lba = super::inode::logical_to_lba(device, sb, inode, block as u32)?;
+            if super::superblock::read_sector(
+                device,
+                lba,
+                &mut buffer[block * block_size..(block + 1) * block_size],
+            )
+            .is_err()
+            {
+                return None;
+            }
+        }
+
+        Some(buffer)
+    }
 }
 
-fn write_dir_buffer(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn write_dir_buffer(
     device: *mut (),
     sb: &Ext2SuperBlock,
     inode: &Ext2Inode,
     buffer: &[u8],
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     let block_size = sb.get_block_size() as usize;
-    if buffer.len() % block_size != 0 {
-        return Err(());
+    if !buffer.len().is_multiple_of(block_size) {
+        return Err(STATUS_UNSUCCESSFUL);
     }
     for block in 0..buffer.len() / block_size {
-        let lba = super::inode::logical_to_lba(device, sb, inode, block as u32).ok_or(())?;
+        let lba = unsafe { super::inode::logical_to_lba(device, sb, inode, block as u32) }
+            .ok_or(STATUS_UNSUCCESSFUL)?;
         super::superblock::write_sector(
             device,
             lba,
@@ -109,21 +116,27 @@ fn find_insert_location(
     None
 }
 
-fn write_entry(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn write_entry(
     buffer: &mut [u8],
     block_size: usize,
     location: &DirectoryLocation,
     inode_num: u32,
     name: &[u8],
     file_type: u8,
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     let base = location.logical_block as usize * block_size + location.offset;
-    let rec_len =
-        u16::from_le_bytes(buffer[base + 4..base + 6].try_into().map_err(|_| ())?) as usize;
+    let rec_len = u16::from_le_bytes(
+        buffer[base + 4..base + 6]
+            .try_into()
+            .map_err(|_| STATUS_UNSUCCESSFUL)?,
+    ) as usize;
     let has_filetype = (buffer[base + 8] & 0xFC) == 0x40;
     let minimal = calculate_entry_size(name.len(), has_filetype) as usize;
     if rec_len < minimal {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let next_rec_len = (rec_len - minimal) as u16;
@@ -149,41 +162,53 @@ fn write_entry(
     Ok(())
 }
 
-fn allocate_inode(device: *mut (), sb: &Ext2SuperBlock, is_directory: bool) -> Result<u32, ()> {
-    for group in 0..sb.get_group_count() {
-        let mut inode_bitmap = bitmap::read_inode_bitmap(device, sb, group).ok_or(())?;
-        let max_inodes = sb.inodes_per_group as usize;
-        let first_index_in_group = if group == 0 {
-            sb.first_ino.saturating_sub(1) as usize
-        } else {
-            0
-        };
-        let index = (first_index_in_group..max_inodes)
-            .find(|candidate| !bitmap::test_bit(&inode_bitmap, *candidate))
-            .ok_or(())?;
-        bitmap::set_bit(&mut inode_bitmap, index);
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn allocate_inode(
+    device: *mut (),
+    sb: &Ext2SuperBlock,
+    is_directory: bool,
+) -> Result<u32, NTSTATUS> {
+    if sb.get_group_count() == 0 {
+        return Err(STATUS_UNSUCCESSFUL);
+    }
+    let group = 0;
+    let mut inode_bitmap =
+        unsafe { bitmap::read_inode_bitmap(device, sb, group) }.ok_or(STATUS_UNSUCCESSFUL)?;
+    let max_inodes = sb.inodes_per_group as usize;
+    let first_index_in_group = if group == 0 {
+        sb.first_ino.saturating_sub(1) as usize
+    } else {
+        0
+    };
+    let index = (first_index_in_group..max_inodes)
+        .find(|candidate| !bitmap::test_bit(&inode_bitmap, *candidate))
+        .ok_or(STATUS_UNSUCCESSFUL)?;
+    bitmap::set_bit(&mut inode_bitmap, index);
 
-        let group_desc = read_group_descriptor(device, sb, group).ok_or(())?;
-        let lba = group_desc.inode_bitmap_lba(sb);
-        if super::superblock::write_sector(device, lba, &inode_bitmap).is_err() {
-            return Err(());
-        }
-
-        let inode_num = group * sb.inodes_per_group + index as u32 + 1;
-        write_group_descriptor(device, sb, group, |desc| {
-            desc.free_inodes_count = desc.free_inodes_count.saturating_sub(1);
-            if is_directory {
-                desc.used_dirs_count = desc.used_dirs_count.saturating_add(1);
-            }
-        })?;
-
-        return Ok(inode_num);
+    let group_desc =
+        unsafe { read_group_descriptor(device, sb, group) }.ok_or(STATUS_UNSUCCESSFUL)?;
+    let lba = group_desc.inode_bitmap_lba(sb);
+    if super::superblock::write_sector(device, lba, &inode_bitmap).is_err() {
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
-    Err(())
+    let inode_num = group * sb.inodes_per_group + index as u32 + 1;
+    write_group_descriptor(device, sb, group, |desc| {
+        desc.free_inodes_count = desc.free_inodes_count.saturating_sub(1);
+        if is_directory {
+            desc.used_dirs_count = desc.used_dirs_count.saturating_add(1);
+        }
+    })?;
+
+    Ok(inode_num)
 }
 
-pub fn write_superblock(device: *mut (), sb: &Ext2SuperBlock) -> Result<(), ()> {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn write_superblock(device: *mut (), sb: &Ext2SuperBlock) -> Result<(), NTSTATUS> {
     let mut buffer = vec![0u8; 1024];
     unsafe {
         core::ptr::copy_nonoverlapping(
@@ -195,42 +220,50 @@ pub fn write_superblock(device: *mut (), sb: &Ext2SuperBlock) -> Result<(), ()> 
     super::superblock::write_sector(device, SUPERBLOCK_SECTOR, &buffer)
 }
 
-fn write_group_descriptor(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn write_group_descriptor(
     device: *mut (),
     sb: &Ext2SuperBlock,
     group: u32,
     update: impl FnOnce(&mut Ext2GroupDesc),
-) -> Result<(), ()> {
-    let original = read_group_descriptor(device, sb, group).ok_or(())?;
-    let mut updated = original;
-    update(&mut updated);
-
-    let block_size = sb.get_block_size() as usize;
-    let desc_size = if sb.is_dynamic_rev() && sb.inode_size >= 255 {
-        super::group::EXT2_BGDESC_SIZE_NEW
-    } else {
-        super::group::EXT2_BGDESC_SIZE_OLD
-    };
-    let gdt_start = super::group::get_gdt_start_block(sb);
-    let desc_offset = group as usize * desc_size;
-    let gdt_block = gdt_start + (desc_offset / block_size) as u64;
-    let offset_in_block = desc_offset % block_size;
-    let mut buffer = vec![0u8; block_size];
-    let sector = gdt_block * (block_size / 512) as u64;
-    if super::superblock::read_sector(device, sector, &mut buffer).is_err() {
-        return Err(());
-    }
+) -> Result<(), NTSTATUS> {
     unsafe {
+        let original = read_group_descriptor(device, sb, group).ok_or(STATUS_UNSUCCESSFUL)?;
+        let mut updated = original;
+        update(&mut updated);
+
+        let block_size = sb.get_block_size() as usize;
+        let desc_size = if sb.is_dynamic_rev() && sb.inode_size >= 255 {
+            super::group::EXT2_BGDESC_SIZE_NEW
+        } else {
+            super::group::EXT2_BGDESC_SIZE_OLD
+        };
+        let gdt_start = super::group::get_gdt_start_block(sb);
+        let desc_offset = group as usize * desc_size;
+        let gdt_block = gdt_start + (desc_offset / block_size) as u64;
+        let offset_in_block = desc_offset % block_size;
+        let mut buffer = vec![0u8; block_size];
+        let sector = gdt_block * (block_size / 512) as u64;
+        if super::superblock::read_sector(device, sector, &mut buffer).is_err() {
+            return Err(STATUS_UNSUCCESSFUL);
+        }
+
         core::ptr::copy_nonoverlapping(
             &updated as *const Ext2GroupDesc as *const u8,
             buffer.as_mut_ptr().add(offset_in_block),
             core::mem::size_of::<Ext2GroupDesc>(),
         );
+
+        super::superblock::write_sector(device, sector, &buffer)
     }
-    super::superblock::write_sector(device, sector, &buffer)
 }
 
-fn new_inode(sb: &Ext2SuperBlock, is_directory: bool, block_num: u32) -> Ext2Inode {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn new_inode(sb: &Ext2SuperBlock, is_directory: bool, block_num: u32) -> Ext2Inode {
     let mut inode: Ext2Inode = unsafe { core::mem::zeroed() };
     inode.mode = if is_directory { 0o40755 } else { 0o100644 };
     inode.links_count = if is_directory { 2 } else { 1 };
@@ -242,13 +275,16 @@ fn new_inode(sb: &Ext2SuperBlock, is_directory: bool, block_num: u32) -> Ext2Ino
     inode
 }
 
-fn initialize_dir_block(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn initialize_dir_block(
     device: *mut (),
     sb: &Ext2SuperBlock,
     dir_inode: u32,
     parent_inode: u32,
     block_num: u32,
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     let block_size = sb.get_block_size() as usize;
     let mut block = vec![0u8; block_size];
     write_entry_at(
@@ -273,7 +309,10 @@ fn initialize_dir_block(
     super::superblock::write_sector(device, lba, &block)
 }
 
-fn write_entry_at(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn write_entry_at(
     buffer: &mut [u8],
     _block_size: usize,
     offset: usize,
@@ -281,7 +320,7 @@ fn write_entry_at(
     name: &[u8],
     file_type: u8,
     rec_len: u16,
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     buffer[offset..offset + 4].copy_from_slice(&inode_num.to_le_bytes());
     buffer[offset + 4..offset + 6].copy_from_slice(&rec_len.to_le_bytes());
     buffer[offset + 6..offset + 8].copy_from_slice(&(name.len() as u16).to_le_bytes());
@@ -290,65 +329,74 @@ fn write_entry_at(
     Ok(())
 }
 
-pub fn create_file(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn create_file(
     device: *mut (),
     sb: &Ext2SuperBlock,
     parent_inode: u32,
     name: &[u8],
-) -> Result<u32, ()> {
+) -> Result<u32, NTSTATUS> {
     if name.is_empty() || name.len() > super::dir::EXT2_NAME_LEN {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
-    if super::dir::find_entry_in_dir(device, sb, parent_inode, name).is_some() {
-        return Err(());
+    if unsafe { super::dir::find_entry_in_dir(device, sb, parent_inode, name) }.is_some() {
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let inode_num = allocate_inode(device, sb, false)?;
     let inode = new_inode(sb, false, 0);
-    write_inode(device, sb, inode_num, &inode)?;
+    unsafe { write_inode(device, sb, inode_num, &inode) }?;
     add_dir_entry(device, sb, parent_inode, inode_num, name, EXT2_FT_REG_FILE)?;
 
     Ok(inode_num)
 }
 
-pub fn mkdir(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn mkdir(
     device: *mut (),
     sb: &Ext2SuperBlock,
     parent_inode: u32,
     name: &[u8],
-) -> Result<u32, ()> {
+) -> Result<u32, NTSTATUS> {
     if name.is_empty() || name.len() > super::dir::EXT2_NAME_LEN {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
-    if super::dir::find_entry_in_dir(device, sb, parent_inode, name).is_some() {
-        return Err(());
+    if unsafe { super::dir::find_entry_in_dir(device, sb, parent_inode, name) }.is_some() {
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
-    let block_num = bitmap::allocate_block(device, sb).ok_or(())?;
+    let block_num = bitmap::allocate_block(device, sb).ok_or(STATUS_UNSUCCESSFUL)?;
     let inode_num = allocate_inode(device, sb, true)?;
     initialize_dir_block(device, sb, inode_num, parent_inode, block_num)?;
     let inode = new_inode(sb, true, block_num);
-    write_inode(device, sb, inode_num, &inode)?;
+    unsafe { write_inode(device, sb, inode_num, &inode) }?;
     add_dir_entry(device, sb, parent_inode, inode_num, name, EXT2_FT_DIR)?;
 
     Ok(inode_num)
 }
 
-fn add_dir_entry(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn add_dir_entry(
     device: *mut (),
     sb: &Ext2SuperBlock,
     parent_inode: u32,
     inode_num: u32,
     name: &[u8],
     file_type: u8,
-) -> Result<(), ()> {
-    let parent = read_inode(device, sb, parent_inode).ok_or(())?;
-    let mut buffer = read_dir_buffer(device, sb, &parent).ok_or(())?;
+) -> Result<(), NTSTATUS> {
+    let parent = unsafe { read_inode(device, sb, parent_inode) }.ok_or(STATUS_UNSUCCESSFUL)?;
+    let mut buffer = read_dir_buffer(device, sb, &parent).ok_or(STATUS_UNSUCCESSFUL)?;
     let block_size = sb.get_block_size() as usize;
     let required = entry_size(sb, name.len());
     let location = match find_insert_location(&buffer, block_size, required) {
         Some(location) => location,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
 
     write_entry(
@@ -364,16 +412,20 @@ fn add_dir_entry(
     Ok(())
 }
 
-pub fn unlink(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn unlink(
     device: *mut (),
     sb: &Ext2SuperBlock,
     parent_inode: u32,
     name: &[u8],
-) -> Result<(), ()> {
-    let entry = super::dir::find_entry_in_dir(device, sb, parent_inode, name).ok_or(())?;
-    let inode = read_inode(device, sb, entry.inode).ok_or(())?;
+) -> Result<(), NTSTATUS> {
+    let entry = unsafe { super::dir::find_entry_in_dir(device, sb, parent_inode, name) }
+        .ok_or(STATUS_UNSUCCESSFUL)?;
+    let inode = unsafe { read_inode(device, sb, entry.inode) }.ok_or(STATUS_UNSUCCESSFUL)?;
     if inode.is_dir() && inode.links_count > 2 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     remove_dir_entry(device, sb, parent_inode, name)?;
@@ -381,32 +433,47 @@ pub fn unlink(
     free_inode_number(device, sb, entry.inode, inode.is_dir())
 }
 
-fn remove_dir_entry(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn remove_dir_entry(
     device: *mut (),
     sb: &Ext2SuperBlock,
     parent_inode: u32,
     name: &[u8],
-) -> Result<(), ()> {
-    let parent = read_inode(device, sb, parent_inode).ok_or(())?;
-    let mut buffer = read_dir_buffer(device, sb, &parent).ok_or(())?;
+) -> Result<(), NTSTATUS> {
+    let parent = unsafe { read_inode(device, sb, parent_inode) }.ok_or(STATUS_UNSUCCESSFUL)?;
+    let mut buffer = read_dir_buffer(device, sb, &parent).ok_or(STATUS_UNSUCCESSFUL)?;
     let mut previous: Option<usize> = None;
     let mut offset = 0usize;
 
     while offset + 8 <= buffer.len() {
-        let inode_num = u32::from_le_bytes(buffer[offset..offset + 4].try_into().map_err(|_| ())?);
-        let rec_len =
-            u16::from_le_bytes(buffer[offset + 4..offset + 6].try_into().map_err(|_| ())?) as usize;
+        let inode_num = u32::from_le_bytes(
+            buffer[offset..offset + 4]
+                .try_into()
+                .map_err(|_| STATUS_UNSUCCESSFUL)?,
+        );
+        let rec_len = u16::from_le_bytes(
+            buffer[offset + 4..offset + 6]
+                .try_into()
+                .map_err(|_| STATUS_UNSUCCESSFUL)?,
+        ) as usize;
         if rec_len < 8 || offset + rec_len > buffer.len() {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         if inode_num != 0 {
-            let name_len =
-                u16::from_le_bytes(buffer[offset + 6..offset + 8].try_into().map_err(|_| ())?)
-                    as usize;
+            let name_len = u16::from_le_bytes(
+                buffer[offset + 6..offset + 8]
+                    .try_into()
+                    .map_err(|_| STATUS_UNSUCCESSFUL)?,
+            ) as usize;
             if &buffer[offset + 8..offset + 8 + name_len] == name {
                 if let Some(prev) = previous {
-                    let prev_rec =
-                        u16::from_le_bytes(buffer[prev + 4..prev + 6].try_into().map_err(|_| ())?);
+                    let prev_rec = u16::from_le_bytes(
+                        buffer[prev + 4..prev + 6]
+                            .try_into()
+                            .map_err(|_| STATUS_UNSUCCESSFUL)?,
+                    );
                     let merged = prev_rec.saturating_add(rec_len as u16);
                     buffer[prev + 4..prev + 6].copy_from_slice(&merged.to_le_bytes());
                 } else {
@@ -419,20 +486,27 @@ fn remove_dir_entry(
         offset += rec_len;
     }
 
-    Err(())
+    Err(STATUS_UNSUCCESSFUL)
 }
 
-fn free_inode_blocks(device: *mut (), sb: &Ext2SuperBlock, inode: &Ext2Inode) -> Result<(), ()> {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn free_inode_blocks(
+    device: *mut (),
+    sb: &Ext2SuperBlock,
+    inode: &Ext2Inode,
+) -> Result<(), NTSTATUS> {
     if inode.has_extents() {
         return Ok(());
     }
 
     let block_size = sb.get_block_size() as u64;
     let size = inode.get_size(sb);
-    let logical_count = ((size + block_size - 1) / block_size) as u32;
+    let logical_count = size.div_ceil(block_size) as u32;
 
     for logical in 0..logical_count {
-        if let Some(lba) = super::inode::logical_to_lba(device, sb, inode, logical) {
+        if let Some(lba) = unsafe { super::inode::logical_to_lba(device, sb, inode, logical) } {
             let block = lba / (block_size / 512);
             bitmap::free_block(device, sb, block)?;
         }
@@ -447,23 +521,28 @@ fn free_inode_blocks(device: *mut (), sb: &Ext2SuperBlock, inode: &Ext2Inode) ->
     Ok(())
 }
 
-fn free_inode_number(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+unsafe fn free_inode_number(
     device: *mut (),
     sb: &Ext2SuperBlock,
     inode_num: u32,
     is_directory: bool,
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     if inode_num == 0 || inode_num > sb.inodes_count {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let group = super::group::inode_to_group(sb, inode_num);
-    let mut inode_bitmap = bitmap::read_inode_bitmap(device, sb, group).ok_or(())?;
+    let mut inode_bitmap =
+        unsafe { bitmap::read_inode_bitmap(device, sb, group) }.ok_or(STATUS_UNSUCCESSFUL)?;
     let index = ((inode_num - 1) % sb.inodes_per_group) as usize;
     if !bitmap::test_bit(&inode_bitmap, index) {
         return Ok(());
     }
     bitmap::clear_bit(&mut inode_bitmap, index);
-    let group_desc = read_group_descriptor(device, sb, group).ok_or(())?;
+    let group_desc =
+        unsafe { read_group_descriptor(device, sb, group) }.ok_or(STATUS_UNSUCCESSFUL)?;
     let lba = group_desc.inode_bitmap_lba(sb);
     super::superblock::write_sector(device, lba, &inode_bitmap)?;
     write_group_descriptor(device, sb, group, |desc| {
@@ -474,17 +553,21 @@ fn free_inode_number(
     })
 }
 
-pub fn rename(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn rename(
     device: *mut (),
     sb: &Ext2SuperBlock,
     old_parent: u32,
     old_name: &[u8],
     new_parent: u32,
     new_name: &[u8],
-) -> Result<(), ()> {
-    let entry = super::dir::find_entry_in_dir(device, sb, old_parent, old_name).ok_or(())?;
-    if super::dir::find_entry_in_dir(device, sb, new_parent, new_name).is_some() {
-        return Err(());
+) -> Result<(), NTSTATUS> {
+    let entry = unsafe { super::dir::find_entry_in_dir(device, sb, old_parent, old_name) }
+        .ok_or(STATUS_UNSUCCESSFUL)?;
+    if unsafe { super::dir::find_entry_in_dir(device, sb, new_parent, new_name) }.is_some() {
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     add_dir_entry(

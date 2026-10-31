@@ -17,6 +17,7 @@
 //! - chunk.rs: Chunk (extent) allocation
 //! - integrity.rs: CRC32C checksums
 //! - object.rs: Object ID management
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -123,6 +124,12 @@ impl RefsFileSystem {
     }
 }
 
+impl Default for RefsFileSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// File handle for open files
 pub struct RefsHandle {
     /// Object ID
@@ -174,9 +181,9 @@ impl RefsHandle {
 // ============================================================================
 
 /// read a sector from the device
-pub fn read_sector(_device: *mut (), lba: u64, buffer: &mut [u8]) -> Result<(), ()> {
+pub fn read_sector(_device: *mut (), lba: u64, buffer: &mut [u8]) -> Result<(), NTSTATUS> {
     if buffer.len() < 512 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let sector_num = lba as usize;
@@ -188,16 +195,21 @@ pub fn read_sector(_device: *mut (), lba: u64, buffer: &mut [u8]) -> Result<(), 
         return Ok(());
     }
 
-    Err(())
+    Err(STATUS_UNSUCCESSFUL)
 }
 
 /// read multiple sectors from the device
-pub fn read_sectors(device: *mut (), lba: u64, count: u32, buffer: &mut [u8]) -> Result<(), ()> {
+pub fn read_sectors(
+    device: *mut (),
+    lba: u64,
+    count: u32,
+    buffer: &mut [u8],
+) -> Result<(), NTSTATUS> {
     let sector_size = 512usize;
     let needed = (count as usize) * sector_size;
 
     if buffer.len() < needed {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     for i in 0..count as usize {
@@ -209,7 +221,7 @@ pub fn read_sectors(device: *mut (), lba: u64, count: u32, buffer: &mut [u8]) ->
         )
         .is_err()
         {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
     }
 
@@ -217,9 +229,9 @@ pub fn read_sectors(device: *mut (), lba: u64, count: u32, buffer: &mut [u8]) ->
 }
 
 /// Write one 512-byte sector to the device.
-pub fn write_sector(_device: *mut (), lba: u64, buffer: &[u8]) -> Result<(), ()> {
+pub fn write_sector(_device: *mut (), lba: u64, buffer: &[u8]) -> Result<(), NTSTATUS> {
     if buffer.len() < 512 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let sector_num = lba as usize;
     if crate::drivers::storage::ramdisk::write(sector_num, buffer) {
@@ -228,15 +240,15 @@ pub fn write_sector(_device: *mut (), lba: u64, buffer: &[u8]) -> Result<(), ()>
     if crate::drivers::storage::ahci::write_sector(0, 0, lba as u32, buffer) {
         return Ok(());
     }
-    Err(())
+    Err(STATUS_UNSUCCESSFUL)
 }
 
 /// Write multiple sectors to the device.
-pub fn write_sectors(device: *mut (), lba: u64, count: u32, buffer: &[u8]) -> Result<(), ()> {
+pub fn write_sectors(device: *mut (), lba: u64, count: u32, buffer: &[u8]) -> Result<(), NTSTATUS> {
     let sector_size = 512usize;
     let needed = (count as usize) * sector_size;
     if buffer.len() < needed {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     for i in 0..count as usize {
         let offset = (lba + (i as u64)) * (sector_size as u64);
@@ -247,7 +259,7 @@ pub fn write_sectors(device: *mut (), lba: u64, count: u32, buffer: &[u8]) -> Re
         )
         .is_err()
         {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
     }
     Ok(())
@@ -318,7 +330,7 @@ pub fn mount(device: *mut ()) -> Option<&'static mut RefsFileSystem> {
         // the persisted allocation bitmap from disk. For the bootstrap
         // path the remaining clusters start free so that CoW allocation
         // can proceed on a freshly formatted volume.
-        let bitmap_len = ((total_clusters + 7) / 8) as usize;
+        let bitmap_len = total_clusters.div_ceil(8) as usize;
         (*fs_ptr).free_cluster_bitmap = vec![0u8; bitmap_len];
         let reserved = total_clusters.min(REFS_METADATA_RESERVED_CLUSTERS);
         let fs = &mut *fs_ptr;
@@ -372,7 +384,7 @@ pub fn read_file(fs: &RefsFileSystem, handle: &mut RefsHandle, buffer: &mut [u8]
         return 0;
     }
 
-    let bytes_to_read = core::cmp::min(buffer.len(), (handle.remaining() as usize).min(usize::MAX));
+    let bytes_to_read = core::cmp::min(buffer.len(), handle.remaining() as usize);
 
     // Calculate which cluster this is
     let cluster_size = fs.cluster_size as u64;
@@ -429,11 +441,11 @@ pub fn write_file(fs: &mut RefsFileSystem, handle: &mut RefsHandle, buffer: &[u8
         );
 
         // Allocate a new cluster for the CoW copy.
-        let descriptor =
-            chunk::allocate_chunk(&fs.superblock, &mut fs.free_cluster_bitmap, 1).ok_or(());
+        let descriptor = chunk::allocate_chunk(&fs.superblock, &mut fs.free_cluster_bitmap, 1)
+            .ok_or(STATUS_UNSUCCESSFUL);
         let descriptor = match descriptor {
             Ok(value) => value,
-            Err(()) => break,
+            Err(_) => break,
         };
 
         // Read the old cluster if the write is partial.
@@ -517,11 +529,11 @@ pub fn create_directory(fs: &mut RefsFileSystem) -> Option<RefsHandle> {
     })
 }
 
-pub fn delete_file(fs: &mut RefsFileSystem, object_id: u64) -> Result<(), ()> {
+pub fn delete_file(fs: &mut RefsFileSystem, object_id: u64) -> Result<(), NTSTATUS> {
     delete_object_id_entry(fs, object_id)
 }
 
-pub fn delete_directory(fs: &mut RefsFileSystem, object_id: u64) -> Result<(), ()> {
+pub fn delete_directory(fs: &mut RefsFileSystem, object_id: u64) -> Result<(), NTSTATUS> {
     delete_object_id_entry(fs, object_id)
 }
 
@@ -558,17 +570,21 @@ pub fn find_in_object_tree(
     load_btree_page(device, root_lba)
 }
 
-pub fn write_btree_page(device: *mut (), page: &RefsBtreePage, page_size: usize) -> Result<(), ()> {
+pub fn write_btree_page(
+    device: *mut (),
+    page: &RefsBtreePage,
+    page_size: usize,
+) -> Result<(), NTSTATUS> {
     let bytes = btree::serialize_page(page, page_size)?;
     write_sectors(device, page.lba, (page_size / 512) as u32, &bytes)
 }
 
-pub fn load_object_table_root(fs: &RefsFileSystem) -> Result<RefsBtreePage, ()> {
+pub fn load_object_table_root(fs: &RefsFileSystem) -> Result<RefsBtreePage, NTSTATUS> {
     let root_lba = fs.object_table.root_lba;
     if root_lba == 0 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
-    load_btree_page(fs.base.device, root_lba).ok_or(())
+    load_btree_page(fs.base.device, root_lba).ok_or(STATUS_UNSUCCESSFUL)
 }
 
 pub fn insert_object_id_entry(
@@ -577,7 +593,7 @@ pub fn insert_object_id_entry(
     sub_sequence: u64,
     record_lba: u64,
     _record_size: u32,
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     let mut root = load_object_table_root(fs)?;
     let key = RefsBtreeKey {
         object_id,
@@ -595,11 +611,11 @@ pub fn insert_object_id_entry(
     Ok(())
 }
 
-pub fn delete_object_id_entry(fs: &mut RefsFileSystem, object_id: u64) -> Result<(), ()> {
+pub fn delete_object_id_entry(fs: &mut RefsFileSystem, object_id: u64) -> Result<(), NTSTATUS> {
     let entry = fs
         .object_table
         .find_by_id(object_id)
-        .ok_or(())?
+        .ok_or(STATUS_UNSUCCESSFUL)?
         .value
         .record_lba;
     let mut root = load_object_table_root(fs)?;
@@ -611,7 +627,7 @@ pub fn delete_object_id_entry(fs: &mut RefsFileSystem, object_id: u64) -> Result
     };
     btree::delete_key(&mut root, &key)?;
     write_btree_page(fs.base.device, &root, 4096)?;
-    let _ = object::delete_object_id(&mut fs.object_table, object_id).ok_or(())?;
+    let _ = object::delete_object_id(&mut fs.object_table, object_id).ok_or(STATUS_UNSUCCESSFUL)?;
     let cluster = fs.lba_to_cluster(entry);
     let chunk = RefsChunkDescriptor {
         flags: chunk::REFS_CHUNK_FLAG_NONE,
@@ -633,8 +649,7 @@ pub fn build_object_record(
     record[0..4].copy_from_slice(&REFS_OBJECT_RECORD_MAGIC.to_le_bytes());
     record[4..8].copy_from_slice(&(is_directory as u32).to_le_bytes());
     record[8..16].copy_from_slice(&file_size.to_le_bytes());
-    record[16..24]
-        .copy_from_slice(&(if first_chunk.is_some() { 1u64 } else { 0 }).to_le_bytes());
+    record[16..24].copy_from_slice(&(if first_chunk.is_some() { 1u64 } else { 0 }).to_le_bytes());
     if let Some(chunk) = first_chunk {
         record[24..32].copy_from_slice(&chunk.flags.to_le_bytes());
         record[32..40].copy_from_slice(&chunk.lcn.to_le_bytes());
@@ -687,15 +702,12 @@ pub fn allocate_object_record(
     write_sectors(
         fs.base.device,
         record_lba,
-        (fs.cluster_size / fs.sector_size) as u32,
+        fs.cluster_size / fs.sector_size,
         &sectors,
     )
     .ok()?;
     insert_object_id_entry(fs, object_id, 0, record_lba, REFS_OBJECT_RECORD_SIZE as u32).ok()?;
-    fs.object_table
-        .find_by_id_mut(object_id)?
-        .value
-        .record_lba = record_lba;
+    fs.object_table.find_by_id_mut(object_id)?.value.record_lba = record_lba;
     Some((object_id, record_lba))
 }
 

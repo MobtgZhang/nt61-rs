@@ -250,6 +250,12 @@ impl BufferPool {
     }
 }
 
+impl Default for BufferPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Cache view for file mapping
 #[derive(Debug)]
 pub struct CacheView {
@@ -582,7 +588,7 @@ impl CacheManager {
         size: usize,
     ) -> Result<usize, &'static str> {
         let view = CacheView::new(file_id, offset, size);
-        let view_list = self.views.entry(file_id).or_insert_with(Vec::new);
+        let view_list = self.views.entry(file_id).or_default();
         view_list.push(view);
         Ok(view_list.len() - 1)
     }

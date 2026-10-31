@@ -10,6 +10,7 @@
 //! - Each unit compressed independently
 //! - Sparse compression units stored as holes
 //! - Uncompressed data stored when compression doesn't help
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -33,7 +34,7 @@ pub const COMPRESSION_UNIT_SIZE: usize = 65536;
 
 pub const COMPRESSION_BLOCK_SIZE: usize = 4096;
 
-pub fn decompress_lznt1(compressed: &[u8], decompressed: &mut [u8]) -> Result<usize, ()> {
+pub fn decompress_lznt1(compressed: &[u8], decompressed: &mut [u8]) -> Result<usize, NTSTATUS> {
     let mut src_pos = 0;
     let mut dst_pos = 0;
 
@@ -94,7 +95,7 @@ pub fn decompress_lznt1(compressed: &[u8], decompressed: &mut [u8]) -> Result<us
                         let distance = (token & 0x0FFF) as usize + 1;
 
                         if distance > dst_pos {
-                            return Err(()); // Invalid back reference
+                            return Err(STATUS_UNSUCCESSFUL); // Invalid back reference
                         }
 
                         let copy_start = dst_pos - distance;
@@ -114,7 +115,7 @@ pub fn decompress_lznt1(compressed: &[u8], decompressed: &mut [u8]) -> Result<us
     Ok(dst_pos)
 }
 
-pub fn compress_lznt1(data: &[u8], compressed: &mut [u8]) -> Result<usize, ()> {
+pub fn compress_lznt1(data: &[u8], compressed: &mut [u8]) -> Result<usize, NTSTATUS> {
     let mut src_pos = 0;
     let mut dst_pos = 0;
 
@@ -127,7 +128,7 @@ pub fn compress_lznt1(data: &[u8], compressed: &mut [u8]) -> Result<usize, ()> {
 
         if compressed_size < block_size {
             if dst_pos + 2 + compressed_size > compressed.len() {
-                return Err(()); // Output buffer too small
+                return Err(STATUS_UNSUCCESSFUL); // Output buffer too small
             }
 
             let header = 0x8000 | ((compressed_size - 1) as u16);
@@ -139,7 +140,7 @@ pub fn compress_lznt1(data: &[u8], compressed: &mut [u8]) -> Result<usize, ()> {
             dst_pos += compressed_size;
         } else {
             if dst_pos + 2 + block_size > compressed.len() {
-                return Err(()); // Output buffer too small
+                return Err(STATUS_UNSUCCESSFUL); // Output buffer too small
             }
 
             let header = (block_size - 1) as u16;
@@ -156,7 +157,7 @@ pub fn compress_lznt1(data: &[u8], compressed: &mut [u8]) -> Result<usize, ()> {
     Ok(dst_pos)
 }
 
-fn compress_block(data: &[u8], output: &mut Vec<u8>) -> Result<usize, ()> {
+fn compress_block(data: &[u8], output: &mut Vec<u8>) -> Result<usize, NTSTATUS> {
     let mut pos = 0;
     output.clear();
 
@@ -219,7 +220,7 @@ pub fn read_compressed_file(
     offset: u64,
     length: usize,
     output: &mut [u8],
-) -> Result<usize, ()> {
+) -> Result<usize, NTSTATUS> {
     let unit_index = (offset / COMPRESSION_UNIT_SIZE as u64) as usize;
     let unit_offset = (offset % COMPRESSION_UNIT_SIZE as u64) as usize;
 
@@ -242,7 +243,7 @@ pub fn write_compressed_file(
     data: &[u8],
     _offset: u64,
     compressed_output: &mut Vec<u8>,
-) -> Result<usize, ()> {
+) -> Result<usize, NTSTATUS> {
     let mut temp = vec![0u8; data.len() * 2]; // Pessimistic size estimate
     let compressed_size = compress_lznt1(data, &mut temp)?;
 

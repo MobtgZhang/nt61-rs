@@ -11,6 +11,7 @@
 //
 //! ## Chunk Table
 //! ReFS maintains a chunk table that maps file offsets to chunks.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use super::superblock::RefsSuperBlock;
 use alloc::vec::Vec;
@@ -183,12 +184,10 @@ impl ChunkTable {
 
     /// Find the entry containing a VCN
     pub fn find_entry(&self, vcn: u64) -> Option<&ChunkTableEntry> {
-        for entry in &self.entries {
-            if entry.contains(vcn) {
-                return Some(entry);
-            }
-        }
-        None
+        self.entries
+            .iter()
+            .find(|&entry| entry.contains(vcn))
+            .map(|v| v as _)
     }
 
     /// Get the number of entries
@@ -199,6 +198,12 @@ impl ChunkTable {
     /// Check if empty
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+}
+
+impl Default for ChunkTable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -302,7 +307,7 @@ pub fn allocate_chunk(
     if length == 0 || length > total_clusters {
         return None;
     }
-    let bitmap_len = ((total_clusters + 7) / 8) as usize;
+    let bitmap_len = total_clusters.div_ceil(8) as usize;
     if bitmap.len() < bitmap_len {
         return None;
     }
@@ -344,9 +349,9 @@ pub fn free_chunk(
     _sb: &RefsSuperBlock,
     bitmap: &mut [u8],
     chunk: &RefsChunkDescriptor,
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     if chunk.is_hole() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     for cluster in chunk.lcn..chunk.lcn + chunk.vcn_length {
         let byte = (cluster / 8) as usize;

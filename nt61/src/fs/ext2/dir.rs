@@ -15,6 +15,7 @@
 //! - Maximum filename length is 255 bytes (characters)
 //! - Entries are aligned to 4-byte boundaries
 //! - Record length may be larger than actual name length
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -202,46 +203,59 @@ impl Ext2DirEntryInfo {
 // Directory Reading
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read and parse directory entries from a directory inode
-pub fn read_directory(
+pub unsafe fn read_directory(
     device: *mut (),
     sb: &Ext2SuperBlock,
     inode: &Ext2Inode,
     entries: &mut Vec<Ext2DirEntryInfo>,
-) -> Result<usize, ()> {
-    if !inode.is_dir() {
-        return Err(());
-    }
-
-    let file_size = inode.get_size(sb) as usize;
-    let block_size = sb.get_block_size() as usize;
-
-    // Calculate number of blocks
-    let block_count = (file_size + block_size - 1) / block_size;
-
-    // read all blocks
-    let mut buffer = vec![0u8; block_count * block_size];
-    let mut offset = 0usize;
-
-    for block_num in 0..block_count {
-        let lba = super::inode::logical_to_lba(device, sb, inode, block_num as u32).ok_or(())?;
-        if super::superblock::read_sector(device, lba, &mut buffer[offset..offset + block_size])
-            .is_err()
-        {
-            return Err(());
+) -> Result<usize, NTSTATUS> {
+    unsafe {
+        if !inode.is_dir() {
+            return Err(STATUS_UNSUCCESSFUL);
         }
-        offset += block_size;
+
+        let file_size = inode.get_size(sb) as usize;
+        let block_size = sb.get_block_size() as usize;
+
+        // Calculate number of blocks
+        let block_count = file_size.div_ceil(block_size);
+
+        // read all blocks
+        let mut buffer = vec![0u8; block_count * block_size];
+        let mut offset = 0usize;
+
+        for block_num in 0..block_count {
+            let lba = super::inode::logical_to_lba(device, sb, inode, block_num as u32)
+                .ok_or(STATUS_UNSUCCESSFUL)?;
+            if super::superblock::read_sector(device, lba, &mut buffer[offset..offset + block_size])
+                .is_err()
+            {
+                return Err(STATUS_UNSUCCESSFUL);
+            }
+            offset += block_size;
+        }
+
+        // Parse directory entries
+        let has_filetype = (sb.incompatible_features & 0x02) != 0;
+        parse_directory_entries(&buffer, has_filetype, entries);
+
+        Ok(entries.len())
     }
-
-    // Parse directory entries
-    let has_filetype = (sb.incompatible_features & 0x02) != 0;
-    parse_directory_entries(&buffer, has_filetype, entries);
-
-    Ok(entries.len())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Parse directory entries from a buffer
-fn parse_directory_entries(buffer: &[u8], has_filetype: bool, entries: &mut Vec<Ext2DirEntryInfo>) {
+unsafe fn parse_directory_entries(
+    buffer: &[u8],
+    has_filetype: bool,
+    entries: &mut Vec<Ext2DirEntryInfo>,
+) {
     let entry_size = if has_filetype {
         EXT2_DIR_ENTRY_FTYPE_SIZE
     } else {
@@ -298,55 +312,64 @@ fn parse_directory_entries(buffer: &[u8], has_filetype: bool, entries: &mut Vec<
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Find a directory entry by name
-pub fn find_entry_in_dir(
+pub unsafe fn find_entry_in_dir(
     device: *mut (),
     sb: &Ext2SuperBlock,
     parent_inode_num: u32,
     name: &[u8],
 ) -> Option<Ext2DirEntry> {
-    // read parent inode
-    let parent_inode = read_inode(device, sb, parent_inode_num)?;
+    unsafe {
+        // read parent inode
+        let parent_inode = read_inode(device, sb, parent_inode_num)?;
 
-    if !parent_inode.is_dir() {
-        return None;
-    }
-
-    let file_size = parent_inode.get_size(sb) as usize;
-    let block_size = sb.get_block_size() as usize;
-
-    if file_size == 0 {
-        return None;
-    }
-
-    // Calculate number of blocks
-    let block_count = (file_size + block_size - 1) / block_size;
-
-    // read all blocks
-    let mut buffer = vec![0u8; block_count * block_size];
-    let mut offset = 0usize;
-
-    for block_num in 0..block_count {
-        let lba = match super::inode::logical_to_lba(device, sb, &parent_inode, block_num as u32) {
-            Some(l) => l,
-            None => return None,
-        };
-
-        if super::superblock::read_sector(device, lba, &mut buffer[offset..offset + block_size])
-            .is_err()
-        {
+        if !parent_inode.is_dir() {
             return None;
         }
-        offset += block_size;
-    }
 
-    // Search for entry
-    let has_filetype = (sb.incompatible_features & 0x02) != 0;
-    find_entry_in_buffer(&buffer, name, has_filetype)
+        let file_size = parent_inode.get_size(sb) as usize;
+        let block_size = sb.get_block_size() as usize;
+
+        if file_size == 0 {
+            return None;
+        }
+
+        // Calculate number of blocks
+        let block_count = file_size.div_ceil(block_size);
+
+        // read all blocks
+        let mut buffer = vec![0u8; block_count * block_size];
+        let mut offset = 0usize;
+
+        for block_num in 0..block_count {
+            let lba = super::inode::logical_to_lba(device, sb, &parent_inode, block_num as u32)?;
+
+            if super::superblock::read_sector(device, lba, &mut buffer[offset..offset + block_size])
+                .is_err()
+            {
+                return None;
+            }
+            offset += block_size;
+        }
+
+        // Search for entry
+        let has_filetype = (sb.incompatible_features & 0x02) != 0;
+        find_entry_in_buffer(&buffer, name, has_filetype)
+    }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Find a directory entry by name in a buffer
-fn find_entry_in_buffer(buffer: &[u8], name: &[u8], has_filetype: bool) -> Option<Ext2DirEntry> {
+unsafe fn find_entry_in_buffer(
+    buffer: &[u8],
+    name: &[u8],
+    has_filetype: bool,
+) -> Option<Ext2DirEntry> {
     let entry_size = if has_filetype {
         EXT2_DIR_ENTRY_FTYPE_SIZE
     } else {
@@ -415,21 +438,24 @@ fn find_entry_in_buffer(buffer: &[u8], name: &[u8], has_filetype: bool) -> Optio
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// List directory contents
-pub fn list_directory(
+pub unsafe fn list_directory(
     device: *mut (),
     sb: &Ext2SuperBlock,
     inode_num: u32,
 ) -> Option<Vec<Ext2DirEntryInfo>> {
     // read inode
-    let inode = read_inode(device, sb, inode_num)?;
+    let inode = unsafe { read_inode(device, sb, inode_num) }?;
 
     if !inode.is_dir() {
         return None;
     }
 
     let mut entries = Vec::new();
-    if read_directory(device, sb, &inode, &mut entries).is_err() {
+    if unsafe { read_directory(device, sb, &inode, &mut entries) }.is_err() {
         return None;
     }
 
@@ -440,8 +466,11 @@ pub fn list_directory(
 // Path Lookup
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Perform path lookup starting from root
-pub fn path_lookup(device: *mut (), sb: &Ext2SuperBlock, path: &[u8]) -> Option<u32> {
+pub unsafe fn path_lookup(device: *mut (), sb: &Ext2SuperBlock, path: &[u8]) -> Option<u32> {
     // Split path into components
     let components = split_path(path);
 
@@ -459,7 +488,7 @@ pub fn path_lookup(device: *mut (), sb: &Ext2SuperBlock, path: &[u8]) -> Option<
         }
 
         // Find the entry in current directory
-        let entry = find_entry_in_dir(device, sb, current_inode, component)?;
+        let entry = unsafe { find_entry_in_dir(device, sb, current_inode, component) }?;
         current_inode = entry.inode;
 
         // If there's a ".." component, we might need to go up
@@ -472,8 +501,11 @@ pub fn path_lookup(device: *mut (), sb: &Ext2SuperBlock, path: &[u8]) -> Option<
     Some(current_inode)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Perform path lookup starting from a given directory
-pub fn path_lookup_from(
+pub unsafe fn path_lookup_from(
     device: *mut (),
     sb: &Ext2SuperBlock,
     start_inode: u32,
@@ -496,7 +528,7 @@ pub fn path_lookup_from(
 
         // handle ".." specially
         if component == b".." {
-            let inode = read_inode(device, sb, current_inode)?;
+            let inode = unsafe { read_inode(device, sb, current_inode) }?;
             if inode.is_dir() {
                 // For "..", we need to read the directory entry for "."
                 // and get its parent. This is complex - simplified version
@@ -506,7 +538,7 @@ pub fn path_lookup_from(
         }
 
         // Find the entry in current directory
-        let entry = find_entry_in_dir(device, sb, current_inode, component)?;
+        let entry = unsafe { find_entry_in_dir(device, sb, current_inode, component) }?;
         current_inode = entry.inode;
     }
 
@@ -549,12 +581,12 @@ pub fn calculate_entry_size(name_len: usize, has_filetype: bool) -> u16 {
 
     // Round up to 4-byte boundary
     let total = header_size + name_len;
-    (((total + 3) / 4) * 4) as u16
+    (total.div_ceil(4) * 4) as u16
 }
 
 /// create a directory entry
 pub fn create_dir_entry(inode_num: u32, name: &[u8], file_type: u8, has_filetype: bool) -> Vec<u8> {
-    let rec_len = calculate_entry_size(name.len(), has_filetype) as u16;
+    let rec_len = calculate_entry_size(name.len(), has_filetype);
     let name_len = name.len() as u16;
 
     let mut entry = Vec::with_capacity(rec_len as usize);

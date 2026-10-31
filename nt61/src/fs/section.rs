@@ -13,6 +13,7 @@
 //! - Executable image loading
 //! - Shared memory between processes
 //! - Copy-on-write semantics
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -175,16 +176,16 @@ impl SectionManager {
         section_id
     }
 
-    pub fn open_section(&mut self, section_id: u64) -> Result<(), ()> {
+    pub fn open_section(&mut self, section_id: u64) -> Result<(), NTSTATUS> {
         if let Some(section) = self.sections.get_mut(&section_id) {
             section.add_ref();
             Ok(())
         } else {
-            Err(())
+            Err(STATUS_UNSUCCESSFUL)
         }
     }
 
-    pub fn close_section(&mut self, section_id: u64) -> Result<(), ()> {
+    pub fn close_section(&mut self, section_id: u64) -> Result<(), NTSTATUS> {
         if let Some(section) = self.sections.get_mut(&section_id) {
             if section.release() {
                 self.sections.remove(&section_id);
@@ -192,7 +193,7 @@ impl SectionManager {
             }
             Ok(())
         } else {
-            Err(())
+            Err(STATUS_UNSUCCESSFUL)
         }
     }
 
@@ -204,11 +205,11 @@ impl SectionManager {
         section_offset: u64,
         view_size: u64,
         protection: SectionProtection,
-    ) -> Result<u64, ()> {
-        let section = self.sections.get(&section_id).ok_or(())?;
+    ) -> Result<u64, NTSTATUS> {
+        let section = self.sections.get(&section_id).ok_or(STATUS_UNSUCCESSFUL)?;
 
         if section_offset + view_size > section.max_size {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
 
         let base =
@@ -229,7 +230,7 @@ impl SectionManager {
         Ok(base)
     }
 
-    pub fn unmap_view(&mut self, process_id: u32, base_address: u64) -> Result<(), ()> {
+    pub fn unmap_view(&mut self, process_id: u32, base_address: u64) -> Result<(), NTSTATUS> {
         if let Some(pos) = self
             .views
             .iter()
@@ -239,7 +240,7 @@ impl SectionManager {
             self.views_unmapped.fetch_add(1, Ordering::Relaxed);
             Ok(())
         } else {
-            Err(())
+            Err(STATUS_UNSUCCESSFUL)
         }
     }
 
@@ -291,6 +292,12 @@ impl SectionManager {
     }
 }
 
+impl Default for SectionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SectionStatistics {
     pub sections_created: u64,
@@ -312,22 +319,25 @@ pub fn create_file_mapping(
     file_id: u64,
     max_size: u64,
     protection: SectionProtection,
-) -> Result<u64, ()> {
+) -> Result<u64, NTSTATUS> {
     let mut mgr = SECTION_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     Ok(mgr.create_section(SectionType::File, Some(file_id), max_size, protection))
 }
 
-pub fn create_image_section(file_id: u64, max_size: u64) -> Result<u64, ()> {
+pub fn create_image_section(file_id: u64, max_size: u64) -> Result<u64, NTSTATUS> {
     let mut mgr = SECTION_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     let protection = SectionProtection::PAGE_EXECUTE_READWRITE;
     Ok(mgr.create_section(SectionType::Image, Some(file_id), max_size, protection))
 }
 
-pub fn create_pagefile_section(max_size: u64, protection: SectionProtection) -> Result<u64, ()> {
+pub fn create_pagefile_section(
+    max_size: u64,
+    protection: SectionProtection,
+) -> Result<u64, NTSTATUS> {
     let mut mgr = SECTION_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     Ok(mgr.create_section(SectionType::PageFile, None, max_size, protection))
 }
 
@@ -338,9 +348,9 @@ pub fn map_view_of_section(
     section_offset: u64,
     view_size: u64,
     protection: SectionProtection,
-) -> Result<u64, ()> {
+) -> Result<u64, NTSTATUS> {
     let mut mgr = SECTION_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.map_view(
         section_id,
         process_id,
@@ -351,15 +361,15 @@ pub fn map_view_of_section(
     )
 }
 
-pub fn unmap_view_of_section(process_id: u32, base_address: u64) -> Result<(), ()> {
+pub fn unmap_view_of_section(process_id: u32, base_address: u64) -> Result<(), NTSTATUS> {
     let mut mgr = SECTION_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.unmap_view(process_id, base_address)
 }
 
-pub fn close_section(section_id: u64) -> Result<(), ()> {
+pub fn close_section(section_id: u64) -> Result<(), NTSTATUS> {
     let mut mgr = SECTION_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.close_section(section_id)
 }
 

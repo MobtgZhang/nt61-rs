@@ -16,6 +16,7 @@
 //! Allow a client to cache file data locally while maintaining cache
 //! coherency with the server. When another client accesses the file,
 //! the server breaks the oplock and forces cache flush.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -152,7 +153,7 @@ impl LockManager {
         length: u64,
         lock_type: LockType,
         mandatory: bool,
-    ) -> Result<u64, ()> {
+    ) -> Result<u64, NTSTATUS> {
         let new_lock = ByteRangeLock {
             file_id,
             process_id,
@@ -166,7 +167,7 @@ impl LockManager {
         for existing in &self.locks {
             if existing.file_id == file_id && existing.conflicts_with(&new_lock) {
                 self.locks_denied.fetch_add(1, Ordering::Relaxed);
-                return Err(());
+                return Err(STATUS_UNSUCCESSFUL);
             }
         }
 
@@ -176,12 +177,12 @@ impl LockManager {
         Ok(key)
     }
 
-    pub fn release_lock(&mut self, key: u64) -> Result<(), ()> {
+    pub fn release_lock(&mut self, key: u64) -> Result<(), NTSTATUS> {
         if let Some(pos) = self.locks.iter().position(|l| l.key == key) {
             self.locks.remove(pos);
             Ok(())
         } else {
-            Err(())
+            Err(STATUS_UNSUCCESSFUL)
         }
     }
 
@@ -223,11 +224,11 @@ impl LockManager {
         file_id: u64,
         process_id: u32,
         level: OplockLevel,
-    ) -> Result<u64, ()> {
+    ) -> Result<u64, NTSTATUS> {
         if let Some(existing) = self.oplocks.get(&file_id) {
             if level == OplockLevel::Level2 && existing.breaking {
             } else {
-                return Err(()); // Can't grant oplock
+                return Err(STATUS_UNSUCCESSFUL); // Can't grant oplock
             }
         }
 
@@ -288,7 +289,7 @@ impl LockManager {
         }
     }
 
-    pub fn release_oplock(&mut self, key: u64) -> Result<(), ()> {
+    pub fn release_oplock(&mut self, key: u64) -> Result<(), NTSTATUS> {
         let file_id = self
             .oplocks
             .iter()
@@ -299,7 +300,7 @@ impl LockManager {
             self.oplocks.remove(&fid);
             Ok(())
         } else {
-            Err(())
+            Err(STATUS_UNSUCCESSFUL)
         }
     }
 
@@ -340,6 +341,12 @@ impl LockManager {
     }
 }
 
+impl Default for LockManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct LockStatistics {
     pub locks_granted: u64,
@@ -364,9 +371,9 @@ pub fn lock_range(
     length: u64,
     exclusive: bool,
     mandatory: bool,
-) -> Result<u64, ()> {
+) -> Result<u64, NTSTATUS> {
     let mut mgr = LOCK_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
 
     let lock_type = if exclusive {
         LockType::Exclusive
@@ -377,9 +384,9 @@ pub fn lock_range(
     mgr.acquire_lock(file_id, process_id, offset, length, lock_type, mandatory)
 }
 
-pub fn unlock_range(key: u64) -> Result<(), ()> {
+pub fn unlock_range(key: u64) -> Result<(), NTSTATUS> {
     let mut mgr = LOCK_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.release_lock(key)
 }
 
@@ -398,9 +405,9 @@ pub fn check_lock(
     }
 }
 
-pub fn request_oplock(file_id: u64, process_id: u32, level: OplockLevel) -> Result<u64, ()> {
+pub fn request_oplock(file_id: u64, process_id: u32, level: OplockLevel) -> Result<u64, NTSTATUS> {
     let mut mgr = LOCK_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.request_oplock(file_id, process_id, level)
 }
 
@@ -413,9 +420,9 @@ pub fn break_oplock(file_id: u64, for_write: bool) -> bool {
     }
 }
 
-pub fn release_oplock(key: u64) -> Result<(), ()> {
+pub fn release_oplock(key: u64) -> Result<(), NTSTATUS> {
     let mut mgr = LOCK_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.release_oplock(key)
 }
 

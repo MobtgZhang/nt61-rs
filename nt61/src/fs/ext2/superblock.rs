@@ -11,6 +11,7 @@
 //! ## On-Disk Format
 //! The superblock is 1024 bytes (2 sectors) and contains all key
 //! filesystem parameters.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -320,7 +321,7 @@ impl Ext2SuperBlock {
         if blocks_per_group == 0 {
             return 0;
         }
-        (self.blocks_count + blocks_per_group - 1) / blocks_per_group
+        self.blocks_count.div_ceil(blocks_per_group)
     }
 
     /// Get the number of inode groups
@@ -329,7 +330,7 @@ impl Ext2SuperBlock {
         if inodes_per_group == 0 {
             return 0;
         }
-        (self.inodes_count + inodes_per_group - 1) / inodes_per_group
+        self.inodes_count.div_ceil(inodes_per_group)
     }
 
     /// Get the inode size (for dynamic revision)
@@ -348,20 +349,20 @@ impl Ext2SuperBlock {
     /// Get the bytes needed for block bitmap in each group
     pub fn get_block_bitmap_size(&self) -> u32 {
         let blocks_per_group = self.blocks_per_group;
-        (blocks_per_group + 7) / 8
+        blocks_per_group.div_ceil(8)
     }
 
     /// Get the bytes needed for inode bitmap in each group
     pub fn get_inode_bitmap_size(&self) -> u32 {
         let inodes_per_group = self.inodes_per_group;
-        (inodes_per_group + 7) / 8
+        inodes_per_group.div_ceil(8)
     }
 
     /// Get the bytes needed for inode table in each group
     pub fn get_inode_table_size(&self) -> u32 {
         let inode_size = self.get_inode_size() as u32;
         let inodes_per_group = self.inodes_per_group;
-        ((inode_size * inodes_per_group) + self.get_block_size() - 1) / self.get_block_size()
+        (inode_size * inodes_per_group).div_ceil(self.get_block_size())
     }
 
     /// Get the total number of reserved blocks
@@ -506,6 +507,9 @@ impl Ext2SuperBlock {
 // Superblock read Functions
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read the superblock from a device at the given offset
 /// Returns the superblock if successful, None otherwise
 /// read the ext2/3/4 superblock at the standard partition-relative
@@ -518,7 +522,7 @@ impl Ext2SuperBlock {
 /// callers passed 0, so `is_valid()` failed (magic = 0) and mount
 /// returned None even though the partition was a perfectly valid
 /// ext2/3/4 filesystem.
-pub fn read_superblock(device: *mut (), offset: u64) -> Option<Ext2SuperBlock> {
+pub unsafe fn read_superblock(device: *mut (), offset: u64) -> Option<Ext2SuperBlock> {
     let mut buffer = [0u8; 1024];
     // The ext superblock is always at byte 1024 of the partition.
     // read the two adjacent 512-byte sectors (2 and 3) into our 1024
@@ -527,7 +531,7 @@ pub fn read_superblock(device: *mut (), offset: u64) -> Option<Ext2SuperBlock> {
     let sb_byte_offset = SUPERBLOCK_OFFSET + offset;
     let sb_sector = sb_byte_offset / 512;
     // Two adjacent sectors cover the 1024-byte superblock.
-    if read_sectors(device, sb_sector, 2, &mut buffer).is_err() {
+    if unsafe { read_sectors(device, sb_sector, 2, &mut buffer) }.is_err() {
         // kprintln!("[EXT2] Failed to read superblock at sector {}", sb_sector);
         return None;
     }
@@ -655,10 +659,13 @@ impl Ext2FeatureSupport {
 // Device read/write Helper
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read a sector from the device (helper function)
-pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
+pub unsafe fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), NTSTATUS> {
     if buffer.len() < 512 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     // Prefer the *active* partition mirror, when one is set by
@@ -669,7 +676,7 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
         let off = (sector as usize) * 512;
         let max_size = context.size;
         if off + 512 > max_size {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         // Dispatch to sys_ramdisk_read for the system partition
         let sys_base = crate::fs::sys_mirror_address();
@@ -684,7 +691,7 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
                 return Ok(());
             }
         }
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     // Fallback: route to RAM disk for bootstrap filesystem operations
@@ -696,53 +703,58 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
         if crate::drivers::storage::read_ahci_sector(sector as u32, buffer) {
             return Ok(());
         }
-        Err(())
+        Err(STATUS_UNSUCCESSFUL)
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read multiple sectors from device
-pub fn read_sectors(
+pub unsafe fn read_sectors(
     device: *mut (),
     start_sector: u64,
     count: u32,
     buffer: &mut [u8],
-) -> Result<(), ()> {
-    let sector_size = 512usize;
-    let needed = (count as usize) * sector_size;
+) -> Result<(), NTSTATUS> {
+    unsafe {
+        let sector_size = 512usize;
+        let needed = (count as usize) * sector_size;
 
-    if buffer.len() < needed {
-        return Err(());
-    }
-
-    // `start_sector` is a sector index, not a byte offset. Pass
-    // the per-sector index straight through to `read_sector`,
-    // which itself hands it to `ramdisk::read(sector_num, …)`.
-    // The previous code multiplied by `sector_size` here, which
-    // produced a byte offset that `ramdisk::read` then treated as
-    // a sector index — so reading the ext superblock at the
-    // canonical offset (sector 2) actually requested sector 1024
-    // of the system partition mirror, returning a buffer full of
-    // zeroes for any ext superblock smaller than 512 KiB.
-    for i in 0..count as usize {
-        let sector = start_sector + (i as u64);
-        if read_sector(
-            device,
-            sector,
-            &mut buffer[i * sector_size..(i + 1) * sector_size],
-        )
-        .is_err()
-        {
-            return Err(());
+        if buffer.len() < needed {
+            return Err(STATUS_UNSUCCESSFUL);
         }
-    }
 
-    Ok(())
+        // `start_sector` is a sector index, not a byte offset. Pass
+        // the per-sector index straight through to `read_sector`,
+        // which itself hands it to `ramdisk::read(sector_num, …)`.
+        // The previous code multiplied by `sector_size` here, which
+        // produced a byte offset that `ramdisk::read` then treated as
+        // a sector index — so reading the ext superblock at the
+        // canonical offset (sector 2) actually requested sector 1024
+        // of the system partition mirror, returning a buffer full of
+        // zeroes for any ext superblock smaller than 512 KiB.
+        for i in 0..count as usize {
+            let sector = start_sector + (i as u64);
+            if read_sector(
+                device,
+                sector,
+                &mut buffer[i * sector_size..(i + 1) * sector_size],
+            )
+            .is_err()
+            {
+                return Err(STATUS_UNSUCCESSFUL);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// write a sector to the device
-pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), ()> {
+pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), NTSTATUS> {
     if buffer.len() < 512 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     // Route to RAM disk or AHCI
@@ -754,7 +766,7 @@ pub fn write_sector(_device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), 
         if crate::drivers::storage::ahci::write_sector(0, 0, sector as u32, buffer) {
             return Ok(());
         }
-        Err(())
+        Err(STATUS_UNSUCCESSFUL)
     }
 }
 

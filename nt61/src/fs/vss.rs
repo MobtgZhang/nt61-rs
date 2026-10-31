@@ -15,6 +15,7 @@
 //! - Requesters (backup applications)
 //!
 //! This module provides kernel-level hooks for snapshot operations.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -75,7 +76,7 @@ impl VolumeSnapshot {
     }
 }
 
-pub type VssWriterCallback = fn(snapshot_id: u64) -> Result<(), ()>;
+pub type VssWriterCallback = fn(snapshot_id: u64) -> Result<(), NTSTATUS>;
 
 pub struct VssManager {
     snapshots: BTreeMap<u64, VolumeSnapshot>,
@@ -100,7 +101,7 @@ impl VssManager {
         &mut self,
         volume_id: u64,
         snapshot_type: SnapshotType,
-    ) -> Result<u64, ()> {
+    ) -> Result<u64, NTSTATUS> {
         let snapshot_id = self.generate_snapshot_id();
         let mut snapshot = VolumeSnapshot::new(snapshot_id, volume_id, snapshot_type);
 
@@ -115,14 +116,14 @@ impl VssManager {
         Ok(snapshot_id)
     }
 
-    pub fn delete_snapshot(&mut self, snapshot_id: u64) -> Result<(), ()> {
+    pub fn delete_snapshot(&mut self, snapshot_id: u64) -> Result<(), NTSTATUS> {
         if let Some(mut snapshot) = self.snapshots.remove(&snapshot_id) {
             snapshot.state = SnapshotState::Deleting;
 
             self.snapshots_deleted.fetch_add(1, Ordering::Relaxed);
             Ok(())
         } else {
-            Err(())
+            Err(STATUS_UNSUCCESSFUL)
         }
     }
 
@@ -158,6 +159,12 @@ impl VssManager {
     }
 }
 
+impl Default for VssManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct VssStatistics {
     pub snapshots_created: u64,
@@ -174,15 +181,15 @@ pub fn init() {
     *guard = Some(VssManager::new());
 }
 
-pub fn create_snapshot(volume_id: u64, snapshot_type: SnapshotType) -> Result<u64, ()> {
+pub fn create_snapshot(volume_id: u64, snapshot_type: SnapshotType) -> Result<u64, NTSTATUS> {
     let mut mgr = VSS_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.create_snapshot(volume_id, snapshot_type)
 }
 
-pub fn delete_snapshot(snapshot_id: u64) -> Result<(), ()> {
+pub fn delete_snapshot(snapshot_id: u64) -> Result<(), NTSTATUS> {
     let mut mgr = VSS_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.delete_snapshot(snapshot_id)
 }
 

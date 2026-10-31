@@ -9,6 +9,7 @@
 //! and $SII (Security Id Index) of the $Secure system file.
 //
 //! Each file/directory has a SecurityId that indexes into these structures.
+use crate::libs::ntdll::types::NTSTATUS;
 
 /// Maximum number of security descriptors in the cache.
 const MAX_SECURITY_DESCRIPTORS: usize = 256;
@@ -338,7 +339,7 @@ fn sid_matches(sid1: &[u8], sid2: &[u8]) -> bool {
     }
 
     // Compare identifier authority (bytes 2-7)
-    if &sid1[2..8] != &sid2[2..8] {
+    if sid1[2..8] != sid2[2..8] {
         return false;
     }
 
@@ -356,14 +357,14 @@ fn sid_matches_well_known(sid: &[u8], wk_sid: SecurityId) -> bool {
             sid.len() >= 8
                 && sid[0] == 0x01
                 && sid[1] == 0x01
-                && &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
+                && sid[2..8] == [0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
         }
         well_known_sids::SYSTEM => {
             // S-1-5-18
             sid.len() >= 12
                 && sid[0] == 0x01
                 && sid[1] == 0x02
-                && &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x05]
+                && sid[2..8] == [0x00, 0x00, 0x00, 0x00, 0x00, 0x05]
                 && sid[8] == 0x12
         }
         well_known_sids::ADMINISTRATORS => {
@@ -371,7 +372,7 @@ fn sid_matches_well_known(sid: &[u8], wk_sid: SecurityId) -> bool {
             sid.len() >= 12
                 && sid[0] == 0x01
                 && sid[1] == 0x02
-                && &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x05]
+                && sid[2..8] == [0x00, 0x00, 0x00, 0x00, 0x00, 0x05]
                 && u32::from_le_bytes([sid[8], sid[9], sid[10], sid[11]]) == 0x00000220
         }
         well_known_sids::USERS => {
@@ -379,7 +380,7 @@ fn sid_matches_well_known(sid: &[u8], wk_sid: SecurityId) -> bool {
             sid.len() >= 12
                 && sid[0] == 0x01
                 && sid[1] == 0x02
-                && &sid[2..8] == &[0x00, 0x00, 0x00, 0x00, 0x00, 0x05]
+                && sid[2..8] == [0x00, 0x00, 0x00, 0x00, 0x00, 0x05]
                 && u32::from_le_bytes([sid[8], sid[9], sid[10], sid[11]]) == 0x00000221
         }
         _ => false,
@@ -403,14 +404,11 @@ impl SecurityDescriptorCache {
 
     /// Look up a security descriptor by ID.
     pub fn lookup(&self, id: SecurityId) -> Option<&NtfsSecurityDescriptor> {
-        for entry in &self.entries {
-            if let Some(ref desc) = entry {
-                if desc.id == id {
-                    return Some(desc);
-                }
-            }
-        }
-        None
+        self.entries
+            .iter()
+            .flatten()
+            .find(|&desc| desc.id == id)
+            .map(|v| v as _)
     }
 
     /// Add a security descriptor to the cache.
@@ -566,6 +564,9 @@ impl SecurityInheritance {
     pub const INHERITED_ACE: Self = Self { bits: 0x00000010 };
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Inherit security descriptor from parent object.
 ///
 /// When a new object is created, its security descriptor is typically
@@ -578,7 +579,7 @@ impl SecurityInheritance {
 ///
 /// # Returns
 /// * Inherited security descriptor
-pub fn inherit_security(
+pub unsafe fn inherit_security(
     parent_sd: *const crate::se::seaccess::SecurityDescriptor,
     _is_directory: bool,
     _token: *const crate::se::token::Token,
@@ -667,12 +668,11 @@ pub fn check_access(sd: &NtfsSecurityDescriptor, caller_sid: &[u8], desired_acce
                             access_granted = true;
                         }
                     }
-                    AceType::AccessDenied => {
+                    AceType::AccessDenied
                         // Deny always takes precedence
-                        if (desired_access & access_mask) != 0 {
+                        if (desired_access & access_mask) != 0 => {
                             return false;
                         }
-                    }
                     _ => {}
                 }
             }
@@ -792,7 +792,7 @@ pub fn read_security_descriptor(
             // absolute LBAs, so the hidden-sector base is added.
             let first_sector =
                 ntfs.hidden_sectors + super::cluster_to_sector(cluster, ntfs.cluster_size);
-            let sectors_per_cluster = (cluster_size + 511) / 512;
+            let sectors_per_cluster = cluster_size.div_ceil(512);
             for sector_index in 0..sectors_per_cluster {
                 if filled >= read_limit {
                     break;
@@ -981,8 +981,7 @@ pub fn serialize_sds_descriptor(descriptor: &NtfsSecurityDescriptor) -> alloc::v
             .copy_from_slice(&descriptor.group[..group_size]);
     }
     if dacl_size > 0 {
-        bytes[dacl_offset..dacl_offset + dacl_size]
-            .copy_from_slice(&descriptor.dacl[..dacl_size]);
+        bytes[dacl_offset..dacl_offset + dacl_size].copy_from_slice(&descriptor.dacl[..dacl_size]);
     }
     bytes
 }
@@ -996,7 +995,7 @@ pub fn build_sds_entry(security_id: SecurityId, descriptor: &[u8]) -> alloc::vec
     entry[8..12].copy_from_slice(&security_id.to_le_bytes());
     entry[12..16].copy_from_slice(&0u32.to_le_bytes());
     entry.extend_from_slice(descriptor);
-    while entry.len() % 8 != 0 {
+    while !entry.len().is_multiple_of(8) {
         entry.push(0);
     }
     entry
@@ -1015,11 +1014,12 @@ pub fn update_secure_sds(
     ntfs: &super::NtfsFileSystem,
     security_id: SecurityId,
     descriptor: &[u8],
-) -> Result<(), ()> {
-    let mut record: alloc::vec::Vec<u8> = match super::read_mft_record(&ntfs.ntfs_data, SECURE_RECORD_NUMBER) {
-        Some(record) => record.to_vec(),
-        None => alloc::vec![0u8; 1024],
-    };
+) -> Result<(), NTSTATUS> {
+    let mut record: alloc::vec::Vec<u8> =
+        match super::read_mft_record(&ntfs.ntfs_data, SECURE_RECORD_NUMBER) {
+            Some(record) => record.to_vec(),
+            None => alloc::vec![0u8; 1024],
+        };
     record[..4].copy_from_slice(b"FILE");
     record[8..10].copy_from_slice(&1u16.to_le_bytes());
     record[0x14..0x16].copy_from_slice(&1024u16.to_le_bytes());

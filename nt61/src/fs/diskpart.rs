@@ -45,6 +45,12 @@ impl DiskPartState {
     }
 }
 
+impl Default for DiskPartState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn run_interactive() -> bool {
     print_str("\r\nMicrosoft DiskPart version 6.1.7601\r\n");
     print_str("Copyright (C) 1999-2008 Microsoft Corporation.\r\n");
@@ -350,7 +356,7 @@ fn detail_disk(state: &DiskPartState) -> Result<String, String> {
 
     if let Some(_info) = disk::get_disk(disk_index) {
         output.push_str(&format!("\r\nDisk ID: {:08X}\r\n", disk_index));
-        output.push_str(&format!("Type   : SATA\r\n"));
+        output.push_str("Type   : SATA\r\n");
         output.push_str("Status : Online\r\n");
         output.push_str(&format!("Path   : \\Device\\Harddisk{}\r\n", disk_index));
         output.push_str("Target : 0\r\n");

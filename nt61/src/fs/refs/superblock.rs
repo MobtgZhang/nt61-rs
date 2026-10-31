@@ -15,6 +15,7 @@
 //! - Sector and cluster sizes
 //! - Total cluster count
 //! - Volume and object identifiers
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -404,7 +405,7 @@ pub fn verify_superblock_checksum(sb: &RefsSuperBlock) -> bool {
     let mut sum: u64 = 0;
 
     for (i, &byte) in sb_bytes.iter().enumerate() {
-        if i >= 8 && i < 12 {
+        if (8..12).contains(&i) {
             // Skip checksum bytes
             continue;
         }
@@ -421,12 +422,17 @@ pub fn verify_superblock_checksum(sb: &RefsSuperBlock) -> bool {
 // ============================================================================
 
 /// read sectors from device
-fn read_sectors(_device: *mut (), offset: u64, count: u32, buffer: &mut [u8]) -> Result<(), ()> {
+fn read_sectors(
+    _device: *mut (),
+    offset: u64,
+    count: u32,
+    buffer: &mut [u8],
+) -> Result<(), NTSTATUS> {
     let sector_size = 512usize;
     let needed = (count as usize) * sector_size;
 
     if buffer.len() < needed {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     for i in 0..count as usize {
@@ -450,7 +456,7 @@ fn read_sectors(_device: *mut (), offset: u64, count: u32, buffer: &mut [u8]) ->
             continue;
         }
 
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     Ok(())
@@ -461,7 +467,7 @@ fn read_sectors(_device: *mut (), offset: u64, count: u32, buffer: &mut [u8]) ->
 /// ReFS does not expose the object-table LBA as a superblock scalar. The
 /// table is a B+ tree page adjacent to the superblock copies, so locate it by
 /// validating its page magic and basic header rather than trusting an offset.
-pub fn read_object_id_table_lba(_sb: &RefsSuperBlock) -> Result<u64, ()> {
+pub fn read_object_id_table_lba(_sb: &RefsSuperBlock) -> Result<u64, NTSTATUS> {
     let start_byte = SUPERBLOCK_OFFSET + SUPERBLOCK_SIZE as u64;
     let scan_limit = 16 * 1024 * 1024;
     let sector_size = 512u64;
@@ -477,7 +483,7 @@ pub fn read_object_id_table_lba(_sb: &RefsSuperBlock) -> Result<u64, ()> {
         )
         .is_err()
         {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
 
         if crate::fs::refs::btree::parse_page(&buffer, lba)
@@ -488,5 +494,5 @@ pub fn read_object_id_table_lba(_sb: &RefsSuperBlock) -> Result<u64, ()> {
         }
     }
 
-    Err(())
+    Err(STATUS_UNSUCCESSFUL)
 }

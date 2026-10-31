@@ -185,6 +185,12 @@ impl Ext2GroupDescTable {
     }
 }
 
+impl Default for Ext2GroupDescTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ============================================================================
 // group Descriptor Table Functions
 // ============================================================================
@@ -201,7 +207,7 @@ pub fn calculate_gdt_size(sb: &Ext2SuperBlock) -> usize {
     // Round up to block boundary
     let total = group_count * desc_size;
     let block_size = sb.get_block_size() as usize;
-    ((total + block_size - 1) / block_size) * block_size
+    total.div_ceil(block_size) * block_size
 }
 
 /// Calculate the block number where the GDT starts
@@ -214,8 +220,14 @@ pub fn get_gdt_start_block(sb: &Ext2SuperBlock) -> u64 {
     superblock_block + 1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read the entire group descriptor table from disk
-pub fn read_group_desc_table(device: *mut (), sb: &Ext2SuperBlock) -> Option<Ext2GroupDescTable> {
+pub unsafe fn read_group_desc_table(
+    device: *mut (),
+    sb: &Ext2SuperBlock,
+) -> Option<Ext2GroupDescTable> {
     let group_count = sb.get_group_count();
     let block_size = sb.get_block_size() as usize;
 
@@ -228,14 +240,16 @@ pub fn read_group_desc_table(device: *mut (), sb: &Ext2SuperBlock) -> Option<Ext
 
     // Calculate total size needed
     let total_size = (group_count as usize) * desc_size;
-    let blocks_needed = (total_size + block_size - 1) / block_size;
+    let blocks_needed = total_size.div_ceil(block_size);
 
     // read the GDT
     let gdt_start = get_gdt_start_block(sb);
     let mut buffer = vec![0u8; blocks_needed * block_size];
 
-    if super::superblock::read_sectors(device, gdt_start, blocks_needed as u32, &mut buffer)
-        .is_err()
+    if unsafe {
+        super::superblock::read_sectors(device, gdt_start, blocks_needed as u32, &mut buffer)
+    }
+    .is_err()
     {
         // kprintln!("[EXT2] Failed to read group descriptor table");
         return None;
@@ -260,45 +274,50 @@ pub fn read_group_desc_table(device: *mut (), sb: &Ext2SuperBlock) -> Option<Ext
     })
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read a single group descriptor
-pub fn read_group_descriptor(
+pub unsafe fn read_group_descriptor(
     device: *mut (),
     sb: &Ext2SuperBlock,
     group_num: u32,
 ) -> Option<Ext2GroupDesc> {
-    let group_count = sb.get_group_count();
-    if group_num >= group_count {
-        // kprintln!("[EXT2] group number {} out of range (max {})", group_num, group_count);
-        return None;
+    unsafe {
+        let group_count = sb.get_group_count();
+        if group_num >= group_count {
+            // kprintln!("[EXT2] group number {} out of range (max {})", group_num, group_count);
+            return None;
+        }
+
+        // Determine descriptor size
+        let desc_size = if sb.is_dynamic_rev() && sb.inode_size >= 255 {
+            EXT2_BGDESC_SIZE_NEW
+        } else {
+            EXT2_BGDESC_SIZE_OLD
+        };
+
+        // Calculate block and offset
+        let block_size = sb.get_block_size() as usize;
+        let gdt_start = get_gdt_start_block(sb);
+        let desc_offset = (group_num as usize) * desc_size;
+        let block_offset = desc_offset % block_size;
+        let block_num = desc_offset / block_size;
+
+        // read the block
+        let mut buffer = vec![0u8; block_size];
+        let sector = (gdt_start + block_num as u64) * (block_size / 512) as u64;
+
+        if super::superblock::read_sector(device, sector, &mut buffer).is_err() {
+            // kprintln!("[EXT2] Failed to read GDT block for group {}", group_num);
+            return None;
+        }
+
+        // Parse descriptor
+        Some(core::ptr::read_unaligned(
+            buffer.as_ptr().add(block_offset) as *const Ext2GroupDesc
+        ))
     }
-
-    // Determine descriptor size
-    let desc_size = if sb.is_dynamic_rev() && sb.inode_size >= 255 {
-        EXT2_BGDESC_SIZE_NEW
-    } else {
-        EXT2_BGDESC_SIZE_OLD
-    };
-
-    // Calculate block and offset
-    let block_size = sb.get_block_size() as usize;
-    let gdt_start = get_gdt_start_block(sb);
-    let desc_offset = (group_num as usize) * desc_size;
-    let block_offset = desc_offset % block_size;
-    let block_num = desc_offset / block_size;
-
-    // read the block
-    let mut buffer = vec![0u8; block_size];
-    let sector = (gdt_start + block_num as u64) * (block_size / 512) as u64;
-
-    if super::superblock::read_sector(device, sector, &mut buffer).is_err() {
-        // kprintln!("[EXT2] Failed to read GDT block for group {}", group_num);
-        return None;
-    }
-
-    // Parse descriptor
-    Some(unsafe {
-        core::ptr::read_unaligned(buffer.as_ptr().add(block_offset) as *const Ext2GroupDesc)
-    })
 }
 
 // ============================================================================
@@ -351,7 +370,7 @@ pub fn has_backup_superblock(sb: &Ext2SuperBlock, group: u32) -> bool {
     }
 
     // Groups like 25, 27, 29, 31 for larger filesystems
-    if group >= 25 && group <= 27 {
+    if (25..=27).contains(&group) {
         return true;
     }
 

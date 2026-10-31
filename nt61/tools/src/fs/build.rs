@@ -2846,13 +2846,25 @@ pub fn build_userland_images(arch: &str) -> Result<()> {
         .arg("--target")
         .arg(target)
         .arg("-p")
-        .arg("nt61-driver");
+        .arg("nt61-driver")
+        .arg("--no-default-features")
+        .arg(format!("--features=driver-{arch}"));
     if matches!(arch, "riscv64" | "loongarch64") {
         // These two targets link the kernel and loader with the
         // freestanding `kernel_entry` symbol, but a boot driver must be
         // entered through `DriverEntry`. Setting `RUSTFLAGS` here
         // overrides the workspace entry symbol for this crate only.
-        driver_command.env("RUSTFLAGS", "-C link-arg=-e -C link-arg=DriverEntry");
+        // The override must keep `--emit-relocs`: without it the driver
+        // ELF loses its R_RISCV_64 / R_LARCH_64 records, so the
+        // ELF→PE wrapper cannot synthesize a PE .reloc table and
+        // every absolute word in .rodata (e.g. PNP ID string pointers)
+        // keeps its link-time VA. At a runtime base that is not the
+        // link base those loads fault with a LOAD_ACCESS_PAGE_FAULT
+        // before DriverEntry finishes (seen as acpi.sys driver 9/13).
+        driver_command.env(
+            "RUSTFLAGS",
+            "-C link-arg=--emit-relocs -C link-arg=-e -C link-arg=DriverEntry",
+        );
     }
     let status = driver_command.status().map_err(BuildError::Io)?;
     if !status.success() {
@@ -2987,7 +2999,8 @@ fn real_pe(artifact_name: &str) -> Vec<u8> {
         // target whose ABI actually matches this image.
         let a_bare = a.contains(&format!("target/{bare_metal}/"));
         let b_bare = b.contains(&format!("target/{bare_metal}/"));
-        let is_userland = artifact_name == "nt61-cmd.efi" || artifact_name == "nt61-driver.efi";
+        let is_userland =
+            artifact_name == "nt61-cmd.efi" || artifact_name.starts_with("nt61-driver-");
         let a_expected = if is_userland { !a_bare } else { a_bare };
         let b_expected = if is_userland { !b_bare } else { b_bare };
         b_expected
@@ -3271,52 +3284,52 @@ fn build_system_images() -> Vec<SystemImage> {
         // device tree walker runs in the kernel.
         SystemImage {
             name: "drivers/disk.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-disk.efi"),
         },
         SystemImage {
             name: "drivers/classpnp.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-classpnp.efi"),
         },
         SystemImage {
             name: "drivers/partmgr.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-partmgr.efi"),
         },
         SystemImage {
             name: "drivers/volmgr.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-volmgr.efi"),
         },
         SystemImage {
             name: "drivers/storahci.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-storahci.efi"),
         },
         SystemImage {
             name: "drivers/iastor.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-iastor.efi"),
         },
         SystemImage {
             name: "drivers/stornvme.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-stornvme.efi"),
         },
         // System infrastructure drivers.
         SystemImage {
             name: "drivers/pci.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-pci.efi"),
         },
         SystemImage {
             name: "drivers/acpi.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-acpi.efi"),
         },
         SystemImage {
             name: "drivers/intelppm.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-intelppm.efi"),
         },
         SystemImage {
             name: "drivers/mssmbios.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-mssmbios.efi"),
         },
         SystemImage {
             name: "drivers/hpet.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-hpet.efi"),
         },
         // Display driver stack — these are the three drivers
         // the user expects to see brought up before
@@ -3328,15 +3341,15 @@ fn build_system_images() -> Vec<SystemImage> {
         //                     \\Device\\Video0)
         SystemImage {
             name: "drivers/vga.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-vga.efi"),
         },
         SystemImage {
             name: "drivers/vgapnp.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-vgapnp.efi"),
         },
         SystemImage {
             name: "drivers/videoprt.sys",
-            bytes: real_pe("nt61-driver.efi"),
+            bytes: real_pe("nt61-driver-videoprt.efi"),
         },
     ]
 }

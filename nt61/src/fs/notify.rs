@@ -15,6 +15,7 @@
 //! The notification system maintains a list of watchers for each directory.
 //! When file system operations occur, the FS driver calls notify_change()
 //! which propagates events to all registered watchers.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -172,13 +173,13 @@ impl NotifyManager {
 
         self.directory_watchers
             .entry(directory_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(watcher_id);
 
         watcher_id
     }
 
-    pub fn unregister_watcher(&mut self, watcher_id: u64) -> Result<(), ()> {
+    pub fn unregister_watcher(&mut self, watcher_id: u64) -> Result<(), NTSTATUS> {
         if let Some(watcher) = self.watchers.remove(&watcher_id) {
             if let Some(watcher_list) = self.directory_watchers.get_mut(&watcher.directory_id) {
                 watcher_list.retain(|&id| id != watcher_id);
@@ -188,7 +189,7 @@ impl NotifyManager {
             }
             Ok(())
         } else {
-            Err(())
+            Err(STATUS_UNSUCCESSFUL)
         }
     }
 
@@ -268,6 +269,12 @@ impl NotifyManager {
     }
 }
 
+impl Default for NotifyManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct NotifyStatistics {
     pub events_posted: u64,
@@ -287,15 +294,15 @@ pub fn watch_directory(
     process_id: u32,
     filter: NotifyFilter,
     watch_subtree: bool,
-) -> Result<u64, ()> {
+) -> Result<u64, NTSTATUS> {
     let mut mgr = NOTIFY_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     Ok(mgr.register_watcher(directory_id, process_id, filter, watch_subtree))
 }
 
-pub fn unwatch_directory(watcher_id: u64) -> Result<(), ()> {
+pub fn unwatch_directory(watcher_id: u64) -> Result<(), NTSTATUS> {
     let mut mgr = NOTIFY_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.unregister_watcher(watcher_id)
 }
 

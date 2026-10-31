@@ -15,6 +15,7 @@
 //! - Which operations to filter (IRP_MJ_*)
 //! - Pre-operation and post-operation callbacks
 //! - Instance contexts per volume
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -165,17 +166,17 @@ impl FilterManager {
         self.filters.push(filter);
 
         self.filters
-            .sort_by(|a, b| b.registration.altitude.cmp(&a.registration.altitude));
+            .sort_by_key(|a| core::cmp::Reverse(a.registration.altitude));
 
         id
     }
 
-    pub fn unregister_filter(&mut self, filter_id: u64) -> Result<(), ()> {
+    pub fn unregister_filter(&mut self, filter_id: u64) -> Result<(), NTSTATUS> {
         if let Some(pos) = self.filters.iter().position(|f| f.id == filter_id) {
             self.filters.remove(pos);
             Ok(())
         } else {
-            Err(())
+            Err(STATUS_UNSUCCESSFUL)
         }
     }
 
@@ -230,6 +231,12 @@ impl FilterManager {
     }
 }
 
+impl Default for FilterManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FilterInfo {
     pub id: u64,
@@ -252,15 +259,15 @@ pub fn init() {
     *guard = Some(FilterManager::new());
 }
 
-pub fn register_minifilter(registration: MinifilterRegistration) -> Result<u64, ()> {
+pub fn register_minifilter(registration: MinifilterRegistration) -> Result<u64, NTSTATUS> {
     let mut mgr = FILTER_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     Ok(mgr.register_filter(registration))
 }
 
-pub fn unregister_minifilter(filter_id: u64) -> Result<(), ()> {
+pub fn unregister_minifilter(filter_id: u64) -> Result<(), NTSTATUS> {
     let mut mgr = FILTER_MANAGER.lock();
-    let mgr = mgr.as_mut().ok_or(())?;
+    let mgr = mgr.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
     mgr.unregister_filter(filter_id)
 }
 

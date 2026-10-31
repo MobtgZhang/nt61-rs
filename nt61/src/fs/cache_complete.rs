@@ -164,7 +164,7 @@ impl FileCache {
     }
 
     fn write_to_disk(&self, key: &FileCacheKey, data: &[u8]) -> Result<(), &'static str> {
-        let disk_index = key.volume_id.min(0) as usize;
+        let disk_index = 0_usize;
         let written = disk::disk_write(disk_index, key.offset, data.len(), data);
         if written == data.len() {
             Ok(())

@@ -9,7 +9,8 @@
 //! - Bit 1 = second item in the group
 //! - etc.
 //
-//! A bit value of 0 means free, 1 means allocated.
+//!   A bit value of 0 means free, 1 means allocated.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -37,44 +38,62 @@ pub const BITS_PER_U32: usize = 32;
 // Bitmap Block Operations
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read a block bitmap from disk
-pub fn read_block_bitmap(device: *mut (), sb: &Ext2SuperBlock, group_num: u32) -> Option<Vec<u8>> {
-    // Get group descriptor
-    let group_desc = read_group_descriptor(device, sb, group_num)?;
-    let block_bitmap = group_desc.get_block_bitmap_block();
+pub unsafe fn read_block_bitmap(
+    device: *mut (),
+    sb: &Ext2SuperBlock,
+    group_num: u32,
+) -> Option<Vec<u8>> {
+    unsafe {
+        // Get group descriptor
+        let group_desc = read_group_descriptor(device, sb, group_num)?;
+        let block_bitmap = group_desc.get_block_bitmap_block();
 
-    let block_size = sb.get_block_size() as usize;
-    let mut bitmap = vec![0u8; block_size];
+        let block_size = sb.get_block_size() as usize;
+        let mut bitmap = vec![0u8; block_size];
 
-    // Convert block number to LBA
-    let lba = block_bitmap * (block_size / 512) as u64;
+        // Convert block number to LBA
+        let lba = block_bitmap * (block_size / 512) as u64;
 
-    if super::superblock::read_sector(device, lba, &mut bitmap).is_err() {
-        // kprintln!("[EXT2] Failed to read block bitmap for group {}", group_num);
-        return None;
+        if super::superblock::read_sector(device, lba, &mut bitmap).is_err() {
+            // kprintln!("[EXT2] Failed to read block bitmap for group {}", group_num);
+            return None;
+        }
+
+        Some(bitmap)
     }
-
-    Some(bitmap)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read an inode bitmap from disk
-pub fn read_inode_bitmap(device: *mut (), sb: &Ext2SuperBlock, group_num: u32) -> Option<Vec<u8>> {
-    // Get group descriptor
-    let group_desc = read_group_descriptor(device, sb, group_num)?;
-    let inode_bitmap = group_desc.get_inode_bitmap_block();
+pub unsafe fn read_inode_bitmap(
+    device: *mut (),
+    sb: &Ext2SuperBlock,
+    group_num: u32,
+) -> Option<Vec<u8>> {
+    unsafe {
+        // Get group descriptor
+        let group_desc = read_group_descriptor(device, sb, group_num)?;
+        let inode_bitmap = group_desc.get_inode_bitmap_block();
 
-    let block_size = sb.get_block_size() as usize;
-    let mut bitmap = vec![0u8; block_size];
+        let block_size = sb.get_block_size() as usize;
+        let mut bitmap = vec![0u8; block_size];
 
-    // Convert block number to LBA
-    let lba = inode_bitmap * (block_size / 512) as u64;
+        // Convert block number to LBA
+        let lba = inode_bitmap * (block_size / 512) as u64;
 
-    if super::superblock::read_sector(device, lba, &mut bitmap).is_err() {
-        // kprintln!("[EXT2] Failed to read inode bitmap for group {}", group_num);
-        return None;
+        if super::superblock::read_sector(device, lba, &mut bitmap).is_err() {
+            // kprintln!("[EXT2] Failed to read inode bitmap for group {}", group_num);
+            return None;
+        }
+
+        Some(bitmap)
     }
-
-    Some(bitmap)
 }
 
 // ============================================================================
@@ -113,8 +132,11 @@ pub fn clear_bit(bitmap: &mut [u8], bit: usize) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Find the first zero bit in a bitmap
-pub fn find_first_zero(bitmap: &[u8], max_bits: usize) -> Option<usize> {
+pub unsafe fn find_first_zero(bitmap: &[u8], max_bits: usize) -> Option<usize> {
     for (byte_index, &byte) in bitmap.iter().enumerate() {
         if byte != 0xFF {
             // Not all bits are set, find the first zero
@@ -129,25 +151,27 @@ pub fn find_first_zero(bitmap: &[u8], max_bits: usize) -> Option<usize> {
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// count the number of set bits in a bitmap
-pub fn count_bits(bitmap: &[u8]) -> usize {
+pub unsafe fn count_bits(bitmap: &[u8]) -> usize {
     bitmap.iter().map(|&byte| byte.count_ones() as usize).sum()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// count the number of free bits in a bitmap
-pub fn count_free_bits(bitmap: &[u8], max_bits: usize) -> usize {
+pub unsafe fn count_free_bits(bitmap: &[u8], max_bits: usize) -> usize {
     let total_bits = bitmap.len() * 8;
     let effective_bits = core::cmp::min(total_bits, max_bits);
     let used_bits = count_bits(bitmap);
     // Only count bits within max_bits range
-    let _extra_bits = if total_bits > max_bits {
-        total_bits - max_bits
-    } else {
-        0
-    };
+    let _extra_bits = total_bits.saturating_sub(max_bits);
     effective_bits.saturating_sub(used_bits.saturating_sub(if total_bits > max_bits {
         // count set bits in the extra region
-        let extra_bytes = (total_bits - max_bits + 7) / 8;
+        let extra_bytes = (total_bits - max_bits).div_ceil(8);
         let start = bitmap.len() - extra_bytes;
         bitmap[start..]
             .iter()
@@ -162,14 +186,17 @@ pub fn count_free_bits(bitmap: &[u8], max_bits: usize) -> usize {
 // Block Allocation
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Allocate a free block in a specific block group
-pub fn allocate_block_in_group(
+pub unsafe fn allocate_block_in_group(
     device: *mut (),
     sb: &Ext2SuperBlock,
     group_num: u32,
 ) -> Option<u32> {
-    let mut bitmap = read_block_bitmap(device, sb, group_num)?;
-    let group_desc = read_group_descriptor(device, sb, group_num)?;
+    let mut bitmap = unsafe { read_block_bitmap(device, sb, group_num) }?;
+    let group_desc = unsafe { read_group_descriptor(device, sb, group_num) }?;
 
     let blocks_per_group = sb.blocks_per_group;
     let _first_block = if group_num == 0 {
@@ -203,8 +230,11 @@ pub fn allocate_block_in_group(
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Allocate a free block anywhere in the filesystem
-pub fn allocate_block(device: *mut (), sb: &Ext2SuperBlock) -> Option<u32> {
+pub unsafe fn allocate_block(device: *mut (), sb: &Ext2SuperBlock) -> Option<u32> {
     let group_count = sb.get_group_count();
 
     // Search each block group for a free block
@@ -218,8 +248,15 @@ pub fn allocate_block(device: *mut (), sb: &Ext2SuperBlock) -> Option<u32> {
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Free a block
-pub fn free_block(device: *mut (), sb: &Ext2SuperBlock, block_num: u64) -> Result<(), ()> {
+pub unsafe fn free_block(
+    device: *mut (),
+    sb: &Ext2SuperBlock,
+    block_num: u64,
+) -> Result<(), NTSTATUS> {
     let blocks_per_group = sb.blocks_per_group as u64;
 
     // Calculate which group this block belongs to
@@ -227,9 +264,9 @@ pub fn free_block(device: *mut (), sb: &Ext2SuperBlock, block_num: u64) -> Resul
     let block_index = ((block_num - sb.first_data_block as u64) % blocks_per_group) as usize;
 
     // read bitmap
-    let mut bitmap = match read_block_bitmap(device, sb, group_num) {
+    let mut bitmap = match unsafe { read_block_bitmap(device, sb, group_num) } {
         Some(b) => b,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
 
     // Clear the bit
@@ -240,9 +277,9 @@ pub fn free_block(device: *mut (), sb: &Ext2SuperBlock, block_num: u64) -> Resul
     clear_bit(&mut bitmap, block_index);
 
     // write bitmap back
-    let group_desc = match read_group_descriptor(device, sb, group_num) {
+    let group_desc = match unsafe { read_group_descriptor(device, sb, group_num) } {
         Some(gd) => gd,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
 
     let lba = group_desc.get_block_bitmap_block() * (sb.get_block_size() / 512) as u64;
@@ -251,14 +288,17 @@ pub fn free_block(device: *mut (), sb: &Ext2SuperBlock, block_num: u64) -> Resul
     Ok(())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if a block is allocated
-pub fn is_block_allocated(device: *mut (), sb: &Ext2SuperBlock, block_num: u64) -> bool {
+pub unsafe fn is_block_allocated(device: *mut (), sb: &Ext2SuperBlock, block_num: u64) -> bool {
     let blocks_per_group = sb.blocks_per_group as u64;
 
     let group_num = ((block_num - sb.first_data_block as u64) / blocks_per_group) as u32;
     let block_index = ((block_num - sb.first_data_block as u64) % blocks_per_group) as usize;
 
-    let bitmap = match read_block_bitmap(device, sb, group_num) {
+    let bitmap = match unsafe { read_block_bitmap(device, sb, group_num) } {
         Some(b) => b,
         None => return false,
     };
@@ -270,14 +310,17 @@ pub fn is_block_allocated(device: *mut (), sb: &Ext2SuperBlock, block_num: u64) 
 // Inode Allocation
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Allocate a free inode in a specific block group
-pub fn allocate_inode_in_group(
+pub unsafe fn allocate_inode_in_group(
     device: *mut (),
     sb: &Ext2SuperBlock,
     group_num: u32,
     _is_dir: bool,
 ) -> Option<u32> {
-    let mut bitmap = read_inode_bitmap(device, sb, group_num)?;
+    let mut bitmap = unsafe { read_inode_bitmap(device, sb, group_num) }?;
 
     let inodes_per_group = sb.inodes_per_group;
     let first_inode = if group_num == 0 {
@@ -301,10 +344,7 @@ pub fn allocate_inode_in_group(
             set_bit(&mut bitmap, inode_index);
 
             // write bitmap back
-            let group_desc = match read_group_descriptor(device, sb, group_num) {
-                Some(gd) => gd,
-                None => return None,
-            };
+            let group_desc = unsafe { read_group_descriptor(device, sb, group_num) }?;
 
             let inode_bitmap = group_desc.get_inode_bitmap_block();
             let lba = inode_bitmap * (sb.get_block_size() / 512) as u64;
@@ -320,8 +360,11 @@ pub fn allocate_inode_in_group(
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Allocate a free inode anywhere in the filesystem
-pub fn allocate_inode(
+pub unsafe fn allocate_inode(
     device: *mut (),
     sb: &Ext2SuperBlock,
     preferred_group: Option<u32>,
@@ -342,7 +385,7 @@ pub fn allocate_inode(
     let mut best_free = 0u32;
 
     for group in 0..group_count {
-        if let Some(gd) = read_group_descriptor(device, sb, group) {
+        if let Some(gd) = unsafe { read_group_descriptor(device, sb, group) } {
             let free = gd.get_free_inodes() as u32;
             if free > best_free {
                 best_free = free;
@@ -359,10 +402,17 @@ pub fn allocate_inode(
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Free an inode
-pub fn free_inode(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> Result<(), ()> {
+pub unsafe fn free_inode(
+    device: *mut (),
+    sb: &Ext2SuperBlock,
+    inode_num: u32,
+) -> Result<(), NTSTATUS> {
     if inode_num == 0 || inode_num > sb.inodes_count {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let inodes_per_group = sb.inodes_per_group;
@@ -370,9 +420,9 @@ pub fn free_inode(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> Resul
     let inode_index = ((inode_num - 1) % inodes_per_group) as usize;
 
     // read bitmap
-    let mut bitmap = match read_inode_bitmap(device, sb, group_num) {
+    let mut bitmap = match unsafe { read_inode_bitmap(device, sb, group_num) } {
         Some(b) => b,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
 
     // Clear the bit
@@ -383,9 +433,9 @@ pub fn free_inode(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> Resul
     clear_bit(&mut bitmap, inode_index);
 
     // write bitmap back
-    let group_desc = match read_group_descriptor(device, sb, group_num) {
+    let group_desc = match unsafe { read_group_descriptor(device, sb, group_num) } {
         Some(gd) => gd,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
 
     let inode_bitmap = group_desc.get_inode_bitmap_block();
@@ -395,8 +445,11 @@ pub fn free_inode(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> Resul
     Ok(())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if an inode is allocated
-pub fn is_inode_allocated(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> bool {
+pub unsafe fn is_inode_allocated(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) -> bool {
     if inode_num == 0 || inode_num > sb.inodes_count {
         return false;
     }
@@ -405,7 +458,7 @@ pub fn is_inode_allocated(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) 
     let group_num = (inode_num - 1) / inodes_per_group;
     let inode_index = ((inode_num - 1) % inodes_per_group) as usize;
 
-    let bitmap = match read_inode_bitmap(device, sb, group_num) {
+    let bitmap = match unsafe { read_inode_bitmap(device, sb, group_num) } {
         Some(b) => b,
         None => return false,
     };
@@ -417,32 +470,38 @@ pub fn is_inode_allocated(device: *mut (), sb: &Ext2SuperBlock, inode_num: u32) 
 // Bitmap write Functions
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write a block bitmap to disk
-pub fn write_block_bitmap(
+pub unsafe fn write_block_bitmap(
     device: *mut (),
     sb: &Ext2SuperBlock,
     group_num: u32,
     bitmap: &[u8],
-) -> Result<(), ()> {
-    let group_desc = match read_group_descriptor(device, sb, group_num) {
+) -> Result<(), NTSTATUS> {
+    let group_desc = match unsafe { read_group_descriptor(device, sb, group_num) } {
         Some(gd) => gd,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
 
     let lba = group_desc.get_block_bitmap_block() * (sb.get_block_size() / 512) as u64;
     super::superblock::write_sector(device, lba, bitmap)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write an inode bitmap to disk
-pub fn write_inode_bitmap(
+pub unsafe fn write_inode_bitmap(
     device: *mut (),
     sb: &Ext2SuperBlock,
     group_num: u32,
     bitmap: &[u8],
-) -> Result<(), ()> {
-    let group_desc = match read_group_descriptor(device, sb, group_num) {
+) -> Result<(), NTSTATUS> {
+    let group_desc = match unsafe { read_group_descriptor(device, sb, group_num) } {
         Some(gd) => gd,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
 
     let lba = group_desc.get_inode_bitmap_block() * (sb.get_block_size() / 512) as u64;

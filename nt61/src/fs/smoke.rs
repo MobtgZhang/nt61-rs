@@ -19,10 +19,10 @@
 //! 7. The global FileSystemDriver registry can hold at least one
 //!    driver and counts registered drivers correctly.
 //
-//! The smoke test is intentionally implemented in terms of the
-//! public `fs` module surface so the test exercises the same code
-//! paths that the real Phase 5 init uses (and so failures point at
-//! the on-disk layout / VFS layer rather than at a mock).
+//!    The smoke test is intentionally implemented in terms of the
+//!    public `fs` module surface so the test exercises the same code
+//!    paths that the real Phase 5 init uses (and so failures point at
+//!    the on-disk layout / VFS layer rather than at a mock).
 
 use super::fat32::{decode_fat_entry, Fat32BootSector, FAT32_BAD, FAT32_EOC, FAT32_FREE};
 use super::ntfs::{MftRecordHeader, NtfsBootSector, RunListEntry};
@@ -354,80 +354,82 @@ fn step5_ntfs_boot_sector() -> bool {
 
 /// Step 6: Virtual File System create + lookup.
 fn step6_vfs_create_lookup() -> bool {
-    // // kprintln!("    [FS SMOKE] step 6: VFS create + lookup");
-    // Make sure VFS has been initialised. (It is, by the time we
-    // get here, but call it defensively so the test is robust.)
-    vfs::init();
+    unsafe {
+        // // kprintln!("    [FS SMOKE] step 6: VFS create + lookup");
+        // Make sure VFS has been initialised. (It is, by the time we
+        // get here, but call it defensively so the test is robust.)
+        vfs::init();
 
-    // create a file node and a directory node, both under the
-    // root.
-    let root = match vfs::get_root() {
-        Some(r) => r,
-        None => {
-            // // kprintln!("    [FS SMOKE FAIL] VFS root is not available");
-            return false;
-        }
-    };
-    let dir_name: [u16; 5] = [
-        b'W' as u16,
-        b'i' as u16,
-        b'n' as u16,
-        b'3' as u16,
-        b'2' as u16,
-    ];
-    let file_name: [u16; 4] = [b'c' as u16, b'm' as u16, b'd' as u16, b'.' as u16];
-    let dir_node = match vfs::create_directory(root as *mut _, &dir_name) {
-        Some(d) => d,
-        None => {
-            // // kprintln!("    [FS SMOKE FAIL] vfs::create_directory returned None");
-            return false;
-        }
-    };
-    if dir_node.node_type != VfsNodeType::Directory {
-        // // kprintln!("    [FS SMOKE FAIL] created node is not a directory");
-        return false;
-    }
-    let file_node =
-        match vfs::create_file(dir_node as *mut _, &file_name, vfs::CreateOption::CreateNew) {
-            Some(f) => f,
+        // create a file node and a directory node, both under the
+        // root.
+        let root = match vfs::get_root() {
+            Some(r) => r,
             None => {
-                // // kprintln!("    [FS SMOKE FAIL] vfs::create_file returned None");
+                // // kprintln!("    [FS SMOKE FAIL] VFS root is not available");
                 return false;
             }
         };
-    if file_node.node_type != VfsNodeType::File {
-        // // kprintln!("    [FS SMOKE FAIL] created file node is not a file");
-        return false;
+        let dir_name: [u16; 5] = [
+            b'W' as u16,
+            b'i' as u16,
+            b'n' as u16,
+            b'3' as u16,
+            b'2' as u16,
+        ];
+        let file_name: [u16; 4] = [b'c' as u16, b'm' as u16, b'd' as u16, b'.' as u16];
+        let dir_node = match vfs::create_directory(root as *mut _, &dir_name) {
+            Some(d) => d,
+            None => {
+                // // kprintln!("    [FS SMOKE FAIL] vfs::create_directory returned None");
+                return false;
+            }
+        };
+        if dir_node.node_type != VfsNodeType::Directory {
+            // // kprintln!("    [FS SMOKE FAIL] created node is not a directory");
+            return false;
+        }
+        let file_node =
+            match vfs::create_file(dir_node as *mut _, &file_name, vfs::CreateOption::CreateNew) {
+                Some(f) => f,
+                None => {
+                    // // kprintln!("    [FS SMOKE FAIL] vfs::create_file returned None");
+                    return false;
+                }
+            };
+        if file_node.node_type != VfsNodeType::File {
+            // // kprintln!("    [FS SMOKE FAIL] created file node is not a file");
+            return false;
+        }
+        // Parent linkage.
+        if !core::ptr::eq(file_node.parent, dir_node) {
+            // // kprintln!("    [FS SMOKE FAIL] file node parent != directory");
+            return false;
+        }
+        if !core::ptr::eq(dir_node.parent, root) {
+            // // kprintln!("    [FS SMOKE FAIL] directory node parent != root");
+            return false;
+        }
+        // Names match.
+        let dir_name_len = (dir_node.name.length as usize) / 2;
+        if dir_name_len != dir_name.len() {
+            // // kprintln!(
+            // //             "    [FS SMOKE FAIL] dir_node.name length = {} (expected {})",
+            // //             dir_name_len,
+            // //             dir_name.len()
+            // //         );
+            return false;
+        }
+        let file_name_len = (file_node.name.length as usize) / 2;
+        if file_name_len != file_name.len() {
+            // // kprintln!(
+            // //             "    [FS SMOKE FAIL] file_node.name length = {} (expected {})",
+            // //             file_name_len,
+            // //             file_name.len()
+            // //         );
+            return false;
+        }
+        true
     }
-    // Parent linkage.
-    if file_node.parent as *const _ != dir_node as *const _ {
-        // // kprintln!("    [FS SMOKE FAIL] file node parent != directory");
-        return false;
-    }
-    if dir_node.parent as *const _ != root as *const _ {
-        // // kprintln!("    [FS SMOKE FAIL] directory node parent != root");
-        return false;
-    }
-    // Names match.
-    let dir_name_len = (dir_node.name.length as usize) / 2;
-    if dir_name_len != dir_name.len() {
-        // // kprintln!(
-        // //             "    [FS SMOKE FAIL] dir_node.name length = {} (expected {})",
-        // //             dir_name_len,
-        // //             dir_name.len()
-        // //         );
-        return false;
-    }
-    let file_name_len = (file_node.name.length as usize) / 2;
-    if file_name_len != file_name.len() {
-        // // kprintln!(
-        // //             "    [FS SMOKE FAIL] file_node.name length = {} (expected {})",
-        // //             file_name_len,
-        // //             file_name.len()
-        // //         );
-        return false;
-    }
-    true
 }
 
 /// Step 7: file-system driver registry.

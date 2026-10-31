@@ -10,6 +10,7 @@
 //! - Mount points (volume mount points)
 //! - HSM (Hierarchical Storage Management) stubs
 //! - SIS (Single Instance Storage) links
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use alloc::vec::Vec;
 
@@ -59,16 +60,16 @@ pub struct MountPointReparseData {
 
 pub const SYMLINK_FLAG_RELATIVE: u32 = 0x00000001;
 
-pub fn parse_reparse_point(data: &[u8]) -> Result<ReparsePoint, ()> {
+pub fn parse_reparse_point(data: &[u8]) -> Result<ReparsePoint, NTSTATUS> {
     if data.len() < 8 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let reparse_tag = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
     let data_length = u16::from_le_bytes([data[4], data[5]]) as usize;
 
     if data.len() < 8 + data_length {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let reparse_data = &data[8..8 + data_length];
@@ -114,9 +115,9 @@ impl ReparsePoint {
     }
 }
 
-fn parse_symlink(data: &[u8]) -> Result<ReparsePoint, ()> {
+fn parse_symlink(data: &[u8]) -> Result<ReparsePoint, NTSTATUS> {
     if data.len() < 12 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let substitute_name_offset = u16::from_le_bytes([data[0], data[1]]) as usize;
@@ -130,14 +131,14 @@ fn parse_symlink(data: &[u8]) -> Result<ReparsePoint, ()> {
     let substitute_start = substitute_name_offset;
     let substitute_end = substitute_start + substitute_name_length;
     if substitute_end > path_buffer.len() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let target = parse_utf16_string(&path_buffer[substitute_start..substitute_end]);
 
     let print_start = print_name_offset;
     let print_end = print_start + print_name_length;
     if print_end > path_buffer.len() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let print_name = parse_utf16_string(&path_buffer[print_start..print_end]);
 
@@ -148,9 +149,9 @@ fn parse_symlink(data: &[u8]) -> Result<ReparsePoint, ()> {
     })
 }
 
-fn parse_mount_point(data: &[u8]) -> Result<ReparsePoint, ()> {
+fn parse_mount_point(data: &[u8]) -> Result<ReparsePoint, NTSTATUS> {
     if data.len() < 8 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let substitute_name_offset = u16::from_le_bytes([data[0], data[1]]) as usize;
@@ -163,14 +164,14 @@ fn parse_mount_point(data: &[u8]) -> Result<ReparsePoint, ()> {
     let substitute_start = substitute_name_offset;
     let substitute_end = substitute_start + substitute_name_length;
     if substitute_end > path_buffer.len() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let target = parse_utf16_string(&path_buffer[substitute_start..substitute_end]);
 
     let print_start = print_name_offset;
     let print_end = print_start + print_name_length;
     if print_end > path_buffer.len() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let print_name = parse_utf16_string(&path_buffer[print_start..print_end]);
 

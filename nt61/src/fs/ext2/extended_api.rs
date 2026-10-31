@@ -8,6 +8,7 @@
 //! EXT4: EXT3 + extents, larger file support
 //!
 //! Clean-room implementation based on Linux kernel documentation.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -16,15 +17,15 @@ use alloc::vec::Vec;
 
 pub const EXT_SUPER_MAGIC: u16 = 0xEF53;
 
-pub fn mount(_disk_index: usize, starting_lba: u64) -> Result<(), ()> {
+pub fn mount(_disk_index: usize, starting_lba: u64) -> Result<(), NTSTATUS> {
     super::mount_first(core::ptr::null_mut(), starting_lba)
         .map(|_| ())
-        .ok_or(())
+        .ok_or(STATUS_UNSUCCESSFUL)
 }
 
 pub fn unmount() {
     if let Some(fs) = super::get_mounted_fs() {
-        super::unmount(fs as *const _ as *mut super::Ext2FileSystem);
+        unsafe { super::unmount(fs as *const _ as *mut super::Ext2FileSystem) };
     }
     super::clear_mounted_fs();
 }
@@ -33,16 +34,16 @@ pub fn is_mounted() -> bool {
     super::is_mounted()
 }
 
-pub fn read_file(_path: &str) -> Result<Vec<u8>, ()> {
-    let fs = super::get_mounted_fs().ok_or(())?;
-    super::read_whole_file(fs, _path).map_err(|_| ())
+pub fn read_file(_path: &str) -> Result<Vec<u8>, NTSTATUS> {
+    let fs = super::get_mounted_fs().ok_or(STATUS_UNSUCCESSFUL)?;
+    unsafe { super::read_whole_file(fs, _path) }.map_err(|_| STATUS_UNSUCCESSFUL)
 }
 
-pub fn list_directory(_path: &str) -> Result<Vec<ExtEntry>, ()> {
-    let fs = super::get_mounted_fs().ok_or(())?;
+pub fn list_directory(_path: &str) -> Result<Vec<ExtEntry>, NTSTATUS> {
+    let fs = super::get_mounted_fs().ok_or(STATUS_UNSUCCESSFUL)?;
     let path = super::win_path_to_ext2(_path);
-    let inode = super::resolve_path(fs, path.as_bytes()).ok_or(())?;
-    let entries = super::list_directory(fs, inode).ok_or(())?;
+    let inode = super::resolve_path(fs, path.as_bytes()).ok_or(STATUS_UNSUCCESSFUL)?;
+    let entries = super::list_directory(fs, inode).ok_or(STATUS_UNSUCCESSFUL)?;
     Ok(entries
         .into_iter()
         .map(|entry| ExtEntry {
@@ -61,8 +62,8 @@ pub struct ExtEntry {
     pub inode: u32,
 }
 
-pub fn get_volume_label() -> Result<String, ()> {
-    let fs = super::get_mounted_fs().ok_or(())?;
+pub fn get_volume_label() -> Result<String, NTSTATUS> {
+    let fs = super::get_mounted_fs().ok_or(STATUS_UNSUCCESSFUL)?;
     let label_end = fs
         .superblock
         .volume_name

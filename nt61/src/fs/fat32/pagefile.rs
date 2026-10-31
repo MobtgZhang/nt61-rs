@@ -26,7 +26,7 @@ use crate::mm::pagefile;
 pub const MIN_PAGEFILE_SIZE_MB: u64 = 2;
 
 /// Pagefile handle structure
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Fat32PagefileHandle {
     /// Starting cluster
     pub start_cluster: u32,
@@ -38,19 +38,8 @@ pub struct Fat32PagefileHandle {
     pub valid: bool,
 }
 
-impl Default for Fat32PagefileHandle {
-    fn default() -> Self {
-        Self {
-            start_cluster: 0,
-            size_bytes: 0,
-            cluster_count: 0,
-            valid: false,
-        }
-    }
-}
-
 /// FAT32 pagefile metadata stored in the boot sector area
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Fat32PagefileMeta {
     /// Pagefile start cluster
     pub start_cluster: u32,
@@ -62,18 +51,6 @@ pub struct Fat32PagefileMeta {
     pub exists: bool,
     /// Whether pagefile is valid
     pub valid: bool,
-}
-
-impl Default for Fat32PagefileMeta {
-    fn default() -> Self {
-        Self {
-            start_cluster: 0,
-            size_bytes: 0,
-            size_mb: 0,
-            exists: false,
-            valid: false,
-        }
-    }
 }
 
 /// Open or create a pagefile on a FAT32 volume.
@@ -89,7 +66,7 @@ pub fn open_or_create(
 ) -> Option<Fat32PagefileHandle> {
     let requested_size_mb = size_mb.max(MIN_PAGEFILE_SIZE_MB);
     let size_bytes = requested_size_mb * 1024 * 1024;
-    let size_clusters = ((size_bytes + cluster_size as u64 - 1) / cluster_size as u64) as u32;
+    let size_clusters = size_bytes.div_ceil(cluster_size as u64) as u32;
 
     kprintln_info!(
         "FAT32",
@@ -244,8 +221,7 @@ fn find_pagefile(
                 return Some(Fat32PagefileHandle {
                     start_cluster,
                     size_bytes: file_size,
-                    cluster_count: ((file_size + cluster_size as u64 - 1) / cluster_size as u64)
-                        as u32,
+                    cluster_count: file_size.div_ceil(cluster_size as u64) as u32,
                     valid: true,
                 });
             }

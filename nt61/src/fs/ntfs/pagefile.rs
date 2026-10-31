@@ -39,7 +39,7 @@ pub const DEFAULT_PAGEFILE_SIZE_MB: u64 = 512;
 pub const MIN_PAGEFILE_SIZE_MB: u64 = 2;
 
 /// NTFS pagefile handle
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct NtfsPagefileHandle {
     /// MFT record number
     pub mft_record: u64,
@@ -53,20 +53,8 @@ pub struct NtfsPagefileHandle {
     pub valid: bool,
 }
 
-impl Default for NtfsPagefileHandle {
-    fn default() -> Self {
-        Self {
-            mft_record: 0,
-            size_bytes: 0,
-            cluster_count: 0,
-            start_cluster: 0,
-            valid: false,
-        }
-    }
-}
-
 /// NTFS pagefile metadata
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct NtfsPagefileMeta {
     /// Starting cluster
     pub start_cluster: u64,
@@ -80,19 +68,6 @@ pub struct NtfsPagefileMeta {
     pub exists: bool,
     /// Whether pagefile is valid
     pub valid: bool,
-}
-
-impl Default for NtfsPagefileMeta {
-    fn default() -> Self {
-        Self {
-            start_cluster: 0,
-            size_bytes: 0,
-            size_mb: 0,
-            cluster_count: 0,
-            exists: false,
-            valid: false,
-        }
-    }
 }
 
 /// Open or create a pagefile on an NTFS volume.

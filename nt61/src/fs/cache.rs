@@ -8,6 +8,7 @@
 //! - Memory-mapped file support
 //!
 //! Based on Windows Cache Manager and Linux Page Cache architecture.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -113,6 +114,12 @@ impl CacheBlock {
             && !self.is_locked()
             && self.state != CacheBlockState::Reading
             && self.state != CacheBlockState::Writing
+    }
+}
+
+impl Default for CacheBlock {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -232,6 +239,12 @@ impl CacheStatistics {
         } else {
             (dirty as f32) / (total_blocks as f32) * 100.0
         }
+    }
+}
+
+impl Default for CacheStatistics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -635,9 +648,9 @@ pub fn init_with_policy(policy: EvictionPolicy, coherency: CoherencyMode) {
     *guard = Some(CacheManager::new(policy, coherency));
 }
 
-pub fn cc_read(file_id: u64, offset: u64, buffer: &mut [u8]) -> Result<usize, ()> {
+pub fn cc_read(file_id: u64, offset: u64, buffer: &mut [u8]) -> Result<usize, NTSTATUS> {
     let mut cache = CACHE_MANAGER.lock();
-    let cache = cache.as_mut().ok_or(())?;
+    let cache = cache.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
 
     let mut bytes_read = 0;
     let mut current_offset = offset;
@@ -651,7 +664,9 @@ pub fn cc_read(file_id: u64, offset: u64, buffer: &mut [u8]) -> Result<usize, ()
         let block_idx = if let Some(idx) = cache.lookup(file_id, block_number) {
             idx
         } else {
-            let idx = cache.allocate(file_id, block_number).ok_or(())?;
+            let idx = cache
+                .allocate(file_id, block_number)
+                .ok_or(STATUS_UNSUCCESSFUL)?;
             cache.stats.reads.fetch_add(1, Ordering::Relaxed);
             // Read the block from disk into the newly allocated cache block.
             let mut buf = [0u8; CACHE_BLOCK_SIZE];
@@ -681,9 +696,9 @@ pub fn cc_read(file_id: u64, offset: u64, buffer: &mut [u8]) -> Result<usize, ()
     Ok(bytes_read)
 }
 
-pub fn cc_write(file_id: u64, offset: u64, buffer: &[u8]) -> Result<usize, ()> {
+pub fn cc_write(file_id: u64, offset: u64, buffer: &[u8]) -> Result<usize, NTSTATUS> {
     let mut cache = CACHE_MANAGER.lock();
-    let cache = cache.as_mut().ok_or(())?;
+    let cache = cache.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
 
     let mut bytes_written = 0;
     let mut current_offset = offset;
@@ -697,7 +712,9 @@ pub fn cc_write(file_id: u64, offset: u64, buffer: &[u8]) -> Result<usize, ()> {
         let block_idx = if let Some(idx) = cache.lookup(file_id, block_number) {
             idx
         } else {
-            cache.allocate(file_id, block_number).ok_or(())?
+            cache
+                .allocate(file_id, block_number)
+                .ok_or(STATUS_UNSUCCESSFUL)?
         };
 
         // Copy the caller's data into the cached block.
@@ -744,22 +761,22 @@ fn current_time() -> u64 {
     COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-pub fn cc_pin_block(file_id: u64, block_number: u64) -> Result<usize, ()> {
+pub fn cc_pin_block(file_id: u64, block_number: u64) -> Result<usize, NTSTATUS> {
     let mut cache = CACHE_MANAGER.lock();
-    let cache = cache.as_mut().ok_or(())?;
+    let cache = cache.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
 
     let block_idx = cache
         .lookup(file_id, block_number)
         .or_else(|| cache.allocate(file_id, block_number))
-        .ok_or(())?;
+        .ok_or(STATUS_UNSUCCESSFUL)?;
 
     cache.blocks[block_idx].ref_count += 1;
     Ok(block_idx)
 }
 
-pub fn cc_unpin_block(block_idx: usize) -> Result<(), ()> {
+pub fn cc_unpin_block(block_idx: usize) -> Result<(), NTSTATUS> {
     let mut cache = CACHE_MANAGER.lock();
-    let cache = cache.as_mut().ok_or(())?;
+    let cache = cache.as_mut().ok_or(STATUS_UNSUCCESSFUL)?;
 
     if block_idx < cache.blocks.len() && cache.blocks[block_idx].ref_count > 0 {
         cache.blocks[block_idx].ref_count -= 1;

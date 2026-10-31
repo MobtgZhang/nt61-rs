@@ -23,6 +23,7 @@
 //!
 //! Reparse points, quota tracking and the journal are
 //! *volume-level* concerns that this module coordinates.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -254,23 +255,23 @@ pub fn read_compressed_data_attr<F: FnMut(u64, &mut [u8]) -> bool>(
     length: usize,
     out: &mut [u8],
     mut cluster_read: F,
-) -> Result<usize, ()> {
-    let header = parse_data_attr_header(data_attr).ok_or(())?;
+) -> Result<usize, NTSTATUS> {
+    let header = parse_data_attr_header(data_attr).ok_or(STATUS_UNSUCCESSFUL)?;
     if header.compression_unit == 0 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let unit_clusters: u32 = 1u32 << header.compression_unit;
     let unit_size: usize = (unit_clusters * cluster_size) as usize;
     let mapping_pairs_offset = header.mapping_pairs_offset as usize;
     if mapping_pairs_offset == 0 || mapping_pairs_offset >= data_attr.len() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let run_list = &data_attr[mapping_pairs_offset..];
     let mut runs: [(u64, u64); 256] = [(0, 0); 256];
     let num_runs = super::parse_run_list(run_list, &mut runs);
     if num_runs == 0 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let mut total_written = 0usize;
@@ -314,7 +315,7 @@ pub fn read_compressed_data_attr<F: FnMut(u64, &mut [u8]) -> bool>(
                     read_total += cluster_size as usize;
                 }
                 if !ok {
-                    return Err(());
+                    return Err(STATUS_UNSUCCESSFUL);
                 }
                 (buf, read_total)
             }
@@ -365,7 +366,7 @@ pub fn write_compressed_data_attr(
     cluster_size: u32,
     compression_unit_pow2: u16,
     out: &mut [u8],
-) -> Result<usize, ()> {
+) -> Result<usize, NTSTATUS> {
     let unit_clusters: u32 = 1u32 << compression_unit_pow2;
     let unit_size: usize = (unit_clusters * cluster_size) as usize;
 
@@ -384,7 +385,7 @@ pub fn write_compressed_data_attr(
             chunk
         };
         if total_written + to_write.len() > out.len() {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         out[total_written..total_written + to_write.len()].copy_from_slice(to_write);
         total_written += to_write.len();
@@ -420,10 +421,10 @@ pub fn parse_reparse_attribute(payload: &[u8]) -> Option<reparse::ReparsePoint> 
 // Quota accounting
 // =============================================================================
 
-/// Record a quota charge against `user_sid`. Returns `Err(())` if
+/// Record a quota charge against `user_sid`. Returns `Err(STATUS_UNSUCCESSFUL)` if
 /// the quota is enforced and would be exceeded; returns `Ok(())`
 /// otherwise (or if quotas are disabled).
-pub fn charge_quota(volume_id: u64, user_sid: &[u8], bytes: u64) -> Result<(), ()> {
+pub fn charge_quota(volume_id: u64, user_sid: &[u8], bytes: u64) -> Result<(), NTSTATUS> {
     quota::allocate_space(volume_id, user_sid, bytes)
 }
 
@@ -505,8 +506,8 @@ pub fn get_space_usage() -> Option<NtfsSpaceUsage> {
 }
 
 /// Volume label of the mounted NTFS volume, as cached on the VCB.
-pub fn get_volume_label() -> Result<alloc::string::String, ()> {
-    let fs = get_mounted_fs().ok_or(())?;
+pub fn get_volume_label() -> Result<alloc::string::String, NTSTATUS> {
+    let fs = get_mounted_fs().ok_or(STATUS_UNSUCCESSFUL)?;
     let units = fs
         .base
         .volume_name
@@ -515,7 +516,7 @@ pub fn get_volume_label() -> Result<alloc::string::String, ()> {
         .copied();
     let label: alloc::string::String = char::decode_utf16(units).flat_map(|r| r.ok()).collect();
     if label.is_empty() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     Ok(label)
 }

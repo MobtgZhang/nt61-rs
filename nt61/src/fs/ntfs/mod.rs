@@ -18,6 +18,7 @@
 //!   - $FILE_NAME - filename, parent directory reference
 //!   - $DATA - file data or attribute list
 //!   - $INDEX_ROOT/$INDEX_ALLOCATION - for directories
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 extern crate alloc;
 
@@ -304,6 +305,12 @@ impl NtfsData {
     }
 }
 
+impl Default for NtfsData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// NTFS file handle
 pub struct NtfsHandle {
     pub mft_record: u64,
@@ -349,11 +356,20 @@ impl NtfsFileSystem {
     }
 }
 
+impl Default for NtfsFileSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read sector from device
 /// Routes to the appropriate storage device based on device context
-pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), ()> {
+pub unsafe fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<(), NTSTATUS> {
     if buffer.len() < 512 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     // Prefer the *active* partition mirror, when one is set by
@@ -370,7 +386,7 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
                 max_size,
                 sector
             );
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         // Dispatch to sys_ramdisk_read for the system partition
         let sys_base = crate::fs::sys_mirror_address();
@@ -389,7 +405,7 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
             "[NTFS] read_sector: ramdisk read failed for sector {}",
             sector
         );
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     crate::boot_println!("[NTFS] read_sector: no active partition!");
@@ -405,7 +421,7 @@ pub fn read_sector(device: *mut (), sector: u64, buffer: &mut [u8]) -> Result<()
     if crate::drivers::storage::ramdisk::read(sector_num, buffer) {
         Ok(())
     } else {
-        Err(())
+        Err(STATUS_UNSUCCESSFUL)
     }
 }
 
@@ -425,30 +441,32 @@ fn write_mounted_sector(ntfs: &NtfsData, sector: u64, buffer: &[u8]) -> bool {
 }
 
 fn read_mounted_sector(ntfs: &NtfsData, sector: u64, buffer: &mut [u8]) -> bool {
-    if let Some(device_id) = ntfs.device_id {
-        return crate::drivers::storage::block::read_block(device_id, sector, buffer);
+    unsafe {
+        if let Some(device_id) = ntfs.device_id {
+            return crate::drivers::storage::block::read_block(device_id, sector, buffer);
+        }
+        if crate::fs::sys_ramdisk_is_mounted() {
+            return crate::fs::sys_ramdisk_read_sector(sector, buffer).is_ok();
+        }
+        read_sector(core::ptr::null_mut(), sector, buffer).is_ok()
     }
-    if crate::fs::sys_ramdisk_is_mounted() {
-        return crate::fs::sys_ramdisk_read_sector(sector, buffer).is_ok();
-    }
-    read_sector(core::ptr::null_mut(), sector, buffer).is_ok()
 }
 
 /// write sector to device
 /// Routes to the appropriate storage device based on device context
-pub fn write_sector(device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), ()> {
+pub fn write_sector(device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), NTSTATUS> {
     if buffer.len() < 512 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     // The active in-memory partition mirror takes precedence during
     // early boot. It is the authoritative view of the system volume,
     // and writing through it keeps subsequent reads coherent.
     if let Some(base) = crate::fs::active_partition_ramdisk() {
-        if Some(base) == crate::fs::sys_mirror_address() {
-            if crate::fs::sys_ramdisk_write_sector(sector, buffer).is_ok() {
-                return Ok(());
-            }
+        if Some(base) == crate::fs::sys_mirror_address()
+            && crate::fs::sys_ramdisk_write_sector(sector, buffer).is_ok()
+        {
+            return Ok(());
         }
     }
 
@@ -470,7 +488,7 @@ pub fn write_sector(device: *mut (), sector: u64, buffer: &[u8]) -> Result<(), (
     if crate::drivers::storage::ramdisk::write(sector_num, buffer) {
         Ok(())
     } else {
-        Err(())
+        Err(STATUS_UNSUCCESSFUL)
     }
 }
 
@@ -563,7 +581,7 @@ pub fn apply_fixup(record: &mut [u8]) -> bool {
 /// saved into the update sequence array, and the update sequence number is
 /// written to the last 2 bytes of every sector.
 pub fn prepare_fixup_for_write(record: &mut [u8]) -> bool {
-    if record.len() < 512 || record.len() % 512 != 0 {
+    if record.len() < 512 || !record.len().is_multiple_of(512) {
         return false;
     }
 
@@ -748,7 +766,7 @@ pub fn read_mft_record(ntfs: &NtfsData, record_num: u64) -> Option<MftRecordBuff
             1024
         }
     };
-    let sectors_per_record = (record_size + 511) / 512;
+    let sectors_per_record = record_size.div_ceil(512);
 
     if record_size == 0 || sectors_per_record == 0 {
         return None; // Invalid parameters
@@ -778,7 +796,7 @@ pub fn read_mft_record(ntfs: &NtfsData, record_num: u64) -> Option<MftRecordBuff
     let mut record = MftRecordBuffer::from_raw_parts(record_ptr, record_size)?;
     unsafe { record.as_mut_ptr().write_bytes(0, record_size) };
     let mft_start_sector = ntfs.mft_start;
-    let record_start_sector = mft_start_sector + (record_num as u64 * sectors_per_record as u64);
+    let record_start_sector = mft_start_sector + (record_num * sectors_per_record as u64);
     crate::boot_debug_println!("[NTFS] read_mft_record: mft_start=0x{:x} mft_record_size=0x{:x} record_start_sector=0x{:x} record_size={} record_num={}",
                   mft_start_sector, ntfs.mft_record_size, record_start_sector, record_size, record_num);
 
@@ -799,7 +817,7 @@ pub fn read_mft_record(ntfs: &NtfsData, record_num: u64) -> Option<MftRecordBuff
         let sector = record_start_sector + (i as u64);
         crate::boot_debug_println!("[NTFS] read_mft_record: iter {} sector=0x{:x}", i, sector);
 
-        let success = read_mounted_sector(&ntfs, sector, &mut sector_buf);
+        let success = read_mounted_sector(ntfs, sector, &mut sector_buf);
         if !success {
             crate::boot_debug_println!("[NTFS] read_mft_record: read_block failed");
             return None;
@@ -838,7 +856,7 @@ pub fn read_mft_record(ntfs: &NtfsData, record_num: u64) -> Option<MftRecordBuff
 /// transfer fixups are prepared, and each sector is written independently.
 /// A partial write is reported as an error so callers never treat a torn
 /// MFT update as successful.
-pub fn write_mft_record(ntfs: &NtfsData, record_num: u64, record: &[u8]) -> Result<(), ()> {
+pub fn write_mft_record(ntfs: &NtfsData, record_num: u64, record: &[u8]) -> Result<(), NTSTATUS> {
     let raw_record_size = ntfs.mft_record_size as usize;
     if raw_record_size == 0 || raw_record_size > 4096 || record.len() != raw_record_size {
         use alloc::format;
@@ -850,27 +868,27 @@ pub fn write_mft_record(ntfs: &NtfsData, record_num: u64, record: &[u8]) -> Resu
             )
             .as_str(),
         );
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let sectors_per_record = raw_record_size / 512;
-    if sectors_per_record == 0 || raw_record_size % 512 != 0 {
-        return Err(());
+    if sectors_per_record == 0 || !raw_record_size.is_multiple_of(512) {
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let mut staging = alloc::vec![0u8; raw_record_size];
     staging.copy_from_slice(record);
     if !prepare_fixup_for_write(&mut staging) {
         crate::boot_debug_println!("[NTFS] write_mft: prepare failed");
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
-    let record_start_sector = ntfs.mft_start + (record_num as u64 * sectors_per_record as u64);
+    let record_start_sector = ntfs.mft_start + (record_num * sectors_per_record as u64);
     for (index, sector) in staging.chunks(512).enumerate() {
         let sector_index = record_start_sector + index as u64;
         if !write_mounted_sector(ntfs, sector_index, sector) {
             crate::boot_debug_println!("[NTFS] write_mft: sector failed");
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
     }
     Ok(())
@@ -950,7 +968,7 @@ pub fn find_attribute_in_record(record: &[u8], attr_type: u32) -> Option<usize> 
 /// # Arguments
 /// * `record` - Raw MFT record bytes
 /// * `attr_type` - Attribute type ID to parse
-/// Parse an attribute from an MFT record.
+///   Parse an attribute from an MFT record.
 ///
 /// # Returns
 /// * `Some(&[u8])` - Attribute value (resident) or attribute header
@@ -1165,7 +1183,7 @@ pub fn parse_file_name(record: &[u8]) -> Option<(u64, Vec<u16>, bool)> {
 
     // Parent directory reference
     let parent_ref = u64::from_le_bytes([
-        record[value_start + 0],
+        record[value_start],
         record[value_start + 1],
         record[value_start + 2],
         record[value_start + 3],
@@ -1495,7 +1513,7 @@ pub fn encode_run_list(runs: &[(u64, u64)]) -> alloc::vec::Vec<u8> {
         let delta: i64 = (start as i64).wrapping_sub(prev);
         let length_size = {
             let bits = 64 - length.leading_zeros() as usize;
-            ((bits + 7) / 8).max(1)
+            bits.div_ceil(8).max(1)
         };
         let mut offset_size = 1usize;
         while offset_size < 8 {
@@ -1570,7 +1588,7 @@ pub fn read_nonresident_stream(
     let stream_size = u64::from_le_bytes(size_bytes);
 
     let cluster_size = ntfs.cluster_size as usize;
-    if cluster_size == 0 || cluster_size % 512 != 0 {
+    if cluster_size == 0 || !cluster_size.is_multiple_of(512) {
         return None;
     }
     let read_limit = core::cmp::min(stream_size, max_len as u64) as usize;
@@ -1749,6 +1767,12 @@ impl DirectoryEntry {
     }
 }
 
+impl Default for DirectoryEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Index entry flags.
 pub mod index_flags {
     pub const FLAG_SUBDIRECTORY: u32 = 0x00000001;
@@ -1810,7 +1834,7 @@ pub fn parse_index_entry(buffer: &[u8], offset: usize) -> Option<(DirectoryEntry
 
     // MFT reference at offset +0
     let mft_ref = u64::from_le_bytes([
-        buffer[offset + 0],
+        buffer[offset],
         buffer[offset + 1],
         buffer[offset + 2],
         buffer[offset + 3],
@@ -1864,7 +1888,7 @@ pub fn parse_index_entry(buffer: &[u8], offset: usize) -> Option<(DirectoryEntry
 
     // parent_ref at FILE_NAME_ATTR offset +0x00
     let parent_ref = u64::from_le_bytes([
-        buffer[fn_off + 0],
+        buffer[fn_off],
         buffer[fn_off + 1],
         buffer[fn_off + 2],
         buffer[fn_off + 3],
@@ -1981,7 +2005,7 @@ pub fn parse_index_root(index_root_data: &[u8]) -> ([DirectoryEntry; 64], usize)
     // reference is zero.
     let index_header = 0x10;
     let first_entry_offset = u32::from_le_bytes([
-        index_root_data[index_header + 0],
+        index_root_data[index_header],
         index_root_data[index_header + 1],
         index_root_data[index_header + 2],
         index_root_data[index_header + 3],
@@ -2009,9 +2033,7 @@ pub fn parse_index_root(index_root_data: &[u8]) -> ([DirectoryEntry; 64], usize)
             // stack-only name buffer.
             let mut name_buf: [u16; 64] = [0u16; 64];
             let copy_len = core::cmp::min(entry.name.len(), name_buf.len());
-            for i in 0..copy_len {
-                name_buf[i] = entry.name[i];
-            }
+            name_buf[..copy_len].copy_from_slice(&entry.name[..copy_len]);
             // Replace the entry's `Vec<u16>` with an empty one so
             // the heap deallocator never sees anything backed by
             // the pool.
@@ -2348,35 +2370,37 @@ fn read_index_bytes(
     byte_offset: u64,
     len: usize,
 ) -> Option<alloc::vec::Vec<u8>> {
-    let cluster_size = (ntfs.ntfs_data.cluster_size as usize).max(512);
-    let sectors_per_cluster = (cluster_size / 512).max(1) as u64;
-    let mut out = alloc::vec![0u8; len];
-    let mut done = 0usize;
-    while done < len {
-        let absolute = byte_offset as usize + done;
-        let cluster = (absolute / cluster_size) as u64;
-        let in_cluster = absolute % cluster_size;
-        let chunk = core::cmp::min(cluster_size - in_cluster, len - done);
-        let lcn = index_vcn_to_lcn(runs, cluster)?;
-        let base_sector = ntfs.ntfs_data.hidden_sectors + lcn * sectors_per_cluster;
-        let mut cluster_buf = alloc::vec![0u8; cluster_size];
-        for i in 0..sectors_per_cluster as usize {
-            let mut sector_buf = [0u8; 512];
-            if read_sector(
-                core::ptr::null_mut(),
-                base_sector + i as u64,
-                &mut sector_buf,
-            )
-            .is_err()
-            {
-                return None;
+    unsafe {
+        let cluster_size = (ntfs.ntfs_data.cluster_size as usize).max(512);
+        let sectors_per_cluster = (cluster_size / 512).max(1) as u64;
+        let mut out = alloc::vec![0u8; len];
+        let mut done = 0usize;
+        while done < len {
+            let absolute = byte_offset as usize + done;
+            let cluster = (absolute / cluster_size) as u64;
+            let in_cluster = absolute % cluster_size;
+            let chunk = core::cmp::min(cluster_size - in_cluster, len - done);
+            let lcn = index_vcn_to_lcn(runs, cluster)?;
+            let base_sector = ntfs.ntfs_data.hidden_sectors + lcn * sectors_per_cluster;
+            let mut cluster_buf = alloc::vec![0u8; cluster_size];
+            for i in 0..sectors_per_cluster as usize {
+                let mut sector_buf = [0u8; 512];
+                if read_sector(
+                    core::ptr::null_mut(),
+                    base_sector + i as u64,
+                    &mut sector_buf,
+                )
+                .is_err()
+                {
+                    return None;
+                }
+                cluster_buf[i * 512..(i + 1) * 512].copy_from_slice(&sector_buf);
             }
-            cluster_buf[i * 512..(i + 1) * 512].copy_from_slice(&sector_buf);
+            out[done..done + chunk].copy_from_slice(&cluster_buf[in_cluster..in_cluster + chunk]);
+            done += chunk;
         }
-        out[done..done + chunk].copy_from_slice(&cluster_buf[in_cluster..in_cluster + chunk]);
-        done += chunk;
+        Some(out)
     }
-    Some(out)
 }
 
 /// Parse a non-resident $INDEX_ALLOCATION attribute header into its run
@@ -2685,7 +2709,7 @@ pub fn list_directory(ntfs: &NtfsFileSystem, dir_record: u64) -> Vec<DirectoryEn
     // contiguous region instead of interleaved with the
     // byte-walking code.
     if let Some(index_root) = parse_attribute(&record, AttributeHeader::TYPE_INDEX_ROOT) {
-        let (parsed, count) = parse_index_root(&index_root);
+        let (parsed, count) = parse_index_root(index_root);
         entries.reserve(count);
         for entry in parsed.iter().take(count) {
             entries.push(entry.clone());
@@ -2810,7 +2834,7 @@ pub fn read_file(
     ntfs: &NtfsFileSystem,
     handle: &mut NtfsHandle,
     buffer: &mut [u8],
-) -> Result<usize, ()> {
+) -> Result<usize, NTSTATUS> {
     if buffer.is_empty() {
         return Ok(0);
     }
@@ -2845,9 +2869,7 @@ pub fn read_file(
                         }
                     }
                 }
-            } else {
             }
-        } else {
         }
     }
 
@@ -2857,13 +2879,13 @@ pub fn read_file(
         return Ok(0);
     }
 
-    Err(())
+    Err(STATUS_UNSUCCESSFUL)
 }
 
 /// Read one NTFS cluster through the currently mounted partition backend.
 fn read_cluster(ntfs: &NtfsFileSystem, cluster_lcn: u64, cluster_buf: &mut [u8]) -> bool {
     let cluster_size = cluster_buf.len();
-    let sectors_per_cluster = (cluster_size + 511) / 512;
+    let sectors_per_cluster = cluster_size.div_ceil(512);
     let first_sector = ntfs.ntfs_data.hidden_sectors + cluster_lcn * (cluster_size / 512) as u64;
 
     for sector_index in 0..sectors_per_cluster {
@@ -2964,7 +2986,7 @@ fn read_file_via_runlist(
         return 0;
     }
 
-    let start_cluster = start_byte as u64 / cluster_size as u64;
+    let start_cluster = start_byte / cluster_size as u64;
     let end_byte = start_byte + bytes_to_read as u64;
     let end_cluster = (end_byte - 1) / cluster_size as u64;
 
@@ -3094,7 +3116,7 @@ pub fn write_file(
     ntfs: &mut NtfsFileSystem,
     handle: &mut NtfsHandle,
     buffer: &[u8],
-) -> Result<usize, ()> {
+) -> Result<usize, NTSTATUS> {
     if buffer.is_empty() {
         return Ok(0);
     }
@@ -3102,7 +3124,7 @@ pub fn write_file(
     if handle.mft_record == 0 {
         // A file byte offset is never a disk LBA; without an MFT record
         // there is no safe way to place this write.
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let saved_position = handle.current_position;
@@ -3136,7 +3158,7 @@ pub fn write_file(
     // A file byte offset is never a disk LBA. If the mapped run path
     // cannot satisfy the write, returning an error is the only safe
     // choice; guessing a physical sector can overwrite boot metadata.
-    Err(())
+    Err(STATUS_UNSUCCESSFUL)
 }
 
 /// Write into a resident `$DATA` value in place.
@@ -3253,11 +3275,7 @@ fn write_file_with_runs(
         }
 
         // Write the portion of the buffer that falls within this run.
-        let mut offset_in_run = if handle.current_position >= file_pos {
-            handle.current_position - file_pos
-        } else {
-            0
-        };
+        let mut offset_in_run = handle.current_position.saturating_sub(file_pos);
 
         while offset_in_run < run_size && bytes_written < buffer.len() {
             let offset_in_cluster = (offset_in_run % bytes_per_cluster) as usize;
@@ -3386,100 +3404,103 @@ fn persist_nonresident_file_size(ntfs: &NtfsFileSystem, record_num: u64, new_siz
 /// Returns the allocated cluster number (LCN), or None if the bitmap
 /// cannot be read or the volume is full.
 pub fn allocate_cluster_ntfs(ntfs: &NtfsFileSystem) -> Option<u64> {
-    // Read the $Bitmap MFT record.
-    let bitmap_record = read_mft_record(&ntfs.ntfs_data, system_records::BITMAP)?;
+    unsafe {
+        // Read the $Bitmap MFT record.
+        let bitmap_record = read_mft_record(&ntfs.ntfs_data, system_records::BITMAP)?;
 
-    // Find its $DATA attribute to get the run list.
-    let data_offset = find_attribute_in_record(&bitmap_record, AttributeHeader::TYPE_DATA)?;
-    if data_offset + 8 > bitmap_record.len() {
-        return None;
-    }
+        // Find its $DATA attribute to get the run list.
+        let data_offset = find_attribute_in_record(&bitmap_record, AttributeHeader::TYPE_DATA)?;
+        if data_offset + 8 > bitmap_record.len() {
+            return None;
+        }
 
-    let non_resident = bitmap_record[data_offset + 8];
-    if non_resident == 0 {
-        // $Bitmap is always non-resident on a real NTFS volume.
-        return None;
-    }
+        let non_resident = bitmap_record[data_offset + 8];
+        if non_resident == 0 {
+            // $Bitmap is always non-resident on a real NTFS volume.
+            return None;
+        }
 
-    let data_runs_offset = u16::from_le_bytes([
-        bitmap_record[data_offset + 0x20],
-        bitmap_record[data_offset + 0x21],
-    ]) as usize;
-    if data_runs_offset == 0 || data_offset + data_runs_offset > bitmap_record.len() {
-        return None;
-    }
+        let data_runs_offset = u16::from_le_bytes([
+            bitmap_record[data_offset + 0x20],
+            bitmap_record[data_offset + 0x21],
+        ]) as usize;
+        if data_runs_offset == 0 || data_offset + data_runs_offset > bitmap_record.len() {
+            return None;
+        }
 
-    let run_list = &bitmap_record[data_offset + data_runs_offset..];
-    let mut runs = [(0u64, 0u64); 64];
-    let num_runs = parse_run_list(run_list, &mut runs);
-    if num_runs == 0 {
-        return None;
-    }
+        let run_list = &bitmap_record[data_offset + data_runs_offset..];
+        let mut runs = [(0u64, 0u64); 64];
+        let num_runs = parse_run_list(run_list, &mut runs);
+        if num_runs == 0 {
+            return None;
+        }
 
-    let bits_per_bitmap_cluster = ntfs.ntfs_data.cluster_size as u64 * 8;
+        let bits_per_bitmap_cluster = ntfs.ntfs_data.cluster_size as u64 * 8;
 
-    // Scan each bitmap cluster for the first free bit. The LCN of a data
-    // cluster is its position in the $Bitmap data stream (each bitmap
-    // cluster covers `cluster_size * 8` data clusters), so the index must
-    // accumulate across all runs of the $Bitmap, not reset per run.
-    let mut bitmap_cluster_index: u64 = 0;
-    for &(start_cluster, length) in runs[..num_runs].iter() {
-        for cluster_in_run in 0..length {
-            let bitmap_cluster = start_cluster + cluster_in_run;
-            let bitmap_sector = cluster_to_sector(bitmap_cluster, ntfs.ntfs_data.cluster_size);
+        // Scan each bitmap cluster for the first free bit. The LCN of a data
+        // cluster is its position in the $Bitmap data stream (each bitmap
+        // cluster covers `cluster_size * 8` data clusters), so the index must
+        // accumulate across all runs of the $Bitmap, not reset per run.
+        let mut bitmap_cluster_index: u64 = 0;
+        for &(start_cluster, length) in runs[..num_runs].iter() {
+            for cluster_in_run in 0..length {
+                let bitmap_cluster = start_cluster + cluster_in_run;
+                let bitmap_sector = cluster_to_sector(bitmap_cluster, ntfs.ntfs_data.cluster_size);
 
-            let mut sector_buf = [0u8; 512];
-            let read_ok = if let Some(device_id) = ntfs.ntfs_data.device_id {
-                crate::drivers::storage::block::read_block(
-                    device_id,
-                    bitmap_sector,
-                    &mut sector_buf,
-                )
-            } else {
-                read_sector(core::ptr::null_mut(), bitmap_sector, &mut sector_buf).is_ok()
-            };
-            if !read_ok {
-                continue;
-            }
-
-            // Each 512-byte sector covers 4096 clusters (8 bits/byte).
-            for (byte_index, &byte) in sector_buf.iter().enumerate() {
-                if byte == 0xFF {
+                let mut sector_buf = [0u8; 512];
+                let read_ok = if let Some(device_id) = ntfs.ntfs_data.device_id {
+                    crate::drivers::storage::block::read_block(
+                        device_id,
+                        bitmap_sector,
+                        &mut sector_buf,
+                    )
+                } else {
+                    read_sector(core::ptr::null_mut(), bitmap_sector, &mut sector_buf).is_ok()
+                };
+                if !read_ok {
                     continue;
                 }
-                for bit_index in 0..8u32 {
-                    let mask = 1u8 << bit_index;
-                    if byte & mask == 0 {
-                        let bit_position = (byte_index * 8) as u64 + bit_index as u64;
-                        let allocated_lcn = bitmap_cluster_index
-                            .saturating_mul(bits_per_bitmap_cluster)
-                            + bit_position;
 
-                        // Mark the bit as used.
-                        sector_buf[byte_index] |= mask;
-                        let write_ok = if let Some(device_id) = ntfs.ntfs_data.device_id {
-                            crate::drivers::storage::block::write_block(
-                                device_id,
-                                bitmap_sector,
-                                &sector_buf,
-                            )
-                        } else {
-                            write_sector(core::ptr::null_mut(), bitmap_sector, &sector_buf).is_ok()
-                        };
-                        if !write_ok {
-                            return None;
+                // Each 512-byte sector covers 4096 clusters (8 bits/byte).
+                for (byte_index, &byte) in sector_buf.iter().enumerate() {
+                    if byte == 0xFF {
+                        continue;
+                    }
+                    for bit_index in 0..8u32 {
+                        let mask = 1u8 << bit_index;
+                        if byte & mask == 0 {
+                            let bit_position = (byte_index * 8) as u64 + bit_index as u64;
+                            let allocated_lcn = bitmap_cluster_index
+                                .saturating_mul(bits_per_bitmap_cluster)
+                                + bit_position;
+
+                            // Mark the bit as used.
+                            sector_buf[byte_index] |= mask;
+                            let write_ok = if let Some(device_id) = ntfs.ntfs_data.device_id {
+                                crate::drivers::storage::block::write_block(
+                                    device_id,
+                                    bitmap_sector,
+                                    &sector_buf,
+                                )
+                            } else {
+                                write_sector(core::ptr::null_mut(), bitmap_sector, &sector_buf)
+                                    .is_ok()
+                            };
+                            if !write_ok {
+                                return None;
+                            }
+
+                            return Some(allocated_lcn);
                         }
-
-                        return Some(allocated_lcn);
                     }
                 }
+                bitmap_cluster_index += 1;
             }
-            bitmap_cluster_index += 1;
         }
-    }
 
-    // Volume full.
-    None
+        // Volume full.
+        None
+    }
 }
 
 /// Allocate the first unused MFT record number in the mounted mirror.
@@ -3488,12 +3509,7 @@ pub fn allocate_cluster_ntfs(ntfs: &NtfsFileSystem) -> Option<u64> {
 /// entirely unreadable/uninitialised are considered free. Records whose
 /// fixups are corrupt are treated as allocated rather than silently reused.
 fn allocate_mft_record(ntfs: &NtfsFileSystem) -> Option<u64> {
-    for record_number in 32..1024u64 {
-        if read_mft_record(&ntfs.ntfs_data, record_number).is_none() {
-            return Some(record_number);
-        }
-    }
-    None
+    (32..1024u64).find(|&record_number| read_mft_record(&ntfs.ntfs_data, record_number).is_none())
 }
 
 /// Append a resident attribute value to an MFT record.
@@ -3517,7 +3533,7 @@ fn append_resident_attribute(
     record.extend_from_slice(&24u16.to_le_bytes());
     record.extend_from_slice(&[0; 2]);
     record.extend_from_slice(value);
-    while record.len() % 8 != 0 {
+    while !record.len().is_multiple_of(8) {
         record.push(0);
     }
     attribute_offset
@@ -3668,7 +3684,7 @@ fn directory_record_with_entries(
 /// Drive letters and separators are path syntax only; they are never stored
 /// as `$FILE_NAME` components. `.` and `..` are resolved structurally so
 /// relative command paths do not require callers to duplicate shell logic.
-fn ntfs_path_components(path: &[u16]) -> Result<Vec<Vec<u16>>, ()> {
+fn ntfs_path_components(path: &[u16]) -> Result<Vec<Vec<u16>>, NTSTATUS> {
     let separator =
         |value: u16| value == b'\\' as u16 || value == b'/' as u16 || value == b':' as u16;
     let mut components = Vec::new();
@@ -3696,14 +3712,14 @@ fn ntfs_path_components(path: &[u16]) -> Result<Vec<Vec<u16>>, ()> {
         let mut component = Vec::with_capacity(index - start);
         component.extend_from_slice(&path[start..index]);
         if component.len() > 255 {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         if component.len() == 1 && component[0] == b'.' as u16 {
             continue;
         }
         if component.len() == 2 && component[0] == b'.' as u16 && component[1] == b'.' as u16 {
             if components.pop().is_none() {
-                return Err(());
+                return Err(STATUS_UNSUCCESSFUL);
             }
             continue;
         }
@@ -3717,20 +3733,20 @@ fn directory_record_for_components(
     ntfs: &NtfsFileSystem,
     components: &[Vec<u16>],
     create_missing: bool,
-) -> Result<u64, ()> {
+) -> Result<u64, NTSTATUS> {
     let mut current_record = 5u64;
     for component in components {
         if let Some(record) = find_file_in_directory(ntfs, current_record, component) {
-            let handle = get_file_by_record(ntfs, record).ok_or(())?;
+            let handle = get_file_by_record(ntfs, record).ok_or(STATUS_UNSUCCESSFUL)?;
             if !handle.is_directory {
-                return Err(());
+                return Err(STATUS_UNSUCCESSFUL);
             }
             current_record = record;
         } else if create_missing {
             current_record =
                 create_directory_in_parent(ntfs, current_record, component)?.mft_record;
         } else {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
     }
     Ok(current_record)
@@ -3740,9 +3756,9 @@ fn parent_and_leaf(
     ntfs: &NtfsFileSystem,
     path: &[u16],
     create_ancestors: bool,
-) -> Result<(u64, Vec<u16>), ()> {
+) -> Result<(u64, Vec<u16>), NTSTATUS> {
     let components = ntfs_path_components(path)?;
-    let leaf = components.last().ok_or(())?.clone();
+    let leaf = components.last().ok_or(STATUS_UNSUCCESSFUL)?.clone();
     let parent = directory_record_for_components(
         ntfs,
         &components[..components.len() - 1],
@@ -3755,15 +3771,15 @@ fn create_directory_in_parent(
     ntfs: &NtfsFileSystem,
     parent_record: u64,
     name: &[u16],
-) -> Result<NtfsHandle, ()> {
+) -> Result<NtfsHandle, NTSTATUS> {
     if find_file_in_directory(ntfs, parent_record, name).is_some() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
-    let record_number = allocate_mft_record(ntfs).ok_or(())?;
+    let record_number = allocate_mft_record(ntfs).ok_or(STATUS_UNSUCCESSFUL)?;
     let record_size = ntfs.ntfs_data.mft_record_size as usize;
     if record_size < MftRecordHeader::MINIMUM_RECORD_SIZE {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let sectors_per_record = record_size / 512;
@@ -3791,17 +3807,18 @@ fn create_directory_in_parent(
     let used_size = record.len();
     record[0x18..0x1C].copy_from_slice(&(used_size as u32).to_le_bytes());
     if used_size > record_size {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     record.resize(record_size, 0);
 
     if write_mft_record(&ntfs.ntfs_data, record_number, &record).is_err() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let security_id = record_number as crate::fs::ntfs::security::SecurityId;
-    let descriptor =
-        crate::fs::ntfs::security::serialize_sds_descriptor(&crate::fs::ntfs::security::NtfsSecurityDescriptor::new_default());
+    let descriptor = crate::fs::ntfs::security::serialize_sds_descriptor(
+        &crate::fs::ntfs::security::NtfsSecurityDescriptor::new_default(),
+    );
     crate::fs::ntfs::security::update_secure_sds(ntfs, security_id, &descriptor)?;
 
     let current_entries = list_directory(ntfs, parent_record);
@@ -3812,16 +3829,17 @@ fn create_directory_in_parent(
     directory_entry.name = name.to_vec();
     directory_entry.is_directory = true;
     entries.push(directory_entry);
-    let parent = directory_record_with_entries(ntfs, parent_record, &entries).ok_or(())?;
+    let parent =
+        directory_record_with_entries(ntfs, parent_record, &entries).ok_or(STATUS_UNSUCCESSFUL)?;
     if write_mft_record(&ntfs.ntfs_data, parent_record, &parent).is_err() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     Ok(NtfsHandle::new(record_number, true, 0, name))
 }
 
 /// Create a directory at a full Win32-style path.
-pub fn create_directory(ntfs: &NtfsFileSystem, path: &[u16]) -> Result<NtfsHandle, ()> {
+pub fn create_directory(ntfs: &NtfsFileSystem, path: &[u16]) -> Result<NtfsHandle, NTSTATUS> {
     let (parent_record, name) = parent_and_leaf(ntfs, path, true)?;
     create_directory_in_parent(ntfs, parent_record, &name)
 }
@@ -3851,15 +3869,15 @@ fn create_file_in_parent(
     parent_record: u64,
     name: &[u16],
     initial_data: &[u8],
-) -> Result<NtfsHandle, ()> {
+) -> Result<NtfsHandle, NTSTATUS> {
     if find_file_in_directory(ntfs, parent_record, name).is_some() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
-    let record_number = allocate_mft_record(ntfs).ok_or(())?;
+    let record_number = allocate_mft_record(ntfs).ok_or(STATUS_UNSUCCESSFUL)?;
     let record_size = ntfs.ntfs_data.mft_record_size as usize;
     if record_size < MftRecordHeader::MINIMUM_RECORD_SIZE {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let sectors_per_record = record_size / SECTOR_SIZE;
@@ -3905,17 +3923,18 @@ fn create_file_in_parent(
     record[MftRecordHeader::OFFSET_USED_SIZE..MftRecordHeader::OFFSET_USED_SIZE + 4]
         .copy_from_slice(&(used_size as u32).to_le_bytes());
     if used_size > record_size {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     record.resize(record_size, 0);
 
     if write_mft_record(&ntfs.ntfs_data, record_number, &record).is_err() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let security_id = record_number as crate::fs::ntfs::security::SecurityId;
-    let descriptor =
-        crate::fs::ntfs::security::serialize_sds_descriptor(&crate::fs::ntfs::security::NtfsSecurityDescriptor::new_default());
+    let descriptor = crate::fs::ntfs::security::serialize_sds_descriptor(
+        &crate::fs::ntfs::security::NtfsSecurityDescriptor::new_default(),
+    );
     crate::fs::ntfs::security::update_secure_sds(ntfs, security_id, &descriptor)?;
 
     insert_directory_entry(ntfs, parent_record, record_number, name, false)?;
@@ -3933,7 +3952,7 @@ pub fn create_file(
     ntfs: &NtfsFileSystem,
     path: &[u16],
     initial_data: &[u8],
-) -> Result<NtfsHandle, ()> {
+) -> Result<NtfsHandle, NTSTATUS> {
     let (parent_record, name) = parent_and_leaf(ntfs, path, false)?;
     create_file_in_parent(ntfs, parent_record, &name, initial_data)
 }
@@ -3945,7 +3964,7 @@ pub fn insert_directory_entry(
     record_number: u64,
     name: &[u16],
     is_directory: bool,
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     let current_entries = list_directory(ntfs, parent_record);
     let mut entries = current_entries;
     let mut directory_entry = DirectoryEntry::new();
@@ -3955,7 +3974,8 @@ pub fn insert_directory_entry(
     directory_entry.is_directory = is_directory;
     entries.push(directory_entry);
 
-    let parent = directory_record_with_entries(ntfs, parent_record, &entries).ok_or(())?;
+    let parent =
+        directory_record_with_entries(ntfs, parent_record, &entries).ok_or(STATUS_UNSUCCESSFUL)?;
     write_mft_record(&ntfs.ntfs_data, parent_record, &parent)
 }
 
@@ -3974,22 +3994,23 @@ pub fn extend_file(
     ntfs: &mut NtfsFileSystem,
     handle: &mut NtfsHandle,
     new_size: u64,
-) -> Result<(), ()> {
+) -> Result<(), NTSTATUS> {
     if new_size <= handle.file_size {
         return Ok(());
     }
 
     let cluster_size = ntfs.ntfs_data.cluster_size;
-    if cluster_size == 0 || cluster_size % 512 != 0 {
-        return Err(());
+    if cluster_size == 0 || !cluster_size.is_multiple_of(512) {
+        return Err(STATUS_UNSUCCESSFUL);
     }
-    let record = read_mft_record(&ntfs.ntfs_data, handle.mft_record).ok_or(())?;
-    let data_offset = find_attribute_in_record(&record, AttributeHeader::TYPE_DATA).ok_or(())?;
+    let record = read_mft_record(&ntfs.ntfs_data, handle.mft_record).ok_or(STATUS_UNSUCCESSFUL)?;
+    let data_offset =
+        find_attribute_in_record(&record, AttributeHeader::TYPE_DATA).ok_or(STATUS_UNSUCCESSFUL)?;
     if data_offset + 0x40 > record.len() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let attr_id = u16::from_le_bytes([record[data_offset + 0x0E], record[data_offset + 0x0F]]);
-    let clusters_needed = (new_size + cluster_size as u64 - 1) / cluster_size as u64;
+    let clusters_needed = new_size.div_ceil(cluster_size as u64);
 
     let mut runs: alloc::vec::Vec<(u64, u64)> = alloc::vec::Vec::new();
     let mut allocated_clusters: u64 = 0;
@@ -4008,7 +4029,7 @@ pub fn extend_file(
         let value_offset =
             u16::from_le_bytes([record[data_offset + 0x14], record[data_offset + 0x15]]) as usize;
         if value_offset + value_len > record.len() - data_offset {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         let start = data_offset + value_offset;
         resident_payload = Some(record[start..start + value_len].to_vec());
@@ -4016,12 +4037,12 @@ pub fn extend_file(
         let run_offset =
             u16::from_le_bytes([record[data_offset + 0x20], record[data_offset + 0x21]]) as usize;
         if run_offset == 0 || data_offset + run_offset > record.len() {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         let mut parsed = [(0u64, 0u64); 256];
         let num_runs = parse_run_list(&record[data_offset + run_offset..], &mut parsed);
         if num_runs == 0 {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         runs.extend_from_slice(&parsed[..num_runs]);
         allocated_clusters = runs.iter().map(|(_, length)| length).sum();
@@ -4046,7 +4067,7 @@ pub fn extend_file(
     // Grow the allocation from the $Bitmap, merging with the previous
     // run when the next cluster is contiguous.
     while allocated_clusters < clusters_needed {
-        let cluster = allocate_cluster_ntfs(ntfs).ok_or(())?;
+        let cluster = allocate_cluster_ntfs(ntfs).ok_or(STATUS_UNSUCCESSFUL)?;
         match runs.last_mut() {
             Some(last) if last.0 + last.1 == cluster => last.1 += 1,
             _ => runs.push((cluster, 1)),
@@ -4060,7 +4081,7 @@ pub fn extend_file(
     // bytes of the new stream.
     let payload = resident_payload.unwrap_or_default();
     for vcn in first_new_vcn..allocated_clusters {
-        let lcn = vcn_to_lcn(&runs, vcn).ok_or(())?;
+        let lcn = vcn_to_lcn(&runs, vcn).ok_or(STATUS_UNSUCCESSFUL)?;
         let mut cluster_buf = alloc::vec![0u8; cluster_size as usize];
         let stream_offset = (vcn * cluster_size as u64) as usize;
         if stream_offset < payload.len() {
@@ -4073,7 +4094,7 @@ pub fn extend_file(
             sector_buf.copy_from_slice(&cluster_buf[sector_index * 512..(sector_index + 1) * 512]);
             let sector = first_sector + sector_index as u64;
             if !write_mounted_sector(&ntfs.ntfs_data, sector, &sector_buf) {
-                return Err(());
+                return Err(STATUS_UNSUCCESSFUL);
             }
         }
     }
@@ -4086,7 +4107,8 @@ pub fn extend_file(
         new_size,
         new_size,
     );
-    let rebuilt = rebuild_record_replacing_data(&record, &replacement).ok_or(())?;
+    let rebuilt =
+        rebuild_record_replacing_data(&record, &replacement).ok_or(STATUS_UNSUCCESSFUL)?;
     write_mft_record(&ntfs.ntfs_data, handle.mft_record, &rebuilt)?;
 
     handle.file_size = new_size;
@@ -4218,71 +4240,74 @@ fn fill_volume_metadata(ntfs: &mut NtfsFileSystem, total_sectors: u64, sectors_p
 /// are counted as used (conservative, matching the allocator, which
 /// refuses to allocate from a bitmap it cannot read).
 fn count_free_clusters(ntfs: &NtfsFileSystem, total_clusters: u64) -> u64 {
-    let Some(bitmap_record) = read_mft_record(&ntfs.ntfs_data, system_records::BITMAP) else {
-        return 0;
-    };
-    let Some(data_offset) = find_attribute_in_record(&bitmap_record, AttributeHeader::TYPE_DATA)
-    else {
-        return 0;
-    };
-    if data_offset + 8 > bitmap_record.len() {
-        return 0;
-    }
-    if bitmap_record[data_offset + 8] == 0 {
-        // $Bitmap is always non-resident on a real NTFS volume.
-        return 0;
-    }
-    let data_runs_offset = u16::from_le_bytes([
-        bitmap_record[data_offset + 0x20],
-        bitmap_record[data_offset + 0x21],
-    ]) as usize;
-    if data_runs_offset == 0 || data_offset + data_runs_offset > bitmap_record.len() {
-        return 0;
-    }
-    let run_list = &bitmap_record[data_offset + data_runs_offset..];
-    let mut runs = [(0u64, 0u64); 64];
-    let num_runs = parse_run_list(run_list, &mut runs);
-    if num_runs == 0 {
-        return 0;
-    }
+    unsafe {
+        let Some(bitmap_record) = read_mft_record(&ntfs.ntfs_data, system_records::BITMAP) else {
+            return 0;
+        };
+        let Some(data_offset) =
+            find_attribute_in_record(&bitmap_record, AttributeHeader::TYPE_DATA)
+        else {
+            return 0;
+        };
+        if data_offset + 8 > bitmap_record.len() {
+            return 0;
+        }
+        if bitmap_record[data_offset + 8] == 0 {
+            // $Bitmap is always non-resident on a real NTFS volume.
+            return 0;
+        }
+        let data_runs_offset = u16::from_le_bytes([
+            bitmap_record[data_offset + 0x20],
+            bitmap_record[data_offset + 0x21],
+        ]) as usize;
+        if data_runs_offset == 0 || data_offset + data_runs_offset > bitmap_record.len() {
+            return 0;
+        }
+        let run_list = &bitmap_record[data_offset + data_runs_offset..];
+        let mut runs = [(0u64, 0u64); 64];
+        let num_runs = parse_run_list(run_list, &mut runs);
+        if num_runs == 0 {
+            return 0;
+        }
 
-    let bytes_per_cluster = ntfs.ntfs_data.cluster_size as u64;
-    let sectors_per_cluster = (bytes_per_cluster / 512).max(1);
-    let mut free = 0u64;
-    let mut bits_covered = 0u64;
-    'outer: for &(start_cluster, length) in runs[..num_runs].iter() {
-        for cluster_in_run in 0..length {
-            let bitmap_cluster = start_cluster + cluster_in_run;
-            let first_sector = cluster_to_sector(bitmap_cluster, ntfs.ntfs_data.cluster_size);
-            for sector_index in 0..sectors_per_cluster {
-                let mut sector_buf = [0u8; 512];
-                let read_ok = if let Some(device_id) = ntfs.ntfs_data.device_id {
-                    crate::drivers::storage::block::read_block(
-                        device_id,
-                        first_sector + sector_index,
-                        &mut sector_buf,
-                    )
-                } else {
-                    read_sector(
-                        core::ptr::null_mut(),
-                        first_sector + sector_index,
-                        &mut sector_buf,
-                    )
-                    .is_ok()
-                };
-                if read_ok {
-                    for &byte in sector_buf.iter() {
-                        free += byte.count_ones() as u64;
+        let bytes_per_cluster = ntfs.ntfs_data.cluster_size as u64;
+        let sectors_per_cluster = (bytes_per_cluster / 512).max(1);
+        let mut free = 0u64;
+        let mut bits_covered = 0u64;
+        'outer: for &(start_cluster, length) in runs[..num_runs].iter() {
+            for cluster_in_run in 0..length {
+                let bitmap_cluster = start_cluster + cluster_in_run;
+                let first_sector = cluster_to_sector(bitmap_cluster, ntfs.ntfs_data.cluster_size);
+                for sector_index in 0..sectors_per_cluster {
+                    let mut sector_buf = [0u8; 512];
+                    let read_ok = if let Some(device_id) = ntfs.ntfs_data.device_id {
+                        crate::drivers::storage::block::read_block(
+                            device_id,
+                            first_sector + sector_index,
+                            &mut sector_buf,
+                        )
+                    } else {
+                        read_sector(
+                            core::ptr::null_mut(),
+                            first_sector + sector_index,
+                            &mut sector_buf,
+                        )
+                        .is_ok()
+                    };
+                    if read_ok {
+                        for &byte in sector_buf.iter() {
+                            free += byte.count_ones() as u64;
+                        }
                     }
-                }
-                bits_covered += 512 * 8;
-                if bits_covered >= total_clusters {
-                    break 'outer;
+                    bits_covered += 512 * 8;
+                    if bits_covered >= total_clusters {
+                        break 'outer;
+                    }
                 }
             }
         }
+        free.min(total_clusters)
     }
-    free.min(total_clusters)
 }
 
 /// Read the resident $VOLUME_INFORMATION volume label into `out`.
@@ -4316,34 +4341,31 @@ fn read_volume_label(ntfs: &NtfsFileSystem, out: &mut [u16; 64]) -> bool {
         return false;
     }
     let value = &record[offset + value_offset..offset + value_offset + value_len];
-    for (index, chunk) in value.chunks_exact(2).enumerate() {
+    for (index, chunk) in value.as_chunks::<2>().0.iter().enumerate() {
         out[index] = u16::from_le_bytes([chunk[0], chunk[1]]);
     }
     true
 }
 
 /// Delete an empty directory identified by a full Win32-style path.
-pub fn delete_directory(ntfs: &NtfsFileSystem, path: &[u16]) -> Result<(), ()> {
-    let (parent_record, name) = match parent_and_leaf(ntfs, path, false) {
-        Ok(value) => value,
-        Err(()) => return Err(()),
-    };
+pub fn delete_directory(ntfs: &NtfsFileSystem, path: &[u16]) -> Result<(), NTSTATUS> {
+    let (parent_record, name) = parent_and_leaf(ntfs, path, false)?;
     let record_number = match find_file_in_directory(ntfs, parent_record, &name) {
         Some(value) => value,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
     let current = match read_mft_record(&ntfs.ntfs_data, record_number) {
         Some(value) => value,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
     let flags = u16::from_le_bytes([current[0x16], current[0x17]]);
     if flags & 0x0002 == 0 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let child_entries = list_directory(ntfs, record_number);
     if !child_entries.is_empty() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let entries: Vec<DirectoryEntry> = list_directory(ntfs, parent_record)
@@ -4352,10 +4374,10 @@ pub fn delete_directory(ntfs: &NtfsFileSystem, path: &[u16]) -> Result<(), ()> {
         .collect();
     let parent = match directory_record_with_entries(ntfs, parent_record, &entries) {
         Some(value) => value,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
     if write_mft_record(&ntfs.ntfs_data, parent_record, &parent).is_err() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let mut deleted = alloc::vec![0u8; current.len()];
@@ -4370,23 +4392,20 @@ pub fn delete_directory(ntfs: &NtfsFileSystem, path: &[u16]) -> Result<(), ()> {
 /// Marks the file's MFT record as deleted and removes its index
 /// entry from the parent directory, mirroring the approach used by
 /// `delete_directory` but without the "is directory" check.
-pub fn delete_file(ntfs: &NtfsFileSystem, path: &[u16]) -> Result<(), ()> {
-    let (parent_record, name) = match parent_and_leaf(ntfs, path, false) {
-        Ok(value) => value,
-        Err(()) => return Err(()),
-    };
+pub fn delete_file(ntfs: &NtfsFileSystem, path: &[u16]) -> Result<(), NTSTATUS> {
+    let (parent_record, name) = parent_and_leaf(ntfs, path, false)?;
     let record_number = match find_file_in_directory(ntfs, parent_record, &name) {
         Some(value) => value,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
     let current = match read_mft_record(&ntfs.ntfs_data, record_number) {
         Some(value) => value,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
     // Reject directories — callers should use delete_directory for those.
     let flags = u16::from_le_bytes([current[0x16], current[0x17]]);
     if flags & 0x0002 != 0 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     // Remove the entry from the parent directory's index.
@@ -4396,10 +4415,10 @@ pub fn delete_file(ntfs: &NtfsFileSystem, path: &[u16]) -> Result<(), ()> {
         .collect();
     let parent = match directory_record_with_entries(ntfs, parent_record, &entries) {
         Some(value) => value,
-        None => return Err(()),
+        None => return Err(STATUS_UNSUCCESSFUL),
     };
     if write_mft_record(&ntfs.ntfs_data, parent_record, &parent).is_err() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     // Zero the MFT record header to mark it as free.
@@ -4474,201 +4493,201 @@ pub fn mount(
     _path: &[u16],
     partition: Option<crate::fs::MountContext>,
 ) -> Option<&'static mut NtfsFileSystem> {
-    crate::boot_println!("[NTFS] mount: entering");
-    let device = match partition {
-        Some(context) => crate::fs::allocate_mount_context(context) as *mut (),
-        None => device,
-    };
-    let mut buffer = [0u8; 512];
+    unsafe {
+        crate::boot_println!("[NTFS] mount: entering");
+        let device = match partition {
+            Some(context) => crate::fs::allocate_mount_context(context) as *mut (),
+            None => device,
+        };
+        let mut buffer = [0u8; 512];
 
-    // read boot sector
-    crate::boot_println!("[NTFS] mount: about to read_sector 0");
-    if let Err(_) = read_sector(device, 0, &mut buffer) {
-        // kprintln!("[NTFS] Failed to read boot sector");
-        crate::boot_println!("[NTFS] mount: read_sector failed, returning None");
-        return None;
-    }
-    crate::boot_println!("[NTFS] mount: read_sector ok");
+        // read boot sector
+        crate::boot_println!("[NTFS] mount: about to read_sector 0");
+        if read_sector(device, 0, &mut buffer).is_err() {
+            // kprintln!("[NTFS] Failed to read boot sector");
+            crate::boot_println!("[NTFS] mount: read_sector failed, returning None");
+            return None;
+        }
+        crate::boot_println!("[NTFS] mount: read_sector ok");
 
-    // Parse boot sector from raw bytes (struct has alignment issues).
-    // The NTFS BPB layout (per Microsoft NTFS 3.1 spec):
-    //   0x0B..0x0C   bytes_per_sector (u16 LE)
-    //   0x0D         sectors_per_cluster (u8)
-    //   0x0E..0x0F   reserved_sectors (u16 LE)
-    //   0x10         media_descriptor (u8)
-    //   0x11..0x16   zero[6] (unused, always 0)
-    //   0x17..0x18   sectors_per_track (u16 LE)
-    //   0x19..0x1A   num_heads (u16 LE)
-    //   0x1C..0x1F   hidden_sectors (u32 LE)    partition start LBA
-    //   0x20..0x23   total_sectors_32 (u32 LE) [rarely used; zero on modern NTFS]
-    //   0x28..0x2F   total_sectors_64 (u64 LE)
-    //   0x30..0x37   mft_lcn (u64 LE)          cluster number, NOT a sector number
-    //   0x38..0x3F   mft_mirror_lcn (u64 LE)
-    //   0x40         clusters_per_mft_record (i8)
-    //                  < 0  ->  2^|n| bytes (typical: -10 means 1024)
-    //                  = 0  ->  undefined; assume 1024
-    //                  > 0  ->  n * cluster_size bytes
-    //   0x41         clusters_per_index_record (i8)  (same encoding)
-    //   0x48..0x4F   volume_serial_number (u64 LE)
-    //
-    // We read these by hand from the raw buffer instead of casting
-    // through `NtfsBootSector` because that struct has been wrong in
-    // the past (offsets `0x2B..0x33` for `mft_lcn` instead of the
-    // correct `0x30..0x38` — see `nt61-ntfs-boot-sector-parsing`
-    // skill: a wrong struct gave `mft_lcn=0x40000000000` which then
-    // cascaded into every `read_mft_record` returning OOB).
-    let bytes_per_sector = u16::from_le_bytes([buffer[0x0B], buffer[0x0C]]);
-    let sectors_per_cluster = buffer[0x0D];
-    let mft_lcn = u64::from_le_bytes([
-        buffer[0x30],
-        buffer[0x31],
-        buffer[0x32],
-        buffer[0x33],
-        buffer[0x34],
-        buffer[0x35],
-        buffer[0x36],
-        buffer[0x37],
-    ]);
-    let mft_mirror_lcn = u64::from_le_bytes([
-        buffer[0x38],
-        buffer[0x39],
-        buffer[0x3A],
-        buffer[0x3B],
-        buffer[0x3C],
-        buffer[0x3D],
-        buffer[0x3E],
-        buffer[0x3F],
-    ]);
-    // total_sectors_64 lives at 0x28..0x30 (NOT 0x23, which is the
-    // BPB-12/16/32 "BPB" total_sectors that NTFS does not honour).
-    let total_sectors_64 = u64::from_le_bytes([
-        buffer[0x28],
-        buffer[0x29],
-        buffer[0x2A],
-        buffer[0x2B],
-        buffer[0x2C],
-        buffer[0x2D],
-        buffer[0x2E],
-        buffer[0x2F],
-    ]);
-    // Hidden sectors (partition start LBA) is at 0x1C..0x1F. NTFS
-    // inherits the FAT BPB layout, which puts this u32 at 0x1C.
-    let hidden_sectors: u64 =
-        u32::from_le_bytes([buffer[0x1C], buffer[0x1D], buffer[0x1E], buffer[0x1F]]) as u64;
-    let volume_serial = u64::from_le_bytes([
-        buffer[0x48],
-        buffer[0x49],
-        buffer[0x4A],
-        buffer[0x4B],
-        buffer[0x4C],
-        buffer[0x4D],
-        buffer[0x4E],
-        buffer[0x4F],
-    ]);
-    crate::boot_println!("[NTFS] boot: bps={} spc={} mft_lcn={} mft_mirror_lcn={} hidden_sectors={} total_sectors_64={} vol_serial=0x{:x}",
+        // Parse boot sector from raw bytes (struct has alignment issues).
+        // The NTFS BPB layout (per Microsoft NTFS 3.1 spec):
+        //   0x0B..0x0C   bytes_per_sector (u16 LE)
+        //   0x0D         sectors_per_cluster (u8)
+        //   0x0E..0x0F   reserved_sectors (u16 LE)
+        //   0x10         media_descriptor (u8)
+        //   0x11..0x16   zero[6] (unused, always 0)
+        //   0x17..0x18   sectors_per_track (u16 LE)
+        //   0x19..0x1A   num_heads (u16 LE)
+        //   0x1C..0x1F   hidden_sectors (u32 LE)    partition start LBA
+        //   0x20..0x23   total_sectors_32 (u32 LE) [rarely used; zero on modern NTFS]
+        //   0x28..0x2F   total_sectors_64 (u64 LE)
+        //   0x30..0x37   mft_lcn (u64 LE)          cluster number, NOT a sector number
+        //   0x38..0x3F   mft_mirror_lcn (u64 LE)
+        //   0x40         clusters_per_mft_record (i8)
+        //                  < 0  ->  2^|n| bytes (typical: -10 means 1024)
+        //                  = 0  ->  undefined; assume 1024
+        //                  > 0  ->  n * cluster_size bytes
+        //   0x41         clusters_per_index_record (i8)  (same encoding)
+        //   0x48..0x4F   volume_serial_number (u64 LE)
+        //
+        // We read these by hand from the raw buffer instead of casting
+        // through `NtfsBootSector` because that struct has been wrong in
+        // the past (offsets `0x2B..0x33` for `mft_lcn` instead of the
+        // correct `0x30..0x38` — see `nt61-ntfs-boot-sector-parsing`
+        // skill: a wrong struct gave `mft_lcn=0x40000000000` which then
+        // cascaded into every `read_mft_record` returning OOB).
+        let bytes_per_sector = u16::from_le_bytes([buffer[0x0B], buffer[0x0C]]);
+        let sectors_per_cluster = buffer[0x0D];
+        let mft_lcn = u64::from_le_bytes([
+            buffer[0x30],
+            buffer[0x31],
+            buffer[0x32],
+            buffer[0x33],
+            buffer[0x34],
+            buffer[0x35],
+            buffer[0x36],
+            buffer[0x37],
+        ]);
+        let mft_mirror_lcn = u64::from_le_bytes([
+            buffer[0x38],
+            buffer[0x39],
+            buffer[0x3A],
+            buffer[0x3B],
+            buffer[0x3C],
+            buffer[0x3D],
+            buffer[0x3E],
+            buffer[0x3F],
+        ]);
+        // total_sectors_64 lives at 0x28..0x30 (NOT 0x23, which is the
+        // BPB-12/16/32 "BPB" total_sectors that NTFS does not honour).
+        let total_sectors_64 = u64::from_le_bytes([
+            buffer[0x28],
+            buffer[0x29],
+            buffer[0x2A],
+            buffer[0x2B],
+            buffer[0x2C],
+            buffer[0x2D],
+            buffer[0x2E],
+            buffer[0x2F],
+        ]);
+        // Hidden sectors (partition start LBA) is at 0x1C..0x1F. NTFS
+        // inherits the FAT BPB layout, which puts this u32 at 0x1C.
+        let hidden_sectors: u64 =
+            u32::from_le_bytes([buffer[0x1C], buffer[0x1D], buffer[0x1E], buffer[0x1F]]) as u64;
+        let volume_serial = u64::from_le_bytes([
+            buffer[0x48],
+            buffer[0x49],
+            buffer[0x4A],
+            buffer[0x4B],
+            buffer[0x4C],
+            buffer[0x4D],
+            buffer[0x4E],
+            buffer[0x4F],
+        ]);
+        crate::boot_println!("[NTFS] boot: bps={} spc={} mft_lcn={} mft_mirror_lcn={} hidden_sectors={} total_sectors_64={} vol_serial=0x{:x}",
         bytes_per_sector, sectors_per_cluster, mft_lcn, mft_mirror_lcn, hidden_sectors, total_sectors_64, volume_serial);
 
-    // Validate OEM ID
-    if &buffer[3..11] != b"NTFS    " {
-        crate::boot_println!("[NTFS] Invalid OEM ID");
-        return None;
-    }
-    if bytes_per_sector == 0 || bytes_per_sector > 4096 {
-        crate::boot_println!("[NTFS] Invalid bytes_per_sector");
-        return None;
-    }
-
-    let ntfs = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<NtfsFileSystem>(),
-    ) as *mut NtfsFileSystem;
-
-    if !ntfs.is_null() {
-        unsafe {
-            let new_ntfs = NtfsFileSystem::new();
-            (*ntfs).base = new_ntfs.base;
-            (*ntfs).ntfs_data = new_ntfs.ntfs_data;
-            (*ntfs).base.device = device;
-            (*ntfs).base.sector_size = bytes_per_sector as u32;
-            let bytes_per_cluster = (bytes_per_sector as u32) * (sectors_per_cluster as u32);
-            (*ntfs).base.cluster_size = bytes_per_cluster;
-            (*ntfs).ntfs_data.cluster_size = bytes_per_cluster;
-
-            // Calculate MFT record size
-            // Default to 1024 bytes (standard) if not specified
-            let cluster_per_mft_record = buffer[0x40] as i8; // Try offset 0x40 first
-            let cluster_per_index_record = buffer[0x41] as i8;
-
-            let mft_record_size: u32;
-            let index_record_size: u32;
-            if cluster_per_mft_record < 0 {
-                // Negative means power of 2 divisor of sectors_per_cluster
-                let shift = (-cluster_per_mft_record) as u32;
-                mft_record_size = (1u32) << shift;
-            } else if cluster_per_mft_record == 0 {
-                // Default to 1024 bytes if 0
-                mft_record_size = 1024;
-            } else {
-                mft_record_size = (cluster_per_mft_record as u32) * bytes_per_cluster;
-            }
-
-            if cluster_per_index_record < 0 {
-                let shift = (-cluster_per_index_record) as u32;
-                index_record_size = (1u32) << shift;
-            } else if cluster_per_index_record == 0 {
-                index_record_size = 4096;
-            } else {
-                index_record_size = (cluster_per_index_record as u32) * bytes_per_cluster;
-            }
-
-            (*ntfs).ntfs_data.mft_record_size = mft_record_size;
-            (*ntfs).ntfs_data.index_record_size = index_record_size;
-
-            // The kernel always reads the NTFS volume through winload's
-            // ramdisk mirror (BootInfo.sys_image_base). The mirror's
-            // first byte is sector 0 of the partition, so `hidden_sectors`
-            // from the BPB (the partition's LBA on the physical disk)
-            // is NOT a valid offset to add on top of in-mirror addresses
-            // — adding it would push every read far past the end of the
-            // mirror (the build_image NTFS emitter writes the physical
-            // LBA 131106 into the BPB at offset 0x1C, which previously
-            // caused `read_sector: OOB` on every non-resident file read).
-            // Force hidden_sectors = 0 for kernel-side mounts; winload
-            // reads directly via UEFI BlockIO and ignores this field.
-            (*ntfs).ntfs_data.mft_start = mft_lcn * (sectors_per_cluster as u64);
-            (*ntfs).ntfs_data.hidden_sectors = 0;
-            (*ntfs).ntfs_data.volume_serial = volume_serial;
-            // mft_mirror_lcn / total_sectors_64 are useful for
-            // future recovery paths but not consumed by the current
-            // reader — stash them next to mft_start so a follow-up
-            // commit can pick them up without re-parsing the boot
-            // sector.
-            (*ntfs).ntfs_data.mft_size = mft_mirror_lcn * (sectors_per_cluster as u64);
-            fill_volume_metadata(&mut *ntfs, total_sectors_64, sectors_per_cluster as u32);
-            crate::boot_println!("[NTFS] mount: mft_start={} (mft_lcn={}*spc={}) mft_record_size={} index_record_size={} hidden_sectors=FORCED-0 vol_serial=0x{:x}",
-                (*ntfs).ntfs_data.mft_start, mft_lcn, sectors_per_cluster, (*ntfs).ntfs_data.mft_record_size,
-                (*ntfs).ntfs_data.index_record_size, volume_serial);
-            (*ntfs).ntfs_data.mounted = true;
+        // Validate OEM ID
+        if &buffer[3..11] != b"NTFS    " {
+            crate::boot_println!("[NTFS] Invalid OEM ID");
+            return None;
+        }
+        if bytes_per_sector == 0 || bytes_per_sector > 4096 {
+            crate::boot_println!("[NTFS] Invalid bytes_per_sector");
+            return None;
         }
 
-        // kprintln!("      NTFS version: 3.1");
-        // kprintln!("      MFT record size: {} bytes", unsafe { (*ntfs).ntfs_data.mft_record_size });
-        // kprintln!("      Index record size: {} bytes", unsafe { (*ntfs).ntfs_data.index_record_size });
-        // kprintln!("      Volume mounted successfully");
+        let ntfs = crate::mm::pool::allocate(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<NtfsFileSystem>(),
+        ) as *mut NtfsFileSystem;
 
-        // Store in global for pagefile access
-        *NTFS_MOUNTED_FS.lock() = Some(unsafe { &mut *ntfs });
-        *NTFS_MOUNTED.lock() = true;
-        // Initialize pagefile support
-        init_pagefile(unsafe { &(*ntfs).ntfs_data });
+        if !ntfs.is_null() {
+            unsafe {
+                let new_ntfs = NtfsFileSystem::new();
+                (*ntfs).base = new_ntfs.base;
+                (*ntfs).ntfs_data = new_ntfs.ntfs_data;
+                (*ntfs).base.device = device;
+                (*ntfs).base.sector_size = bytes_per_sector as u32;
+                let bytes_per_cluster = (bytes_per_sector as u32) * (sectors_per_cluster as u32);
+                (*ntfs).base.cluster_size = bytes_per_cluster;
+                (*ntfs).ntfs_data.cluster_size = bytes_per_cluster;
 
-        // Initialize the $LogFile journaling subsystem for this volume.
-        crate::fs::ntfs::logfile::init_log_file(4096);
+                // Calculate MFT record size
+                // Default to 1024 bytes (standard) if not specified
+                let cluster_per_mft_record = buffer[0x40] as i8; // Try offset 0x40 first
+                let cluster_per_index_record = buffer[0x41] as i8;
 
-        return Some(unsafe { &mut *ntfs });
+                let mft_record_size: u32 = if cluster_per_mft_record < 0 {
+                    // Negative means power of 2 divisor of sectors_per_cluster
+                    let shift = (-cluster_per_mft_record) as u32;
+                    (1u32) << shift
+                } else if cluster_per_mft_record == 0 {
+                    // Default to 1024 bytes if 0
+                    1024
+                } else {
+                    (cluster_per_mft_record as u32) * bytes_per_cluster
+                };
+
+                let index_record_size: u32 = if cluster_per_index_record < 0 {
+                    let shift = (-cluster_per_index_record) as u32;
+                    (1u32) << shift
+                } else if cluster_per_index_record == 0 {
+                    4096
+                } else {
+                    (cluster_per_index_record as u32) * bytes_per_cluster
+                };
+
+                (*ntfs).ntfs_data.mft_record_size = mft_record_size;
+                (*ntfs).ntfs_data.index_record_size = index_record_size;
+
+                // The kernel always reads the NTFS volume through winload's
+                // ramdisk mirror (BootInfo.sys_image_base). The mirror's
+                // first byte is sector 0 of the partition, so `hidden_sectors`
+                // from the BPB (the partition's LBA on the physical disk)
+                // is NOT a valid offset to add on top of in-mirror addresses
+                // — adding it would push every read far past the end of the
+                // mirror (the build_image NTFS emitter writes the physical
+                // LBA 131106 into the BPB at offset 0x1C, which previously
+                // caused `read_sector: OOB` on every non-resident file read).
+                // Force hidden_sectors = 0 for kernel-side mounts; winload
+                // reads directly via UEFI BlockIO and ignores this field.
+                (*ntfs).ntfs_data.mft_start = mft_lcn * (sectors_per_cluster as u64);
+                (*ntfs).ntfs_data.hidden_sectors = 0;
+                (*ntfs).ntfs_data.volume_serial = volume_serial;
+                // mft_mirror_lcn / total_sectors_64 are useful for
+                // future recovery paths but not consumed by the current
+                // reader — stash them next to mft_start so a follow-up
+                // commit can pick them up without re-parsing the boot
+                // sector.
+                (*ntfs).ntfs_data.mft_size = mft_mirror_lcn * (sectors_per_cluster as u64);
+                fill_volume_metadata(&mut *ntfs, total_sectors_64, sectors_per_cluster as u32);
+                crate::boot_println!("[NTFS] mount: mft_start={} (mft_lcn={}*spc={}) mft_record_size={} index_record_size={} hidden_sectors=FORCED-0 vol_serial=0x{:x}",
+                (*ntfs).ntfs_data.mft_start, mft_lcn, sectors_per_cluster, (*ntfs).ntfs_data.mft_record_size,
+                (*ntfs).ntfs_data.index_record_size, volume_serial);
+                (*ntfs).ntfs_data.mounted = true;
+            }
+
+            // kprintln!("      NTFS version: 3.1");
+            // kprintln!("      MFT record size: {} bytes",  (*ntfs).ntfs_data.mft_record_size );
+            // kprintln!("      Index record size: {} bytes", unsafe { (*ntfs).ntfs_data.index_record_size });
+            // kprintln!("      Volume mounted successfully");
+
+            // Store in global for pagefile access
+            *NTFS_MOUNTED_FS.lock() = Some(unsafe { &mut *ntfs });
+            *NTFS_MOUNTED.lock() = true;
+            // Initialize pagefile support
+            init_pagefile(&(*ntfs).ntfs_data);
+
+            // Initialize the $LogFile journaling subsystem for this volume.
+            crate::fs::ntfs::logfile::init_log_file(4096);
+
+            return Some(&mut *ntfs);
+        }
+
+        None
     }
-
-    None
 }
 
 /// Initialize pagefile on this NTFS volume.
@@ -4884,12 +4903,10 @@ pub struct RestartAreaHeader {
 
 impl RestartAreaHeader {
     /// Expected magic value for restart area.
-    pub const EXPECTED_MAGIC: [u8; 4] = [b'R', b'S', b'T', b'R'];
+    pub const EXPECTED_MAGIC: [u8; 4] = *b"RSTR";
 
     pub fn is_valid(&self) -> bool {
-        &self.magic == &Self::EXPECTED_MAGIC
-            && self.restart_length >= 64
-            && self.log_page_size >= 512
+        self.magic == Self::EXPECTED_MAGIC && self.restart_length >= 64 && self.log_page_size >= 512
     }
 }
 
@@ -4935,7 +4952,7 @@ pub fn open_journal(ntfs: &mut NtfsFileSystem) -> bool {
     // In NTFS, $LogFile is typically MFT record 2
     let log_file_record = read_mft_record(&ntfs.ntfs_data, 2);
 
-    if log_file_record.is_none() || log_file_record.as_ref().map_or(true, |v| v.is_empty()) {
+    if log_file_record.is_none() || log_file_record.as_ref().is_none_or(|v| v.is_empty()) {
         // kprintln!("[NTFS] $LogFile MFT record not found");
         return false;
     }
@@ -5035,8 +5052,8 @@ pub fn read_journal_records(
 /// modification can be replayed. Reporting success would claim a
 /// recovery that never happened, so every call fails explicitly until
 /// real log-page parsing exists.
-pub fn replay_journal(_ntfs: &mut NtfsFileSystem) -> Result<usize, ()> {
-    Err(())
+pub fn replay_journal(_ntfs: &mut NtfsFileSystem) -> Result<usize, NTSTATUS> {
+    Err(STATUS_UNSUCCESSFUL)
 }
 
 /// write a log record to the journal.
@@ -5114,7 +5131,7 @@ pub mod security;
 /// Check if an MFT record has a reparse point.
 pub fn has_reparse_point(record: &[u8]) -> bool {
     // Check for reparse point attribute (0xC0)
-    if let Some(_) = find_attribute_in_record(record, 0xC0) {
+    if find_attribute_in_record(record, 0xC0).is_some() {
         return true;
     }
     false
