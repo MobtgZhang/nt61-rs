@@ -9,7 +9,7 @@
 //! - Valid access mask
 //! - Delete, Security, Parse, Open, QueryName, and OkayToClose procedures
 //
-//! References:
+//!   References:
 //! - Windows Research Kernel (WRK)
 //! - Geoff Chappell - nt!OBJECT_TYPE layout
 //! - ReactOS obtype.c
@@ -98,6 +98,12 @@ impl ObjectTypeInitializer {
     pub fn with_security_procedure(mut self, proc: ObSecurityProcedure) -> Self {
         self.security_procedure = Some(proc);
         self
+    }
+}
+
+impl Default for ObjectTypeInitializer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -239,6 +245,12 @@ impl object_type {
     /// Decrement total handle count
     pub fn decrement_handle_count(&self) {
         self.total_handles.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+impl Default for object_type {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -609,6 +621,9 @@ pub fn get_object_type(type_index: u8) -> *mut object_type {
 // Delete Procedures
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Delete procedure for Directory objects
 unsafe extern "C" fn directory_delete_procedure(_object: *mut ()) {
     // _object is intentionally unused - reserved for future debugging
@@ -616,6 +631,9 @@ unsafe extern "C" fn directory_delete_procedure(_object: *mut ()) {
     // Directory cleanup: nothing specific to do
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Delete procedure for Device objects
 unsafe extern "C" fn device_delete_procedure(_object: *mut ()) {
     // _object is intentionally unused - reserved for future debugging
@@ -623,6 +641,9 @@ unsafe extern "C" fn device_delete_procedure(_object: *mut ()) {
     // Device cleanup: nothing specific to do in bootstrap
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Delete procedure for Driver objects
 unsafe extern "C" fn driver_delete_procedure(_object: *mut ()) {
     // _object is intentionally unused - reserved for future debugging
@@ -630,6 +651,9 @@ unsafe extern "C" fn driver_delete_procedure(_object: *mut ()) {
     // Driver cleanup: nothing specific to do in bootstrap
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Delete procedure for SymbolicLink objects
 unsafe extern "C" fn symlink_delete_procedure(_object: *mut ()) {
     // _object is intentionally unused - reserved for future debugging
@@ -637,6 +661,9 @@ unsafe extern "C" fn symlink_delete_procedure(_object: *mut ()) {
     // SymbolicLink cleanup: nothing specific to do
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Delete procedure for Token objects
 unsafe extern "C" fn token_delete_procedure(_object: *mut ()) {
     // _object is intentionally unused - reserved for future debugging
@@ -650,8 +677,11 @@ unsafe extern "C" fn token_delete_procedure(_object: *mut ()) {
 // Object Creation Helpers
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Call the delete procedure for an object type
-pub fn call_delete_procedure(object_type_index: u8, body: *mut ()) {
+pub unsafe fn call_delete_procedure(object_type_index: u8, body: *mut ()) {
     let obj_type = get_object_type(object_type_index);
     if !obj_type.is_null() {
         unsafe {

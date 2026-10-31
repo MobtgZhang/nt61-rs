@@ -211,9 +211,9 @@ fn step4_counters_and_well_known_ports() -> bool {
 ///   * `\\Windows\\ApiPort`           - Win32 API (CSRSS)
 ///   * `\\SbApiPort`                 - the subsystem-side API port
 ///   * `\\SmApiPort`                 - the session-manager API port
-/// This step doesn't require them to be present (the test must
-/// be runnable before SMSS is up); it only verifies that the
-/// name layout is well-formed if they are.
+///     This step doesn't require them to be present (the test must
+///     be runnable before SMSS is up); it only verifies that the
+///     name layout is well-formed if they are.
 fn step5_well_known_name_layouts() -> bool {
     // // kprintln!("    [LPC SMOKE] step 5: well-known NT 6.1 port name layouts");
     let api: [u16; 14] = [

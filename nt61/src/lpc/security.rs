@@ -9,7 +9,6 @@
 use crate::se::token::Token;
 
 /// Security descriptor (simplified for bootstrap)
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SecurityDescriptor {

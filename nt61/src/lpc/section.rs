@@ -74,6 +74,12 @@ impl SectionRegistry {
     }
 }
 
+impl Default for SectionRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn create_section(
     size: u64,
     flags: u32,
@@ -97,7 +103,7 @@ pub fn create_section(
 
     section.base_address = 0;
 
-    registry.count = registry.count + 1;
+    registry.count += 1;
     Some(handle)
 }
 

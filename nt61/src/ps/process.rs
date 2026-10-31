@@ -206,6 +206,12 @@ impl ExRundownRef {
     }
 }
 
+impl Default for ExRundownRef {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // =============================================================================
 // EX_FAST_REF - Fast reference with embedded count
 // =============================================================================
@@ -340,6 +346,12 @@ impl ExFastRef {
     }
 }
 
+impl Default for ExFastRef {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // =============================================================================
 // KAFFINITY_EX - Extended processor affinity
 // =============================================================================
@@ -372,6 +384,12 @@ impl KAffinityEx {
     }
 }
 
+impl Default for KAffinityEx {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // =============================================================================
 // PS_PROTECTION - Process protection level
 // =============================================================================
@@ -387,6 +405,12 @@ pub struct PsProtection {
 impl PsProtection {
     pub fn new() -> Self {
         Self { level: 0 }
+    }
+}
+
+impl Default for PsProtection {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -995,9 +1019,7 @@ impl Eprocess {
             .unwrap_or(0);
         let base_name = &name[base_start..];
         let len = base_name.len().min(14);
-        for i in 0..len {
-            self.image_file_name[i] = base_name[i];
-        }
+        self.image_file_name[..len].copy_from_slice(&base_name[..len]);
     }
 
     /// Return the 15-character image name as a NUL-terminated slice.
@@ -1045,6 +1067,12 @@ impl Eprocess {
     }
 }
 
+impl Default for Eprocess {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // =============================================================================
 // List Entry
 // =============================================================================
@@ -1083,7 +1111,10 @@ impl ListEntry {
         (self.flink.is_null() && self.blink.is_null()) || (self.flink == me && self.blink == me)
     }
 
-    pub fn insert_tail(&mut self, entry: *mut ListEntry) {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+    pub unsafe fn insert_tail(&mut self, entry: *mut ListEntry) {
         unsafe {
             (*entry).blink = self.blink;
             (*entry).flink = self;
@@ -1097,6 +1128,12 @@ impl ListEntry {
             (*self.flink).blink = self.blink;
             (*self.blink).flink = self.flink;
         }
+    }
+}
+
+impl Default for ListEntry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1212,6 +1249,12 @@ impl peb {
     }
 }
 
+impl Default for peb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // =============================================================================
 // EPROCESS PEB Access Methods
 // =============================================================================
@@ -1313,6 +1356,12 @@ impl LdrData {
     }
 }
 
+impl Default for LdrData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// RTL user process parameters (Windows 7 x64 layout).
 #[repr(C)]
 pub struct RtlUserProcessParameters {
@@ -1389,6 +1438,12 @@ impl RtlUserProcessParameters {
     }
 }
 
+impl Default for RtlUserProcessParameters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory` (`CURDIR`).
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1403,6 +1458,12 @@ impl CurDir {
             dos_path: UnicodeString::new(),
             handle: 0,
         }
+    }
+}
+
+impl Default for CurDir {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1424,6 +1485,12 @@ impl DriveLetterCurDir {
             time_stamp: 0,
             dos_path: UnicodeString::new(),
         }
+    }
+}
+
+impl Default for DriveLetterCurDir {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1456,6 +1523,12 @@ impl UnicodeString {
             maximum_length: ((len + 1) * 2) as u16,
             buffer: buffer.as_mut_ptr(),
         }
+    }
+}
+
+impl Default for UnicodeString {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1498,6 +1571,12 @@ impl Process {
     }
 }
 
+impl Default for Process {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // =============================================================================
 // Global Process List
 // =============================================================================
@@ -1534,6 +1613,12 @@ impl ProcessList {
             system_process: None,
             smss_process: None,
         }
+    }
+}
+
+impl Default for ProcessList {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1601,216 +1686,218 @@ pub fn create_user_process(
     pid: u64,
     user_entry_override: Option<u64>,
 ) -> Option<&'static mut Eprocess> {
-    crate::hal::serial::write_string_always("PS:create enter\r\n");
-    // The PEB and stack frames are NOT used: the user stack is
-    // created via `map_user_pages`, and a real PEB would need to be
-    // mapped into the user address space at a chosen VA. Avoid
-    // allocating them here so we don't leak pages on every error
-    // path below.
-    //
-    // CRITICAL: We allocate the Eprocess / Ethread / handle-table
-    // *virtual* addresses via `pool::allocate` (kernel heap) rather
-    // than `frame::allocate_pages` (physical pages). The previous
-    // implementation treated physical frame addresses as kernel
-    // virtual pointers, which works on x86_64 only because the UEFI
-    // firmware / OS Loader identity-maps low memory. On aarch64
-    // / riscv64 / loongarch64 there is no such identity mapping,
-    // so writing through `process_phys as *mut _` dereferences an
-    // address that is not mapped in the kernel page table and
-    // synchronously faults. (`create_system_process` already uses
-    // `pool::allocate` for the same reason.) The `pml4_phys` field
-    // remains a real physical address, as it must be: the CR3-style
-    // base must be the actual frame number.
-    let process_buf = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<Eprocess>().max(4096),
-    );
-    let thread_buf = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<Ethread>().max(4096),
-    );
+    unsafe {
+        crate::hal::serial::write_string_always("PS:create enter\r\n");
+        // The PEB and stack frames are NOT used: the user stack is
+        // created via `map_user_pages`, and a real PEB would need to be
+        // mapped into the user address space at a chosen VA. Avoid
+        // allocating them here so we don't leak pages on every error
+        // path below.
+        //
+        // CRITICAL: We allocate the Eprocess / Ethread / handle-table
+        // *virtual* addresses via `pool::allocate` (kernel heap) rather
+        // than `frame::allocate_pages` (physical pages). The previous
+        // implementation treated physical frame addresses as kernel
+        // virtual pointers, which works on x86_64 only because the UEFI
+        // firmware / OS Loader identity-maps low memory. On aarch64
+        // / riscv64 / loongarch64 there is no such identity mapping,
+        // so writing through `process_phys as *mut _` dereferences an
+        // address that is not mapped in the kernel page table and
+        // synchronously faults. (`create_system_process` already uses
+        // `pool::allocate` for the same reason.) The `pml4_phys` field
+        // remains a real physical address, as it must be: the CR3-style
+        // base must be the actual frame number.
+        let process_buf = crate::mm::pool::allocate(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<Eprocess>().max(4096),
+        );
+        let thread_buf = crate::mm::pool::allocate(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<Ethread>().max(4096),
+        );
 
-    if process_buf.is_null() {
-        return None;
-    }
-    if thread_buf.is_null() {
-        if !process_buf.is_null() {
-            crate::mm::pool::free(process_buf);
+        if process_buf.is_null() {
+            return None;
         }
-        return None;
-    }
+        if thread_buf.is_null() {
+            if !process_buf.is_null() {
+                crate::mm::pool::free(process_buf);
+            }
+            return None;
+        }
 
-    let process = process_buf as *mut Eprocess;
-    let thread_ptr = thread_buf as *mut Ethread;
-    crate::hal::serial::write_string_always("PS:create pool\r\n");
+        let process = process_buf as *mut Eprocess;
+        let thread_ptr = thread_buf as *mut Ethread;
+        crate::hal::serial::write_string_always("PS:create pool\r\n");
 
-    let pml4_phys = match crate::mm::vas::create_user_address_space() {
-        Some(p) => p,
-        None => {
+        let pml4_phys = match crate::mm::vas::create_user_address_space() {
+            Some(p) => p,
+            None => {
+                crate::mm::pool::free(thread_buf);
+                crate::mm::pool::free(process_buf);
+                return None;
+            }
+        };
+        crate::hal::serial::write_string_always("PS:create vas\r\n");
+
+        if crate::mm::vas::map_user_pages(
+            pml4_phys,
+            crate::mm::vas::USER_STACK_BASE,
+            crate::mm::vas::USER_STACK_SIZE,
+            crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US,
+        ) != crate::mm::vas::MmStatus::Ok
+        {
+            crate::hal::serial::write_string_always("PS:create map fail\r\n");
+            crate::mm::pfn::free_pfn(pml4_phys >> 12);
             crate::mm::pool::free(thread_buf);
             crate::mm::pool::free(process_buf);
             return None;
         }
-    };
-    crate::hal::serial::write_string_always("PS:create vas\r\n");
+        crate::hal::serial::write_string_always("PS:create map ok\r\n");
+        crate::hal::serial::write_string_always("PS:create vad enter\r\n");
 
-    if crate::mm::vas::map_user_pages(
-        pml4_phys,
-        crate::mm::vas::USER_STACK_BASE,
-        crate::mm::vas::USER_STACK_SIZE,
-        crate::mm::vas::PTE_RW | crate::mm::vas::PTE_US,
-    ) != crate::mm::vas::MmStatus::Ok
-    {
-        crate::hal::serial::write_string_always("PS:create map fail\r\n");
-        crate::mm::pfn::free_pfn(pml4_phys >> 12);
-        crate::mm::pool::free(thread_buf);
-        crate::mm::pool::free(process_buf);
-        return None;
-    }
-    crate::hal::serial::write_string_always("PS:create map ok\r\n");
-    crate::hal::serial::write_string_always("PS:create vad enter\r\n");
-
-    // Track the mapped user stack in the EPROCESS VAD tree. Demand
-    // paging depends on this: without a VAD, a fault in the stack
-    // range has no backing range and cannot be resolved.
-    let stack_vad = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<VadEntry>().max(32),
-    ) as *mut VadEntry;
-    if stack_vad.is_null() {
-        crate::mm::pool::free(thread_buf);
-        crate::mm::pool::free(process_buf);
-        return None;
-    }
-    crate::hal::serial::write_string_always("PS:create vad ok\r\n");
-
-    let user_rsp = crate::mm::vas::USER_STACK_TOP - crate::mm::vas::USER_STACK_INITIAL_HEAD;
-
-    let ht_buf = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<ProcessHandleTable>().max(4096),
-    );
-    if ht_buf.is_null() {
-        crate::mm::pfn::free_pfn(pml4_phys >> 12);
-        crate::mm::pool::free(thread_buf);
-        crate::mm::pool::free(process_buf);
-        return None;
-    }
-    let ht_ptr = ht_buf as *mut ProcessHandleTable;
-    crate::hal::serial::write_string_always("PS:create ht ok\r\n");
-
-    unsafe {
-        core::ptr::write_bytes(process as *mut u8, 0, 4096);
-        core::ptr::write_bytes(thread_ptr as *mut u8, 0, 4096);
-
-        core::ptr::write_bytes(ht_ptr as *mut u8, 0, 4096);
-        (*ht_ptr).next_slot = 1;
-
-        (*process).unique_process_id = pid;
-        (*process).unique_process_id_full = pid;
-        (*process).page_table_pml4 = pml4_phys;
-        (*process).pml4_phys = pml4_phys;
-        (*process).peb = core::ptr::null_mut();
-        (*process).object_table = ht_ptr;
-        (*process).user_stack_base = crate::mm::vas::USER_STACK_BASE;
-        (*process).user_stack_limit =
-            crate::mm::vas::USER_STACK_BASE + crate::mm::vas::USER_STACK_SIZE;
-        (*process).user_rsp = user_rsp;
-        (*process).kprocess_thread_list_head.init();
-        core::ptr::write(
-            stack_vad,
-            VadEntry {
-                starting_vpn: crate::mm::vas::USER_STACK_BASE >> 12,
-                ending_vpn: (crate::mm::vas::USER_STACK_BASE + crate::mm::vas::USER_STACK_SIZE - 1)
-                    >> 12,
-                parent: null_mut(),
-                left: null_mut(),
-                right: null_mut(),
-                balance_factor: 0,
-                _pad0: 0,
-                _pad1: 0,
-                flags: VadFlags::SEC_COMMIT,
-                vad_type: VadType::VadRoot,
-                protection: VadProtection::READWRITE,
-                _padding: [0; 4],
-            },
-        );
-        let _ = (*process).vad_root.insert(&mut *stack_vad);
-        crate::hal::serial::write_string_always("PS:create vad insert ok\r\n");
-
-        (*process).set_name(image);
-
-        // Initialize token for user process
-        let user_token = crate::se::token::create_user_token(crate::se::sid::SID_USERS);
-        if !user_token.is_null() {
-            (*process).set_token(user_token);
+        // Track the mapped user stack in the EPROCESS VAD tree. Demand
+        // paging depends on this: without a VAD, a fault in the stack
+        // range has no backing range and cannot be resolved.
+        let stack_vad = crate::mm::pool::allocate(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<VadEntry>().max(32),
+        ) as *mut VadEntry;
+        if stack_vad.is_null() {
+            crate::mm::pool::free(thread_buf);
+            crate::mm::pool::free(process_buf);
+            return None;
         }
-        crate::hal::serial::write_string_always("PS:create token ok\r\n");
+        crate::hal::serial::write_string_always("PS:create vad ok\r\n");
 
-        // Initialize thread
-        let thread = thread_ptr;
-        (*thread)
-            .client_id
-            .set(pid, pid.wrapping_shl(8).wrapping_add(1));
-        (*thread).kthread.process = process;
-        (*thread).threads_process = process;
-        (*thread).kthread.state = KThreadState::Initialized;
-        (*thread).kthread.base_priority = 8;
-        (*thread).kthread.priority = 8;
-        (*thread).kthread.global_thread_list_entry.init();
+        let user_rsp = crate::mm::vas::USER_STACK_TOP - crate::mm::vas::USER_STACK_INITIAL_HEAD;
 
-        (*process)
-            .kprocess_thread_list_head
-            .insert_tail(&mut (*thread).kthread.global_thread_list_entry as *mut ListEntry);
-
-        // Publish the new thread as the process's main thread so
-        // `setup_bsp` can install it into the per-CPU current_thread
-        // slot. Without this, `KeGetCurrentEthread()` returns null
-        // on the BSP and any caller that dereferences the result
-        // page-faults.
-        (*process).main_thread = thread;
-        crate::hal::serial::write_string_always("PS:create thread ok\r\n");
-
-        // Honour the caller-supplied entry override (Phase 0
-        // ring3 stub path). Without this every user process
-        // enters Ring 3 at RIP=0, which #PFs immediately. See
-        // report10-update.md issue 3.1.
-        if let Some(entry) = user_entry_override {
-            (*process).user_rip = entry;
-        }
-    }
-
-    let mut list = PROCESS_LIST.lock();
-    let count = list.process_count;
-    if count < list.processes.len() {
-        list.processes[count] = process;
-        list.process_count = count + 1;
-    } else {
-        // Release the lock before tearing down so any nested
-        // acquisition would not deadlock. All resources allocated
-        // up to this point must be returned to the pool.
-        drop(list);
-        // Unmap the user stack pages that were installed by
-        // `map_user_pages` above — the frames are still backed by
-        // pfn entries even though we are about to free pml4_phys.
-        let _ = crate::mm::vas::unmap_user_pages(
-            pml4_phys,
-            crate::mm::vas::USER_STACK_BASE,
-            crate::mm::vas::USER_STACK_SIZE,
+        let ht_buf = crate::mm::pool::allocate(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<ProcessHandleTable>().max(4096),
         );
-        crate::mm::pool::free(ht_ptr as *mut u8);
-        crate::mm::pool::free(stack_vad as *mut u8);
-        crate::mm::pfn::free_pfn(pml4_phys >> 12);
-        crate::mm::pool::free(thread_ptr as *mut u8);
-        crate::mm::pool::free(process as *mut u8);
-        return None;
-    }
+        if ht_buf.is_null() {
+            crate::mm::pfn::free_pfn(pml4_phys >> 12);
+            crate::mm::pool::free(thread_buf);
+            crate::mm::pool::free(process_buf);
+            return None;
+        }
+        let ht_ptr = ht_buf as *mut ProcessHandleTable;
+        crate::hal::serial::write_string_always("PS:create ht ok\r\n");
 
-    if image.windows(b"smss".len()).any(|w| w == b"smss") {
-        list.smss_process = Some(process);
-    }
+        unsafe {
+            core::ptr::write_bytes(process as *mut u8, 0, 4096);
+            core::ptr::write_bytes(thread_ptr as *mut u8, 0, 4096);
 
-    unsafe { process.as_mut() }
+            core::ptr::write_bytes(ht_ptr as *mut u8, 0, 4096);
+            (*ht_ptr).next_slot = 1;
+
+            (*process).unique_process_id = pid;
+            (*process).unique_process_id_full = pid;
+            (*process).page_table_pml4 = pml4_phys;
+            (*process).pml4_phys = pml4_phys;
+            (*process).peb = core::ptr::null_mut();
+            (*process).object_table = ht_ptr;
+            (*process).user_stack_base = crate::mm::vas::USER_STACK_BASE;
+            (*process).user_stack_limit =
+                crate::mm::vas::USER_STACK_BASE + crate::mm::vas::USER_STACK_SIZE;
+            (*process).user_rsp = user_rsp;
+            (*process).kprocess_thread_list_head.init();
+            core::ptr::write(
+                stack_vad,
+                VadEntry {
+                    starting_vpn: crate::mm::vas::USER_STACK_BASE >> 12,
+                    ending_vpn: (crate::mm::vas::USER_STACK_BASE + crate::mm::vas::USER_STACK_SIZE
+                        - 1)
+                        >> 12,
+                    parent: null_mut(),
+                    left: null_mut(),
+                    right: null_mut(),
+                    balance_factor: 0,
+                    _pad0: 0,
+                    _pad1: 0,
+                    flags: VadFlags::SEC_COMMIT,
+                    vad_type: VadType::VadRoot,
+                    protection: VadProtection::READWRITE,
+                    _padding: [0; 4],
+                },
+            );
+            let _ = (*process).vad_root.insert(&mut *stack_vad);
+            crate::hal::serial::write_string_always("PS:create vad insert ok\r\n");
+
+            (*process).set_name(image);
+
+            // Initialize token for user process
+            let user_token = crate::se::token::create_user_token(crate::se::sid::SID_USERS);
+            if !user_token.is_null() {
+                (*process).set_token(user_token);
+            }
+            crate::hal::serial::write_string_always("PS:create token ok\r\n");
+
+            // Initialize thread
+            let thread = thread_ptr;
+            (*thread)
+                .client_id
+                .set(pid, pid.wrapping_shl(8).wrapping_add(1));
+            (*thread).kthread.process = process;
+            (*thread).threads_process = process;
+            (*thread).kthread.state = KThreadState::Initialized;
+            (*thread).kthread.base_priority = 8;
+            (*thread).kthread.priority = 8;
+            (*thread).kthread.global_thread_list_entry.init();
+
+            (*process)
+                .kprocess_thread_list_head
+                .insert_tail(&mut (*thread).kthread.global_thread_list_entry as *mut ListEntry);
+
+            // Publish the new thread as the process's main thread so
+            // `setup_bsp` can install it into the per-CPU current_thread
+            // slot. Without this, `KeGetCurrentEthread()` returns null
+            // on the BSP and any caller that dereferences the result
+            // page-faults.
+            (*process).main_thread = thread;
+            crate::hal::serial::write_string_always("PS:create thread ok\r\n");
+
+            // Honour the caller-supplied entry override (Phase 0
+            // ring3 stub path). Without this every user process
+            // enters Ring 3 at RIP=0, which #PFs immediately. See
+            // report10-update.md issue 3.1.
+            if let Some(entry) = user_entry_override {
+                (*process).user_rip = entry;
+            }
+        }
+
+        let mut list = PROCESS_LIST.lock();
+        let count = list.process_count;
+        if count < list.processes.len() {
+            list.processes[count] = process;
+            list.process_count = count + 1;
+        } else {
+            // Release the lock before tearing down so any nested
+            // acquisition would not deadlock. All resources allocated
+            // up to this point must be returned to the pool.
+            drop(list);
+            // Unmap the user stack pages that were installed by
+            // `map_user_pages` above — the frames are still backed by
+            // pfn entries even though we are about to free pml4_phys.
+            let _ = crate::mm::vas::unmap_user_pages(
+                pml4_phys,
+                crate::mm::vas::USER_STACK_BASE,
+                crate::mm::vas::USER_STACK_SIZE,
+            );
+            crate::mm::pool::free(ht_ptr as *mut u8);
+            crate::mm::pool::free(stack_vad as *mut u8);
+            crate::mm::pfn::free_pfn(pml4_phys >> 12);
+            crate::mm::pool::free(thread_ptr as *mut u8);
+            crate::mm::pool::free(process as *mut u8);
+            return None;
+        }
+
+        if image.windows(b"smss".len()).any(|w| w == b"smss") {
+            list.smss_process = Some(process);
+        }
+        process.as_mut()
+    }
 }
 
 /// Create a user process after reading its image from the mounted
@@ -1858,10 +1945,8 @@ pub fn get_by_pid(pid: u64) -> Option<&'static mut Eprocess> {
 
     for i in 0..list.process_count {
         let process = list.processes[i];
-        unsafe {
-            if !process.is_null() && (*process).unique_process_id == pid {
-                return Some(&mut *process);
-            }
+        if !process.is_null() && unsafe { (*process).unique_process_id } == pid {
+            return Some(unsafe { &mut *process });
         }
     }
 
@@ -1947,6 +2032,9 @@ where
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Find a thread within a specific process by its TID.
 ///
 /// Scans the process's thread list to find a thread with the given TID.
@@ -1954,7 +2042,7 @@ where
 /// `global_thread_list_entry` fields of each thread's KTHREAD (offset 0x0C8).
 ///
 /// Returns the ETHREAD pointer if found.
-pub fn find_thread_in_process(
+pub unsafe fn find_thread_in_process(
     process: *mut Eprocess,
     tid: u64,
 ) -> Option<*mut crate::ps::thread::Ethread> {
@@ -2055,8 +2143,8 @@ pub fn create_process_full(
 
     if let Some(parent) = parent_process {
         inherit_from_parent(process, parent);
-        let parent_token = unsafe { (*parent).get_token().as_ref() }
-            .map(|token| crate::se::token::duplicate_for_process(token));
+        let parent_token =
+            unsafe { (*parent).get_token().as_ref() }.map(crate::se::token::duplicate_for_process);
         if let Some(token) = parent_token {
             if token.is_null() {
                 return None;
@@ -2146,7 +2234,7 @@ pub fn free_pid(pid: u64) {
     }
     let offset = pid - PID_BITMAP_FIRST;
     let word_idx = (offset / 64) as usize;
-    let bit = (offset % 64) as u64;
+    let bit = offset % 64;
     if word_idx >= PID_BITMAP_WORDS {
         return;
     }
@@ -2177,6 +2265,9 @@ pub const STATUS_ACCESS_DENIED: u32 = _STATUS_ACCESS_DENIED_NT as u32;
 pub const STATUS_INVALID_PARAMETER: u32 = _STATUS_INVALID_PARAMETER_NT as u32;
 pub const STATUS_PRIVILEGE_NOT_HELD: u32 = _STATUS_PRIVILEGE_NOT_HELD_NT as u32;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Open a process with security access check.
 ///
 /// This function performs the following steps:
@@ -2193,7 +2284,7 @@ pub const STATUS_PRIVILEGE_NOT_HELD: u32 = _STATUS_PRIVILEGE_NOT_HELD_NT as u32;
 /// # Returns
 /// * `Ok(eprocess_ptr)` if access is granted
 /// * `Err(ntstatus)` if access is denied or process not found
-pub fn ps_open_process(
+pub unsafe fn ps_open_process(
     target_pid: u64,
     desired_access: u32,
     token_ptr: *const crate::se::token::Token,
@@ -2247,12 +2338,15 @@ pub fn ps_open_process(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Open a process for debugging.
 ///
 /// Special access check: if the caller has SeDebugPrivilege, they can
 /// open any process regardless of DACL. This is the implementation of
 /// NT_DEBUG_ACTIVE_PROCESS.
-pub fn ps_open_process_for_debug(
+pub unsafe fn ps_open_process_for_debug(
     target_pid: u64,
     token_ptr: *const crate::se::token::Token,
 ) -> Result<*mut Eprocess, u32> {
@@ -2279,6 +2373,9 @@ pub fn ps_open_process_for_debug(
     ps_open_process(target_pid, 0x1F0FFF, token_ptr) // PROCESS_ALL_ACCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Set a process's primary token.
 ///
 /// This requires SeAssignPrimaryTokenPrivilege.
@@ -2286,7 +2383,7 @@ pub fn ps_open_process_for_debug(
 /// * `target` - Target process
 /// * `new_token` - New token to assign
 /// * `calling_token` - Caller's token
-pub fn ps_set_primary_token(
+pub unsafe fn ps_set_primary_token(
     target: *mut Eprocess,
     new_token: *mut crate::se::token::Token,
     calling_token: *const crate::se::token::Token,
@@ -2354,12 +2451,15 @@ pub fn get_current_thread_token() -> *const crate::se::token::Token {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Build a security descriptor for a process.
 ///
 /// Creates a proper security descriptor based on the process's token.
 /// Delegates to seaccess module for proper security descriptor construction.
-pub fn build_process_security_descriptor(
+pub unsafe fn build_process_security_descriptor(
     process: *mut Eprocess,
 ) -> *const crate::se::seaccess::SecurityDescriptor {
-    crate::se::seaccess::build_process_security_descriptor(process)
+    unsafe { crate::se::seaccess::build_process_security_descriptor(process) }
 }

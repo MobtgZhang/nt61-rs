@@ -18,21 +18,11 @@ pub const ALPC_ATTR_WORK_ON_BEHALF: u32 = 0x00000010;
 pub const ALPC_ATTR_DIRECT: u32 = 0x00000020;
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct SecurityAttribute {
     pub security_qos: u32,
     pub context_tracking: u32,
     pub effective_only: bool,
-}
-
-impl Default for SecurityAttribute {
-    fn default() -> Self {
-        Self {
-            security_qos: 0,
-            context_tracking: 0,
-            effective_only: false,
-        }
-    }
 }
 
 #[repr(C)]
@@ -52,9 +42,8 @@ impl Default for ViewAttribute {
 }
 
 /// Context attribute for user data
-
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct ContextAttribute {
     pub port_context: u64,
     pub message_context: u64,
@@ -63,20 +52,8 @@ pub struct ContextAttribute {
     pub callback_id: u32,
 }
 
-impl Default for ContextAttribute {
-    fn default() -> Self {
-        Self {
-            port_context: 0,
-            message_context: 0,
-            sequence: 0,
-            message_id: 0,
-            callback_id: 0,
-        }
-    }
-}
-
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct HandleAttribute {
     pub flags: u32,
     pub handle: u64,
@@ -84,31 +61,11 @@ pub struct HandleAttribute {
     pub desired_access: u32,
 }
 
-impl Default for HandleAttribute {
-    fn default() -> Self {
-        Self {
-            flags: 0,
-            handle: 0,
-            object_type: 0,
-            desired_access: 0,
-        }
-    }
-}
-
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct WorkOnBehalfAttribute {
     pub thread_id: u64,
     pub thread_creation_time: u64,
-}
-
-impl Default for WorkOnBehalfAttribute {
-    fn default() -> Self {
-        Self {
-            thread_id: 0,
-            thread_creation_time: 0,
-        }
-    }
 }
 
 #[repr(C)]
@@ -174,16 +131,12 @@ impl Default for AlpcMessageAttributes {
 }
 
 pub fn validate_attributes(attrs: &AlpcMessageAttributes) -> bool {
-    if attrs.has_attribute(ALPC_ATTR_VIEW) {
-        if attrs.view.view.section_handle == 0 {
-            return false;
-        }
+    if attrs.has_attribute(ALPC_ATTR_VIEW) && attrs.view.view.section_handle == 0 {
+        return false;
     }
 
-    if attrs.has_attribute(ALPC_ATTR_HANDLE) {
-        if attrs.handle.handle == 0 {
-            return false;
-        }
+    if attrs.has_attribute(ALPC_ATTR_HANDLE) && attrs.handle.handle == 0 {
+        return false;
     }
 
     true

@@ -95,7 +95,7 @@ fn test_process_lookup() -> bool {
         None => return false,
     };
 
-    if found as *mut _ != eprocess as *mut _ {
+    if !core::ptr::eq(found, eprocess) {
         return false;
     }
 
@@ -163,114 +163,122 @@ fn test_process_handle_table() -> bool {
 // =============================================================================
 
 fn test_thread_creation() -> bool {
-    use crate::ps::{process, thread};
+    unsafe {
+        use crate::ps::{process, thread};
 
-    let pid = match process::allocate_pid() {
-        Some(pid) => pid,
-        None => return false,
-    };
+        let pid = match process::allocate_pid() {
+            Some(pid) => pid,
+            None => return false,
+        };
 
-    let eprocess = match process::create_system_process(pid) {
-        Some(eprocess) => eprocess,
-        None => return false,
-    };
+        let eprocess = match process::create_system_process(pid) {
+            Some(eprocess) => eprocess,
+            None => return false,
+        };
 
-    let ethread = match thread::create_thread(eprocess as *mut _, 0x20000) {
-        Some(ethread) => ethread,
-        None => return false,
-    };
+        let ethread = match thread::create_thread(eprocess as *mut _, 0x20000) {
+            Some(ethread) => ethread,
+            None => return false,
+        };
 
-    crate::boot_println!(
-        "    Created thread: TID={}",
-        ethread.client_id.unique_thread as usize
-    );
-    true
+        crate::boot_println!(
+            "    Created thread: TID={}",
+            ethread.client_id.unique_thread as usize
+        );
+        true
+    }
 }
 
 fn test_thread_state_transitions() -> bool {
-    use crate::ps::{process, thread};
+    unsafe {
+        use crate::ps::{process, thread};
 
-    let pid = match process::allocate_pid() {
-        Some(pid) => pid,
-        None => return false,
-    };
+        let pid = match process::allocate_pid() {
+            Some(pid) => pid,
+            None => return false,
+        };
 
-    let eprocess = match process::create_system_process(pid) {
-        Some(eprocess) => eprocess,
-        None => return false,
-    };
+        let eprocess = match process::create_system_process(pid) {
+            Some(eprocess) => eprocess,
+            None => return false,
+        };
 
-    let ethread = match thread::create_thread(eprocess as *mut _, 0x20000) {
-        Some(ethread) => ethread,
-        None => return false,
-    };
+        let ethread = match thread::create_thread(eprocess as *mut _, 0x20000) {
+            Some(ethread) => ethread,
+            None => return false,
+        };
 
-    let initial_state = ethread.kthread.state;
-    crate::boot_println!("    Thread initial state: {:?}", initial_state);
+        let initial_state = ethread.kthread.state;
+        crate::boot_println!("    Thread initial state: {:?}", initial_state);
 
-    // `create_thread` leaves the thread in initialized; the scheduler moves
-    // it to Ready/Running on the first dispatch.
-    matches!(
-        initial_state,
-        thread::KThreadState::Initialized
-            | thread::KThreadState::Ready
-            | thread::KThreadState::Running
-    )
+        // `create_thread` leaves the thread in initialized; the scheduler moves
+        // it to Ready/Running on the first dispatch.
+        matches!(
+            initial_state,
+            thread::KThreadState::Initialized
+                | thread::KThreadState::Ready
+                | thread::KThreadState::Running
+        )
+    }
 }
 
 fn test_thread_priority() -> bool {
-    use crate::ps::{process, thread};
+    unsafe {
+        use crate::ps::{process, thread};
 
-    let pid = match process::allocate_pid() {
-        Some(pid) => pid,
-        None => return false,
-    };
+        let pid = match process::allocate_pid() {
+            Some(pid) => pid,
+            None => return false,
+        };
 
-    let eprocess = match process::create_system_process(pid) {
-        Some(eprocess) => eprocess,
-        None => return false,
-    };
+        let eprocess = match process::create_system_process(pid) {
+            Some(eprocess) => eprocess,
+            None => return false,
+        };
 
-    let ethread = match thread::create_thread(eprocess as *mut _, 0x20000) {
-        Some(ethread) => ethread,
-        None => return false,
-    };
+        let ethread = match thread::create_thread(eprocess as *mut _, 0x20000) {
+            Some(ethread) => ethread,
+            None => return false,
+        };
 
-    let priority = ethread.kthread.priority;
-    crate::boot_println!("    Thread priority: {}", priority);
+        let priority = ethread.kthread.priority;
+        crate::boot_println!("    Thread priority: {}", priority);
 
-    // Windows priority classes span 0..31.
-    priority >= 0 && priority <= 31
+        // Windows priority classes span 0..31.
+        (0..=31).contains(&priority)
+    }
 }
 
 fn test_thread_suspension() -> bool {
-    use crate::ps::{process, thread};
+    unsafe {
+        use crate::ps::{process, thread};
 
-    let pid = match process::allocate_pid() {
-        Some(pid) => pid,
-        None => return false,
-    };
+        let pid = match process::allocate_pid() {
+            Some(pid) => pid,
+            None => return false,
+        };
 
-    let eprocess = match process::create_system_process(pid) {
-        Some(eprocess) => eprocess,
-        None => return false,
-    };
+        let eprocess = match process::create_system_process(pid) {
+            Some(eprocess) => eprocess,
+            None => return false,
+        };
 
-    let ethread = match thread::create_thread(eprocess as *mut _, 0x20000) {
-        Some(ethread) => ethread,
-        None => return false,
-    };
+        let ethread = match thread::create_thread(eprocess as *mut _, 0x20000) {
+            Some(ethread) => ethread,
+            None => return false,
+        };
 
-    // Not testable: the ETHREAD/KTHREAD model has no suspend-count field, and
-    // `ntdll::NT_SUSPEND_THREAD`/`NT_RESUME_THREAD` return fixed values without
-    // changing thread state. The test only proves the thread can be created;
-    // suspend/resume remains unimplemented (see reports/doc5.md).
-    crate::boot_println!(
-        "    Thread suspension: not implemented (TID={}, no suspend_count field)",
-        ethread.client_id.unique_thread as usize
-    );
+        // Not testable: the ETHREAD/KTHREAD model has no suspend-count field, and
+        // `ntdll::NT_SUSPEND_THREAD`/`NT_RESUME_THREAD` return fixed values without
+        // changing thread state. The test only proves the thread can be created;
+        // suspend/resume remains unimplemented (see reports/doc5.md).
+        crate::boot_println!(
+            "    Thread suspension: not implemented (TID={}, no suspend_count field)",
+            ethread.client_id.unique_thread as usize
+        );
 
-    true
+        true
+    }
 }
 
 // =============================================================================
@@ -296,27 +304,29 @@ fn test_thread_selection() -> bool {
 }
 
 fn test_quantum_management() -> bool {
-    use crate::ps::{process, thread};
+    unsafe {
+        use crate::ps::{process, thread};
 
-    let pid = match process::allocate_pid() {
-        Some(pid) => pid,
-        None => return false,
-    };
+        let pid = match process::allocate_pid() {
+            Some(pid) => pid,
+            None => return false,
+        };
 
-    let eprocess = match process::create_system_process(pid) {
-        Some(eprocess) => eprocess,
-        None => return false,
-    };
+        let eprocess = match process::create_system_process(pid) {
+            Some(eprocess) => eprocess,
+            None => return false,
+        };
 
-    let ethread = match thread::create_thread(eprocess as *mut _, 0x20000) {
-        Some(ethread) => ethread,
-        None => return false,
-    };
+        let ethread = match thread::create_thread(eprocess as *mut _, 0x20000) {
+            Some(ethread) => ethread,
+            None => return false,
+        };
 
-    let quantum = ethread.kthread.quantum_target;
-    crate::boot_println!("    Thread quantum target: {}", quantum);
+        let quantum = ethread.kthread.quantum_target;
+        crate::boot_println!("    Thread quantum target: {}", quantum);
 
-    true
+        true
+    }
 }
 
 // =============================================================================

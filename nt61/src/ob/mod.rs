@@ -331,10 +331,7 @@ impl ObType {
     /// | W32Object       | 37            | W32Process/W32Thread/etc.         |
     pub fn to_windows_index(self) -> Option<u8> {
         let idx = self.as_type_index();
-        match self {
-            // All other slots map 1:1.
-            _ => Some(idx),
-        }
+        Some(idx)
     }
 
     pub fn name(self) -> &'static str {
@@ -615,7 +612,7 @@ pub struct ObjectHeader {
 
 /// Compile-time assertion: ObjectHeader must be 16-byte aligned.
 const _: () = assert!(
-    core::mem::size_of::<ObjectHeader>() % 16 == 0,
+    core::mem::size_of::<ObjectHeader>().is_multiple_of(16),
     "ObjectHeader must be 16-byte aligned"
 );
 
@@ -745,7 +742,6 @@ impl RawDirectoryAccess for *mut Directory {
         // SAFETY: the caller validates the index and holds NAMESPACE.
         unsafe { (*self).valid[index] = valid }
     }
-
 }
 
 /// Safe accessors for manager-owned per-process handle tables.
@@ -1439,9 +1435,7 @@ pub fn validate_object_name(name: &[u8]) -> ObStatus {
 /// `MAX_NAME_LEN` and always NUL-terminating.
 fn copy_name(dst: &mut [u8; MAX_NAME_LEN], src: &[u8]) {
     let copy = src.len().min(MAX_NAME_LEN - 1);
-    for i in 0..copy {
-        dst[i] = src[i];
-    }
+    dst[..copy].copy_from_slice(&src[..copy]);
     dst[copy] = 0;
 }
 
@@ -1923,76 +1917,78 @@ fn remove_directory_entry(parent: *mut Directory, target: *mut ObjectHeader) -> 
 /// Returns `true` if this thread performed the deletion, `false` if the
 /// object was already being deleted by another thread.
 fn try_delete_object_locked(header: *mut ObjectHeader) -> bool {
-    // CAS to set DELETING flag — prevents double-deletion races.
-    if !header.set_deleting() {
-        return false;
-    }
-
-    // 1. Unlink from parent directory.
-    let parent = header.directory();
-    if !parent.is_null() {
-        // Hold NAMESPACE for the directory-slot update (P0-5).
-        let _ns_guard = NAMESPACE.lock();
-        remove_directory_entry(parent, header);
-    }
-
-    // 2. Remove from handle table.
-    {
-        let mut t = HANDLE_TABLE.lock();
-        for i in 0..MAX_HANDLES {
-            if t.valid[i] != 0 && core::ptr::eq(t.slots[i], header) {
-                t.valid[i] = 0;
-                t.slots[i] = core::ptr::null_mut();
-                break;
-            }
+    unsafe {
+        // CAS to set DELETING flag — prevents double-deletion races.
+        if !header.set_deleting() {
+            return false;
         }
-    }
 
-    // 2b. Remove from every process's per-process handle table (P0-6).
-    {
-        let list = crate::ps::process::process_list();
-        for idx in 0..list.process_count {
-            let proc = list.processes[idx];
-            if proc.is_null() {
-                continue;
-            }
-            let table = proc.object_table();
-            if table.is_null() {
-                continue;
-            }
-            for i in 0..crate::ps::process::HANDLE_TABLE_SIZE {
-                if table.valid(i) != 0 && core::ptr::eq(table.slot(i), header as *mut ()) {
-                    table.set_valid(i, 0);
-                    table.set_slot(i, null_mut());
+        // 1. Unlink from parent directory.
+        let parent = header.directory();
+        if !parent.is_null() {
+            // Hold NAMESPACE for the directory-slot update (P0-5).
+            let _ns_guard = NAMESPACE.lock();
+            remove_directory_entry(parent, header);
+        }
+
+        // 2. Remove from handle table.
+        {
+            let mut t = HANDLE_TABLE.lock();
+            for i in 0..MAX_HANDLES {
+                if t.valid[i] != 0 && core::ptr::eq(t.slots[i], header) {
+                    t.valid[i] = 0;
+                    t.slots[i] = core::ptr::null_mut();
+                    break;
                 }
             }
         }
-    }
 
-    // 3. Call the type's delete procedure.
-    if !header.body().is_null() {
-        let type_index = header.type_index();
-        let body = header.body();
-        crate::ob::types::call_delete_procedure(type_index, body);
-    }
+        // 2b. Remove from every process's per-process handle table (P0-6).
+        {
+            let list = crate::ps::process::process_list();
+            for idx in 0..list.process_count {
+                let proc = list.processes[idx];
+                if proc.is_null() {
+                    continue;
+                }
+                let table = proc.object_table();
+                if table.is_null() {
+                    continue;
+                }
+                for i in 0..crate::ps::process::HANDLE_TABLE_SIZE {
+                    if table.valid(i) != 0 && core::ptr::eq(table.slot(i), header as *mut ()) {
+                        table.set_valid(i, 0);
+                        table.set_slot(i, null_mut());
+                    }
+                }
+            }
+        }
 
-    // 4. Free security descriptor if present. The descriptor is a separate
-    // non-paged pool allocation independent of the object header.
-    let security_descriptor = header.security_descriptor();
-    if !security_descriptor.is_null() {
-        header.set_security_descriptor(null_mut());
-        let _ = pool::free(security_descriptor as *mut u8);
-    }
+        // 3. Call the type's delete procedure.
+        if !header.body().is_null() {
+            let type_index = header.type_index();
+            let body = header.body();
+            crate::ob::types::call_delete_procedure(type_index, body);
+        }
 
-    // 5. Free the full pool allocation: header + body.
-    //    Decrement obj_count under namespace lock.
-    {
-        let mut ns = NAMESPACE.lock();
-        ns.obj_count = ns.obj_count.saturating_sub(1);
-    }
-    let _ = pool::free(header as *mut u8);
+        // 4. Free security descriptor if present. The descriptor is a separate
+        // non-paged pool allocation independent of the object header.
+        let security_descriptor = header.security_descriptor();
+        if !security_descriptor.is_null() {
+            header.set_security_descriptor(null_mut());
+            let _ = pool::free(security_descriptor as *mut u8);
+        }
 
-    true
+        // 5. Free the full pool allocation: header + body.
+        //    Decrement obj_count under namespace lock.
+        {
+            let mut ns = NAMESPACE.lock();
+            ns.obj_count = ns.obj_count.saturating_sub(1);
+        }
+        let _ = pool::free(header as *mut u8);
+
+        true
+    }
 }
 
 /// Delete an object (full teardown). Acquires `OB_DELETE_LOCK` and delegates
@@ -2124,11 +2120,14 @@ pub fn reference_object_by_handle_in_process(
 /// `se` ACL layer is bypassed on the handle path, because any process
 /// holding a valid handle can operate on any object.
 //
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Kernel-mode callers (`process` null) skip the check: this mirrors
 /// `ObReferenceObjectByHandle` with `access_mode == KernelMode`. For a
 /// user-mode caller the DACL check is mandatory, and a denial releases
 /// the reference taken by the lookup before returning null.
-pub fn reference_object_by_handle_with_access(
+pub unsafe fn reference_object_by_handle_with_access(
     handle: u64,
     desired_access: u32,
     process: *mut crate::ps::process::Eprocess,
@@ -2247,6 +2246,9 @@ pub fn smoke_test() -> bool {
 // Security Integration
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Open an object with security access check.
 ///
 /// This function performs the following steps:
@@ -2262,7 +2264,7 @@ pub fn smoke_test() -> bool {
 /// # Returns
 /// * `Ok(header)` if access is granted
 /// * `Err(ntstatus)` if access is denied or object not found
-pub fn open_object_with_access(
+pub unsafe fn open_object_with_access(
     path: &[u8],
     desired_access: u32,
     token_ptr: *const crate::se::token::Token,
@@ -2429,6 +2431,9 @@ fn get_object_security_descriptor(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Set the security descriptor for an object.
 ///
 /// Allocates a security descriptor from pool and copies the provided data.
@@ -2436,7 +2441,7 @@ fn get_object_security_descriptor(
 /// freed via `pool::free` before the new one is installed.  Previously the
 /// old pointer was simply cleared, causing a memory leak every time this
 /// function was called on an object that already had a security descriptor.
-pub fn ob_set_security_descriptor(
+pub unsafe fn ob_set_security_descriptor(
     header: *mut ObjectHeader,
     security_descriptor: *const crate::se::seaccess::SecurityDescriptor,
 ) -> ObStatus {
@@ -2517,9 +2522,12 @@ pub fn ob_set_security_descriptor(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Query the security descriptor for an object.
 /// Returns the security descriptor or null if the object has no security.
-pub fn ob_query_security_descriptor(
+pub unsafe fn ob_query_security_descriptor(
     header: *mut ObjectHeader,
 ) -> *const crate::se::seaccess::SecurityDescriptor {
     if header.is_null() {
@@ -2569,6 +2577,12 @@ impl SymbolicLinkBody {
     }
 }
 
+impl Default for SymbolicLinkBody {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Maximum symbolic link resolution depth to prevent infinite loops
 /// (Issue 2.10 — was 10, kept at 10 to remain compatible).
 const MAX_SYMLINK_DEPTH: usize = 10;
@@ -2577,6 +2591,9 @@ const MAX_SYMLINK_DEPTH: usize = 10;
 /// sufficient.
 const MAX_SYMLINK_VISITED: usize = 16;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Resolve a symbolic link and return the target object header.
 /// Returns the resolved object header, or null on failure.
 ///
@@ -2584,13 +2601,16 @@ const MAX_SYMLINK_VISITED: usize = 16;
 /// `resolve_symbolic_link_safe` replaces the old recursive
 /// implementation with an iterative, depth-bounded loop that also
 /// detects cycles via a fixed-size `visited` stack.
-pub fn resolve_symbolic_link(header: *mut ObjectHeader) -> *mut ObjectHeader {
+pub unsafe fn resolve_symbolic_link(header: *mut ObjectHeader) -> *mut ObjectHeader {
     if header.is_null() {
         return null_mut();
     }
     unsafe { resolve_symbolic_link_safe(header) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Iterative symbolic-link resolver with cycle detection.
 ///
 /// Algorithm:

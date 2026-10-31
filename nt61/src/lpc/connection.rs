@@ -70,6 +70,12 @@ impl ConnectionQueue {
     }
 }
 
+impl Default for ConnectionQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static ACCEPT_COUNT: AtomicU64 = AtomicU64::new(0);
 static REJECT_COUNT: AtomicU64 = AtomicU64::new(0);
 
@@ -96,7 +102,7 @@ pub fn send_connection_request(
             req.message.client_data_len = copy_len as u32;
 
             req.pending = true;
-            queue.count = queue.count + 1;
+            queue.count += 1;
             return Some(i as u32);
         }
     }

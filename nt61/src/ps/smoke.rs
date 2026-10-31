@@ -138,60 +138,62 @@ fn step2_layout_sizes() -> bool {
 
 /// Step 3: ListEntry invariants.
 fn step3_list_entry() -> bool {
-    let mut head = ListEntry::new();
-
-    // After new(), the list is empty (flink == null)
-    if !head.is_empty() {
-        return false;
-    }
-
-    head.init();
-    if !head.is_empty() {
-        return false;
-    }
-
-    // Allocate a couple of nodes and add them.
-    let mut a = ListEntry::new();
-    let mut b = ListEntry::new();
-    a.init();
-    b.init();
-    head.insert_tail(&mut a as *mut ListEntry);
-    head.insert_tail(&mut b as *mut ListEntry);
-
-    if head.is_empty() {
-        return false;
-    }
-
-    // Walk forward.
     unsafe {
-        let mut count = 0;
-        let mut e = head.flink;
-        while e != &mut head as *mut ListEntry {
-            if count > 8 {
+        let mut head = ListEntry::new();
+
+        // After new(), the list is empty (flink == null)
+        if !head.is_empty() {
+            return false;
+        }
+
+        head.init();
+        if !head.is_empty() {
+            return false;
+        }
+
+        // Allocate a couple of nodes and add them.
+        let mut a = ListEntry::new();
+        let mut b = ListEntry::new();
+        a.init();
+        b.init();
+        head.insert_tail(&mut a as *mut ListEntry);
+        head.insert_tail(&mut b as *mut ListEntry);
+
+        if head.is_empty() {
+            return false;
+        }
+
+        // Walk forward.
+        unsafe {
+            let mut count = 0;
+            let mut e = head.flink;
+            while !core::ptr::eq(e, &head) {
+                if count > 8 {
+                    return false;
+                }
+                e = (*e).flink;
+                count += 1;
+            }
+            if count != 2 {
                 return false;
             }
-            e = (*e).flink;
-            count += 1;
-        }
-        if count != 2 {
-            return false;
+
+            // remove() `a` and confirm the list has exactly one element remaining.
+            a.remove();
+            let mut e = head.flink;
+            let mut count = 0;
+            while !core::ptr::eq(e, &head) {
+                count += 1;
+                e = (*e).flink;
+            }
+            if count != 1 {
+                return false;
+            }
         }
 
-        // remove() `a` and confirm the list has exactly one element remaining.
-        a.remove();
-        let mut e = head.flink;
-        let mut count = 0;
-        while e != &mut head as *mut ListEntry {
-            count += 1;
-            e = (*e).flink;
-        }
-        if count != 1 {
-            return false;
-        }
+        crate::boot_println!("    ListEntry init/insert/remove: OK");
+        true
     }
-
-    crate::boot_println!("    ListEntry init/insert/remove: OK");
-    true
 }
 
 /// Step 4: create a user process and look it up.
@@ -245,7 +247,7 @@ fn step4_create_user_process() -> bool {
     if looked_up.unique_process_id != test_pid {
         return false;
     }
-    if (looked_up as *mut _) != (process as *mut _) {
+    if !core::ptr::eq(looked_up, process) {
         return false;
     }
 

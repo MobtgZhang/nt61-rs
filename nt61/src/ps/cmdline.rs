@@ -153,11 +153,9 @@ pub fn build_command_line(program: &[u8], argv: &[&[u8]], out: &mut [u8]) -> usi
     for p in 0..piece_count {
         let arg = pieces[p];
         let needs_quote = arg.iter().any(|c| *c == b' ' || *c == b'\t' || *c == b'"');
-        if wrote_any {
-            if pos < out.len() {
-                out[pos] = b' ';
-                pos += 1;
-            }
+        if wrote_any && pos < out.len() {
+            out[pos] = b' ';
+            pos += 1;
         }
         if needs_quote {
             if pos < out.len() {
@@ -165,11 +163,9 @@ pub fn build_command_line(program: &[u8], argv: &[&[u8]], out: &mut [u8]) -> usi
                 pos += 1;
             }
             for c in arg {
-                if *c == b'"' {
-                    if pos < out.len() {
-                        out[pos] = b'\\';
-                        pos += 1;
-                    }
+                if *c == b'"' && pos < out.len() {
+                    out[pos] = b'\\';
+                    pos += 1;
                 }
                 if pos < out.len() {
                     out[pos] = *c;

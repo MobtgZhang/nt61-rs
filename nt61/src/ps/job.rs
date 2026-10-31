@@ -80,7 +80,6 @@ pub struct JobObject {
 }
 
 /// Job object flags
-
 pub mod flags {
     /// Job has active processes
     pub const ACTIVE: u32 = 0x0001;
@@ -380,8 +379,7 @@ impl JobObject {
 }
 
 /// Global job object table (simplified implementation)
-pub(crate) static JOB_TABLE: Spinlock<Vec<alloc::boxed::Box<JobObject>>> =
-    Spinlock::new(Vec::new());
+pub(crate) static JOB_TABLE: Spinlock<Vec<JobObject>> = Spinlock::new(Vec::new());
 pub(crate) static NEXT_JOB_ID: AtomicU64 = AtomicU64::new(1);
 
 /// create a new job object
@@ -393,7 +391,7 @@ pub fn create_job() -> Result<u64, u32> {
     let job = JobObject::new(job_id);
 
     let mut table = JOB_TABLE.lock();
-    table.push(alloc::boxed::Box::new(job));
+    table.push(job);
 
     Ok(job_id)
 }

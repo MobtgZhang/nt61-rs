@@ -39,6 +39,12 @@ impl AlpcSubsystem {
     }
 }
 
+impl Default for AlpcSubsystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static ALPC_SUBSYSTEM: Spinlock<AlpcSubsystem> = Spinlock::new(AlpcSubsystem::new());
 
 pub fn init_alpc_subsystem() {

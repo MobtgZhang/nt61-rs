@@ -14,7 +14,7 @@
 //! * Security-descriptor replacement works.
 //! * ExFastRef atomic operations are correct.
 //
-//! Returns `true` iff every step passes.
+//!   Returns `true` iff every step passes.
 
 use crate::rtl::testing::TestStats;
 use core::sync::atomic::Ordering;
@@ -65,7 +65,7 @@ fn test_subdirectories() -> bool {
     ];
 
     for p in &subdirs {
-        let path: &[u8] = *p;
+        let path: &[u8] = p;
         if lookup_directory(path).is_null() {
             crate::boot_print!("    FAIL: Subdir {:?} missing\r\n", p);
             return false;

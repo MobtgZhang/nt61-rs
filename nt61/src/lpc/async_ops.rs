@@ -71,6 +71,12 @@ impl AsyncQueue {
     }
 }
 
+impl Default for AsyncQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static NEXT_OP_ID: AtomicU64 = AtomicU64::new(1);
 static ASYNC_COMPLETIONS: AtomicU64 = AtomicU64::new(0);
 
@@ -97,7 +103,7 @@ pub fn async_send(
             queue.operations[i].result = 0;
             queue.operations[i].bytes_transferred = 0;
 
-            queue.count = queue.count + 1;
+            queue.count += 1;
             return Some(op_id);
         }
     }
@@ -126,7 +132,7 @@ pub fn async_receive(
             queue.operations[i].result = 0;
             queue.operations[i].bytes_transferred = 0;
 
-            queue.count = queue.count + 1;
+            queue.count += 1;
             return Some(op_id);
         }
     }

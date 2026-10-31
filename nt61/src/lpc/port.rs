@@ -99,7 +99,7 @@ pub fn create_port_ex(
 
     p.attributes = *attrs;
 
-    reg.count = reg.count + 1;
+    reg.count += 1;
     Some(idx as u32)
 }
 

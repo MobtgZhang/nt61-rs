@@ -64,6 +64,12 @@ impl CallbackRegistry {
     }
 }
 
+impl Default for CallbackRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static CALLBACK_INVOCATIONS: AtomicU64 = AtomicU64::new(0);
 
 pub fn register_callback(
@@ -78,7 +84,7 @@ pub fn register_callback(
             registry.entries[i].callback = Some(callback);
             registry.entries[i].user_context = user_context;
             registry.entries[i].active = true;
-            registry.count = registry.count + 1;
+            registry.count += 1;
             return Some(i as u32);
         }
     }

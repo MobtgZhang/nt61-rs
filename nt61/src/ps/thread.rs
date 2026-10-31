@@ -510,6 +510,12 @@ impl KWaitStatusRegister {
     }
 }
 
+impl Default for KWaitStatusRegister {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// GROUP_AFFINITY - processor group affinity (Windows 7+)
 /// Size: 0x10 bytes
 #[derive(Clone, Copy)]
@@ -535,6 +541,12 @@ impl GroupAffinity {
     }
 }
 
+impl Default for GroupAffinity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Inline WaitBlock (smaller version for embedding)
 #[derive(Clone)]
 #[repr(C)]
@@ -557,6 +569,12 @@ impl WaitBlockInline {
             wait_key: 0,
             spare0: 0,
         }
+    }
+}
+
+impl Default for WaitBlockInline {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -602,6 +620,12 @@ impl KernelApc {
     }
 }
 
+impl Default for KernelApc {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Kernel Timer (inline version)
 /// Size: ~0x30 bytes (DispatcherHeader is 0x18)
 #[derive(Clone)]
@@ -622,6 +646,12 @@ impl KernelTimer {
     }
 }
 
+impl Default for KernelTimer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Kernel Semaphore (inline version)
 /// Size: ~0x18 bytes
 #[derive(Clone)]
@@ -639,6 +669,12 @@ impl KernelSemaphore {
             limit: 0,
             spare: 0,
         }
+    }
+}
+
+impl Default for KernelSemaphore {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -720,6 +756,9 @@ impl ApcState {
         s
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Initialise a list head to the self-anchored empty state.
     pub unsafe fn init_list_head(head: *mut ListEntry) {
         (*head).flink = head;
@@ -727,13 +766,25 @@ impl ApcState {
     }
 }
 
+impl Default for ApcState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check whether a self-anchored list head is empty.
 /// Returns true when the list head's flink points at itself
 /// (the Windows convention for an empty doubly-linked list).
 pub unsafe fn is_apc_list_empty(head: *const ListEntry) -> bool {
-    (*head).flink == head as *const ListEntry as *mut ListEntry
+    core::ptr::eq((*head).flink, head)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Append an entry to the tail of a self-anchored list.
 pub unsafe fn apc_list_insert_tail(head: *mut ListEntry, entry: *mut ListEntry) {
     let prev = (*head).blink;
@@ -743,6 +794,9 @@ pub unsafe fn apc_list_insert_tail(head: *mut ListEntry, entry: *mut ListEntry) 
     (*head).blink = entry;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Remove and return the entry at the head of a self-anchored list.
 /// Caller must ensure the list is non-empty.
 pub unsafe fn apc_list_remove_head(head: *mut ListEntry) -> *mut ListEntry {
@@ -891,6 +945,12 @@ impl WaitBlock {
     }
 }
 
+impl Default for WaitBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // =============================================================================
 // KTHREAD Methods
 // =============================================================================
@@ -908,6 +968,12 @@ impl Kthread {
         kthread.saved_apc_state = ApcState::new();
         kthread.context = KthreadContext::new();
         kthread
+    }
+}
+
+impl Default for Kthread {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -985,7 +1051,7 @@ impl Ethread {
 
     /// Whether this thread carries a WoW64 user context.
     pub fn is_wow64_thread(&self) -> bool {
-        self.wow64_teb32.is_null() == false
+        !self.wow64_teb32.is_null()
             && (self.wow64_start_address != 0 || self.wow64_context32.is_some())
     }
 
@@ -995,17 +1061,12 @@ impl Ethread {
     }
 
     /// Get the mutable initial 32-bit context, if present.
-    pub fn get_wow64_context32_mut(
-        &mut self,
-    ) -> Option<&mut crate::libs::wow64::types::Context32> {
+    pub fn get_wow64_context32_mut(&mut self) -> Option<&mut crate::libs::wow64::types::Context32> {
         self.wow64_context32.as_mut()
     }
 
     /// Replace the initial 32-bit context.
-    pub fn set_wow64_context32(
-        &mut self,
-        context: crate::libs::wow64::types::Context32,
-    ) {
+    pub fn set_wow64_context32(&mut self, context: crate::libs::wow64::types::Context32) {
         self.wow64_context32 = Some(context);
     }
 
@@ -1027,6 +1088,12 @@ impl Ethread {
     /// Set the FPU state buffer pointer for this thread
     pub fn set_fpu_state_ptr(&mut self, ptr: *mut u8) {
         self.fpu_state_ptr = ptr;
+    }
+}
+
+impl Default for Ethread {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1101,6 +1168,12 @@ impl Teb {
     }
 }
 
+impl Default for Teb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// NT Thread Information Block
 #[repr(C)]
 pub struct nt_tib {
@@ -1127,6 +1200,12 @@ impl nt_tib {
     }
 }
 
+impl Default for nt_tib {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Client ID - unique process/thread identifier
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
@@ -1146,6 +1225,12 @@ impl client_id {
     pub fn set(&mut self, pid: u64, tid: u64) {
         self.unique_process = pid;
         self.unique_thread = tid;
+    }
+}
+
+impl Default for client_id {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1196,6 +1281,12 @@ impl Thread {
     }
 }
 
+impl Default for Thread {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // =============================================================================
 // Global State
 // =============================================================================
@@ -1208,8 +1299,14 @@ pub static THREAD_COUNT: AtomicU32 = AtomicU32::new(0);
 // Thread Creation Functions
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Allocate and initialize a new thread
-pub fn create_thread(process: *mut Eprocess, stack_size: usize) -> Option<&'static mut Ethread> {
+pub unsafe fn create_thread(
+    process: *mut Eprocess,
+    stack_size: usize,
+) -> Option<&'static mut Ethread> {
     let thread = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<Ethread>(),
@@ -1375,8 +1472,11 @@ pub fn create_idle_thread(cpu_id: u32) -> Option<&'static mut Ethread> {
     unsafe { thread.as_mut() }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Terminate thread
-pub fn terminate(thread: *mut Ethread, _exit_code: u32) {
+pub unsafe fn terminate(thread: *mut Ethread, _exit_code: u32) {
     unsafe {
         (*thread).exit_time = 0;
         (*thread).kthread.state = KThreadState::Terminated;
@@ -1549,8 +1649,11 @@ pub fn ps_create_system_thread(start_address: u64, start_context: u64) -> System
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Terminate a system thread
-pub fn ps_terminate_system_thread(ethread: *mut Ethread, _exit_code: u32) {
+pub unsafe fn ps_terminate_system_thread(ethread: *mut Ethread, _exit_code: u32) {
     if ethread.is_null() {
         return;
     }
@@ -1568,10 +1671,12 @@ pub fn ps_terminate_system_thread(ethread: *mut Ethread, _exit_code: u32) {
 
 /// Exit the current system thread (never returns)
 pub fn ps_exit_system_thread(exit_code: u32) {
-    let ethread = KeGetCurrentEthread();
-    ps_terminate_system_thread(ethread, exit_code);
-    loop {
-        crate::arch::halt();
+    unsafe {
+        let ethread = KeGetCurrentEthread();
+        ps_terminate_system_thread(ethread, exit_code);
+        loop {
+            crate::arch::halt();
+        }
     }
 }
 
@@ -1579,73 +1684,85 @@ pub fn ps_exit_system_thread(exit_code: u32) {
 // APC Integration (P2 Enhancement)
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Queue a kernel APC to a thread (P2 Enhancement)
-pub fn queue_kernel_apc(
+pub unsafe fn queue_kernel_apc(
     ethread: *mut Ethread,
     routine: crate::ke::apc::ApcRoutine,
     context: *mut u8,
 ) -> bool {
-    if ethread.is_null() {
-        return false;
-    }
+    unsafe {
+        if ethread.is_null() {
+            return false;
+        }
 
-    {
-        // // kprintln!(
-        // //             "[THREAD] Queuing kernel APC to TID {}, routine={:x}, context={:x}",
-        // //             (*ethread).client_id.unique_thread,
-        // //             routine as u64,
-        // //             context as u64
-        // //         );
+        {
+            // // kprintln!(
+            // //             "[THREAD] Queuing kernel APC to TID {}, routine={:x}, context={:x}",
+            // //             (*ethread).client_id.unique_thread,
+            // //             routine as u64,
+            // //             context as u64
+            // //         );
 
-        // Use the APC module's queue function
-        crate::ke::apc::queue_thread_apc(
-            ethread,
-            crate::ke::apc::ApcKind::Kernel,
-            routine,
-            context,
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-        )
+            // Use the APC module's queue function
+            crate::ke::apc::queue_thread_apc(
+                ethread,
+                crate::ke::apc::ApcKind::Kernel,
+                routine,
+                context,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        }
     }
 }
 
+/// Queue a user APC to a thread (P2 Enhancement)///
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Queue a user APC to a thread (P2 Enhancement)
-
-/// Queue a user APC to a thread (P2 Enhancement)
-pub fn queue_user_apc(
+pub unsafe fn queue_user_apc(
     ethread: *mut Ethread,
     routine: crate::ke::apc::ApcRoutine,
     context: *mut u8,
 ) -> bool {
-    if ethread.is_null() {
-        return false;
-    }
+    unsafe {
+        if ethread.is_null() {
+            return false;
+        }
 
-    {
-        // // kprintln!(
-        // //             "[THREAD] Queuing user APC to TID {}, routine={:x}, context={:x}",
-        // //             (*ethread).client_id.unique_thread,
-        // //             routine as u64,
-        // //             context as u64
-        // //         );
+        {
+            // // kprintln!(
+            // //             "[THREAD] Queuing user APC to TID {}, routine={:x}, context={:x}",
+            // //             (*ethread).client_id.unique_thread,
+            // //             routine as u64,
+            // //             context as u64
+            // //         );
 
-        // Use the APC module's queue function
-        crate::ke::apc::queue_thread_apc(
-            ethread,
-            crate::ke::apc::ApcKind::User,
-            routine,
-            context,
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-            core::ptr::null_mut(),
-        )
+            // Use the APC module's queue function
+            crate::ke::apc::queue_thread_apc(
+                ethread,
+                crate::ke::apc::ApcKind::User,
+                routine,
+                context,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        }
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Deliver pending kernel APCs (P2 Enhancement)
 /// Called during thread dispatch at APC_LEVEL IRQL
-pub fn deliver_kernel_apc(ethread: *mut Ethread) -> bool {
+pub unsafe fn deliver_kernel_apc(ethread: *mut Ethread) -> bool {
     if ethread.is_null() {
         return false;
     }
@@ -1676,9 +1793,12 @@ pub fn deliver_kernel_apc(ethread: *mut Ethread) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Deliver pending user APCs (P2 Enhancement)
 /// Called when returning to user mode with alertable wait
-pub fn deliver_user_apc(ethread: *mut Ethread) -> bool {
+pub unsafe fn deliver_user_apc(ethread: *mut Ethread) -> bool {
     if ethread.is_null() {
         return false;
     }
@@ -1714,30 +1834,43 @@ pub fn deliver_user_apc(ethread: *mut Ethread) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if thread has pending kernel APCs (P2 Enhancement)
-pub fn has_kernel_apc_pending(ethread: *mut Ethread) -> bool {
-    if ethread.is_null() {
-        return false;
-    }
+pub unsafe fn has_kernel_apc_pending(ethread: *mut Ethread) -> bool {
+    unsafe {
+        if ethread.is_null() {
+            return false;
+        }
 
-    {
-        crate::ke::apc::has_pending_apc(ethread, crate::ke::apc::ApcKind::Kernel)
+        {
+            crate::ke::apc::has_pending_apc(ethread, crate::ke::apc::ApcKind::Kernel)
+        }
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if thread has pending user APCs (P2 Enhancement)
-pub fn has_user_apc_pending(ethread: *mut Ethread) -> bool {
-    if ethread.is_null() {
-        return false;
-    }
+pub unsafe fn has_user_apc_pending(ethread: *mut Ethread) -> bool {
+    unsafe {
+        if ethread.is_null() {
+            return false;
+        }
 
-    {
-        crate::ke::apc::has_pending_apc(ethread, crate::ke::apc::ApcKind::User)
+        {
+            crate::ke::apc::has_pending_apc(ethread, crate::ke::apc::ApcKind::User)
+        }
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if thread has pending APCs
-pub fn has_pending_apc(ethread: *mut Ethread) -> bool {
+pub unsafe fn has_pending_apc(ethread: *mut Ethread) -> bool {
     if ethread.is_null() {
         return false;
     }
@@ -1753,6 +1886,9 @@ pub fn has_pending_apc(ethread: *mut Ethread) -> bool {
 // Security Access Check Functions
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Open a thread with security access check.
 ///
 /// This function performs the following steps:
@@ -1769,7 +1905,7 @@ pub fn has_pending_apc(ethread: *mut Ethread) -> bool {
 /// # Returns
 /// * `Ok(ethread_ptr)` if access is granted
 /// * `Err(ntstatus)` if access is denied or thread not found
-pub fn ps_open_thread(
+pub unsafe fn ps_open_thread(
     target_tid: u64,
     desired_access: u32,
     token_ptr: *const crate::se::token::Token,
@@ -1825,24 +1961,26 @@ pub fn ps_open_thread(
 /// Scans the global process list to find a thread with the given TID.
 /// Returns the ETHREAD pointer if found.
 pub fn find_thread_by_tid(tid: u64) -> Option<*mut Ethread> {
-    // Acquire the process list lock
-    let process_list = crate::ps::process::get_process_list_ptr();
-    let list = process_list.lock();
+    unsafe {
+        // Acquire the process list lock
+        let process_list = crate::ps::process::get_process_list_ptr();
+        let list = process_list.lock();
 
-    // Iterate through all processes to find the thread with matching TID
-    for i in 0..list.process_count {
-        let process = list.processes[i];
-        if process.is_null() {
-            continue;
+        // Iterate through all processes to find the thread with matching TID
+        for i in 0..list.process_count {
+            let process = list.processes[i];
+            if process.is_null() {
+                continue;
+            }
+
+            // Search for the thread within this process
+            if let Some(thread) = crate::ps::process::find_thread_in_process(process, tid) {
+                return Some(thread);
+            }
         }
 
-        // Search for the thread within this process
-        if let Some(thread) = crate::ps::process::find_thread_in_process(process, tid) {
-            return Some(thread);
-        }
+        None
     }
-
-    None
 }
 
 /// Build a security descriptor for a thread.

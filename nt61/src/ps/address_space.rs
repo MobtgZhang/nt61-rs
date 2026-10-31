@@ -2,6 +2,7 @@
 //!
 //! Implements user-mode address space initialization for NT processes.
 //! Handles PEB/TEB mapping, user stack creation, and VAD tree management.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use crate::mm::pfn;
 use crate::mm::pool;
@@ -64,7 +65,7 @@ impl ProcessAddressSpace {
     }
 
     /// Map the user stack
-    pub fn map_user_stack(&mut self) -> Result<(), ()> {
+    pub fn map_user_stack(&mut self) -> Result<(), NTSTATUS> {
         // Map user stack with RW permissions
         if vas::map_user_pages(
             self.pml4_phys,
@@ -73,14 +74,14 @@ impl ProcessAddressSpace {
             vas::PTE_RW | vas::PTE_US, // User, read/write
         ) != vas::MmStatus::Ok
         {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
 
         // Allocate and insert VAD entry for stack
         let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>())
             as *mut VadEntry;
         if vad.is_null() {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
 
         unsafe {
@@ -98,7 +99,7 @@ impl ProcessAddressSpace {
     }
 
     /// Map the PEB (Process environment Block)
-    pub fn map_peb(&mut self) -> Result<(), ()> {
+    pub fn map_peb(&mut self) -> Result<(), NTSTATUS> {
         // Map PEB with RW permissions
         if vas::map_user_pages(
             self.pml4_phys,
@@ -107,14 +108,14 @@ impl ProcessAddressSpace {
             vas::PTE_RW | vas::PTE_US,
         ) != vas::MmStatus::Ok
         {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
 
         // Allocate and insert VAD entry for PEB
         let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>())
             as *mut VadEntry;
         if vad.is_null() {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
 
         unsafe {
@@ -132,7 +133,7 @@ impl ProcessAddressSpace {
     }
 
     /// Map the TEB (Thread environment Block)
-    pub fn map_teb(&mut self) -> Result<(), ()> {
+    pub fn map_teb(&mut self) -> Result<(), NTSTATUS> {
         // Map TEB with RW permissions
         if vas::map_user_pages(
             self.pml4_phys,
@@ -141,14 +142,14 @@ impl ProcessAddressSpace {
             vas::PTE_RW | vas::PTE_US,
         ) != vas::MmStatus::Ok
         {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
 
         // Allocate and insert VAD entry for TEB
         let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>())
             as *mut VadEntry;
         if vad.is_null() {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
 
         unsafe {
@@ -166,7 +167,7 @@ impl ProcessAddressSpace {
     }
 
     /// Map a memory region for the PE image
-    pub fn map_image(&mut self, base: u64, size: u64) -> Result<(), ()> {
+    pub fn map_image(&mut self, base: u64, size: u64) -> Result<(), NTSTATUS> {
         // Align size to page boundary
         let aligned_size = (size + 0xFFF) & !0xFFF;
 
@@ -178,14 +179,14 @@ impl ProcessAddressSpace {
             vas::PTE_RW | vas::PTE_US,
         ) != vas::MmStatus::Ok
         {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
 
         // Allocate and insert VAD entry for image
         let vad = pool::allocate(pool::PoolType::NonPaged, core::mem::size_of::<VadEntry>())
             as *mut VadEntry;
         if vad.is_null() {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
 
         unsafe {

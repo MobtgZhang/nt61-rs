@@ -476,139 +476,144 @@ fn test_path_traversal() -> bool {
 // =============================================================================
 
 fn test_security_descriptor_set() -> bool {
-    use super::{create_object, ob_set_security_descriptor, ObType, STATUS_SUCCESS};
+    unsafe {
+        use super::{create_object, ob_set_security_descriptor, ObType, STATUS_SUCCESS};
 
-    let header = create_object(b"\\KernelObjects", b"TestSecDesc", ObType::Token, 64);
+        let header = create_object(b"\\KernelObjects", b"TestSecDesc", ObType::Token, 64);
 
-    if header.is_null() {
-        return false;
+        if header.is_null() {
+            return false;
+        }
+
+        // create a test security descriptor
+        let sd = crate::se::seaccess::create_null_dacl_sd();
+        if sd.is_null() {
+            return false;
+        }
+
+        let result = ob_set_security_descriptor(header, sd);
+        if result != STATUS_SUCCESS {
+            return false;
+        }
+
+        true
     }
-
-    // create a test security descriptor
-    let sd = crate::se::seaccess::create_null_dacl_sd();
-    if sd.is_null() {
-        return false;
-    }
-
-    let result = ob_set_security_descriptor(header, sd);
-    if result != STATUS_SUCCESS {
-        return false;
-    }
-
-    true
 }
 
 fn test_security_descriptor_query() -> bool {
-    use super::{
-        create_object, ob_query_security_descriptor, ob_set_security_descriptor, ObType,
-        STATUS_SUCCESS,
-    };
+    unsafe {
+        use super::{
+            create_object, ob_query_security_descriptor, ob_set_security_descriptor, ObType,
+            STATUS_SUCCESS,
+        };
 
-    let header = create_object(b"\\KernelObjects", b"TestSecQuery", ObType::Key, 128);
+        let header = create_object(b"\\KernelObjects", b"TestSecQuery", ObType::Key, 128);
 
-    if header.is_null() {
-        return false;
+        if header.is_null() {
+            return false;
+        }
+
+        let sd = crate::se::seaccess::create_null_dacl_sd();
+        if sd.is_null() {
+            return false;
+        }
+
+        let result = ob_set_security_descriptor(header, sd);
+        if result != STATUS_SUCCESS {
+            return false;
+        }
+
+        let queried = ob_query_security_descriptor(header);
+        if queried.is_null() {
+            return false;
+        }
+
+        true
     }
-
-    let sd = crate::se::seaccess::create_null_dacl_sd();
-    if sd.is_null() {
-        return false;
-    }
-
-    let result = ob_set_security_descriptor(header, sd);
-    if result != STATUS_SUCCESS {
-        return false;
-    }
-
-    let queried = ob_query_security_descriptor(header);
-    if queried.is_null() {
-        return false;
-    }
-
-    true
 }
 
 fn test_access_check() -> bool {
-    use super::{
-        create_object, insert_object_into_process, reference_object_by_handle_with_access, ObType,
-    };
-    use crate::ps::process::{Eprocess, ProcessHandleTable, HANDLE_TABLE_SIZE};
-    use crate::se::acl::{AceFlags, Acl};
-    use crate::se::descriptor::SE_DACL_PRESENT;
-    use crate::se::seaccess::{SecurityDescriptor, ACCESS_SYNCHRONIZE, EVENT_MODIFY_STATE};
-    use crate::se::sid::SID_USERS;
-    use crate::se::token::Token;
-
-    static mut TEST_HEAP_STORAGE: [u8; 1024 * 1024] = [0; 1024 * 1024];
     unsafe {
+        use super::{
+            create_object, insert_object_into_process, reference_object_by_handle_with_access,
+            ObType,
+        };
+        use crate::ps::process::{Eprocess, ProcessHandleTable, HANDLE_TABLE_SIZE};
+        use crate::se::acl::{AceFlags, Acl};
+        use crate::se::descriptor::SE_DACL_PRESENT;
+        use crate::se::seaccess::{SecurityDescriptor, ACCESS_SYNCHRONIZE, EVENT_MODIFY_STATE};
+        use crate::se::sid::SID_USERS;
+        use crate::se::token::Token;
+
+        static mut TEST_HEAP_STORAGE: [u8; 1024 * 1024] = [0; 1024 * 1024];
+
         crate::mm::heap::KERNEL_HEAP.configure(
             core::ptr::addr_of_mut!(TEST_HEAP_STORAGE).cast::<u8>(),
             (*core::ptr::addr_of!(TEST_HEAP_STORAGE)).len(),
         );
-    }
 
-    super::init();
+        super::init();
 
-    let process = Box::leak(Box::new(Eprocess::new()));
-    let table = Box::leak(Box::new(ProcessHandleTable {
-        slots: [null_mut(); HANDLE_TABLE_SIZE],
-        valid: [0; HANDLE_TABLE_SIZE],
-        next_slot: 1,
-        handle_count: AtomicU32::new(0),
-    }));
-    process.object_table = table;
+        let process = Box::leak(Box::new(Eprocess::new()));
+        let table = Box::leak(Box::new(ProcessHandleTable {
+            slots: [null_mut(); HANDLE_TABLE_SIZE],
+            valid: [0; HANDLE_TABLE_SIZE],
+            next_slot: 1,
+            handle_count: AtomicU32::new(0),
+        }));
+        process.object_table = table;
 
-    let token = Box::leak(Box::new(Token::new_primary(SID_USERS)));
-    process.set_token(token);
+        let token = Box::leak(Box::new(Token::new_primary(SID_USERS)));
+        process.set_token(token);
 
-    let acl = Box::leak(Box::new(Acl::new()));
-    if !(*acl).add_access_denied(&(*token).user, EVENT_MODIFY_STATE, AceFlags::NONE) {
-        return false;
-    }
-    if !(*acl).add_access_allowed(&(*token).user, ACCESS_SYNCHRONIZE, AceFlags::NONE) {
-        return false;
-    }
-    let descriptor = Box::leak(Box::new(SecurityDescriptor {
-        revision: 1,
-        sbz1: 0,
-        control: SE_DACL_PRESENT,
-        owner: (*token).user,
-        group: (*token).primary_group,
-        sacl: null_mut(),
-        dacl: acl,
-    }));
+        let acl = Box::leak(Box::new(Acl::new()));
+        if !(*acl).add_access_denied(&token.user, EVENT_MODIFY_STATE, AceFlags::NONE) {
+            return false;
+        }
+        if !(*acl).add_access_allowed(&token.user, ACCESS_SYNCHRONIZE, AceFlags::NONE) {
+            return false;
+        }
+        let descriptor = Box::leak(Box::new(SecurityDescriptor {
+            revision: 1,
+            sbz1: 0,
+            control: SE_DACL_PRESENT,
+            owner: token.user,
+            group: token.primary_group,
+            sacl: null_mut(),
+            dacl: acl,
+        }));
 
-    let header = create_object(
-        b"\\KernelObjects",
-        b"AccessCheckTest",
-        ObType::EventNotification,
-        64,
-    );
-    if header.is_null() {
-        return false;
-    }
-    unsafe {
+        let header = create_object(
+            b"\\KernelObjects",
+            b"AccessCheckTest",
+            ObType::EventNotification,
+            64,
+        );
+        if header.is_null() {
+            return false;
+        }
+
         (*header).security_descriptor = descriptor;
-    }
 
-    let handle = insert_object_into_process(process, b"\\KernelObjects", header);
-    if handle == 0 {
-        return false;
-    }
+        let handle = insert_object_into_process(process, b"\\KernelObjects", header);
+        if handle == 0 {
+            return false;
+        }
 
-    let denied = reference_object_by_handle_with_access(handle, EVENT_MODIFY_STATE, process);
-    if !denied.is_null() {
-        super::dereference_object(denied);
-        return false;
-    }
+        let denied = reference_object_by_handle_with_access(handle, EVENT_MODIFY_STATE, process);
+        if !denied.is_null() {
+            super::dereference_object(denied);
+            return false;
+        }
 
-    let allowed = reference_object_by_handle_with_access(handle, ACCESS_SYNCHRONIZE, process);
-    if allowed.is_null() {
-        return false;
-    }
-    super::dereference_object(allowed);
+        let allowed = reference_object_by_handle_with_access(handle, ACCESS_SYNCHRONIZE, process);
+        if allowed.is_null() {
+            return false;
+        }
+        super::dereference_object(allowed);
 
-    true
+        true
+    }
 }
 
 #[test]
@@ -641,22 +646,24 @@ fn test_symlink_creation() -> bool {
 }
 
 fn test_symlink_resolution() -> bool {
-    use super::{create_symbolic_link, insert_object, resolve_symbolic_link};
+    unsafe {
+        use super::{create_symbolic_link, insert_object, resolve_symbolic_link};
 
-    let header = create_symbolic_link(b"\\??", b"TestLink2", b"\\Device");
+        let header = create_symbolic_link(b"\\??", b"TestLink2", b"\\Device");
 
-    if header.is_null() {
-        return false;
+        if header.is_null() {
+            return false;
+        }
+
+        insert_object(b"\\??", header);
+
+        let resolved = resolve_symbolic_link(header);
+        if resolved.is_null() {
+            return false;
+        }
+
+        true
     }
-
-    insert_object(b"\\??", header);
-
-    let resolved = resolve_symbolic_link(header);
-    if resolved.is_null() {
-        return false;
-    }
-
-    true
 }
 
 fn test_symlink_cycle_detection() -> bool {

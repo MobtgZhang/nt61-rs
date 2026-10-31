@@ -12,8 +12,8 @@
 // LPC/ALPC uses NT-driver naming (LPCP_*, PORT_*, ...).
 //!   * SMSS uses ALPC to talk to CSRSS, wininit, and the SCM.
 //
-//! The Windows 7 ALPC implementation is a port-based message
-//! passing system:
+//!     The Windows 7 ALPC implementation is a port-based message
+//!     passing system:
 //
 //!   * A **server port** is created by a kernel component (e.g.
 //!     CSRSS); it has a global name and a queue of pending
@@ -27,8 +27,8 @@
 //!     connection requests but do not participate in message
 //!     exchange directly.
 //
-//! Each message has an `LpcMessageHeader` that the receiver
-//! validates before dispatching. The header includes:
+//!     Each message has an `LpcMessageHeader` that the receiver
+//!     validates before dispatching. The header includes:
 //!   * `data_length` - the size of the message body.
 //!   * `total_length` - the size of the body plus any attached
 //!     section / handle / attribute payloads.
@@ -38,12 +38,12 @@
 //!   * `client_pid` / `client_tid` - identifies the intended
 //!     recipient (zero for connection-style messages).
 //
-//! This module implements a minimal but correct ALPC surface
-//! (port registry, port creation, connection, send, receive).
-//! It is **not** a full port of `ntoskrnl`'s ALPC implementation
-//! (which is the most complex part of the NT executive) but it
-//! covers the on-the-wire contracts used by SMSS, CSRSS, and the
-//! SCM, and is enough to power the smoke test in this phase.
+//!     This module implements a minimal but correct ALPC surface
+//!     (port registry, port creation, connection, send, receive).
+//!     It is **not** a full port of `ntoskrnl`'s ALPC implementation
+//!     (which is the most complex part of the NT executive) but it
+//!     covers the on-the-wire contracts used by SMSS, CSRSS, and the
+//!     SCM, and is enough to power the smoke test in this phase.
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -267,6 +267,12 @@ impl LpcRegistry {
     }
 }
 
+impl Default for LpcRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static REGISTRY: Spinlock<*mut LpcRegistry> = Spinlock::new(core::ptr::null_mut());
 static CONNECT_COUNT: AtomicU64 = AtomicU64::new(0);
 static SEND_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -433,10 +439,7 @@ fn lock_registry() -> Option<RegGuard> {
 /// port's slot index, or `None` if the registry is full or a port
 /// with the same name already exists.
 pub fn create_connection_port(name: &[u16], owner_pid: u64) -> Option<u32> {
-    let g = match lock_registry() {
-        Some(g) => g,
-        None => return None,
-    };
+    let g = lock_registry()?;
     let reg = &mut *g.reg;
     if (reg.count as usize) >= MAX_PORTS {
         return None;
@@ -465,7 +468,7 @@ pub fn create_connection_port(name: &[u16], owner_pid: u64) -> Option<u32> {
     p.tail = 0;
     p.connected = false;
     p.state = port::PortState::Initializing;
-    reg.count = reg.count + 1;
+    reg.count += 1;
     Some(idx as u32)
 }
 
@@ -474,10 +477,7 @@ pub fn create_connection_port(name: &[u16], owner_pid: u64) -> Option<u32> {
 /// port for the server. Returns the client's port index; the
 /// server's port index is written into `*server_index`.
 pub fn connect_port(server_index: u32, owner_pid: u64, server_index_out: &mut u32) -> Option<u32> {
-    let g = match lock_registry() {
-        Some(g) => g,
-        None => return None,
-    };
+    let g = lock_registry()?;
     let reg: &mut LpcRegistry = &mut *g.reg;
     if (reg.count as usize) + 2 > MAX_PORTS {
         return None;
@@ -505,7 +505,7 @@ pub fn connect_port(server_index: u32, owner_pid: u64, server_index_out: &mut u3
         cp.connected = true;
         cp.state = port::PortState::Active;
     }
-    reg.count = reg.count + 1;
+    reg.count += 1;
 
     // Allocate the server-side communication port.
     let server_comm_idx = reg.count as usize;
@@ -525,7 +525,7 @@ pub fn connect_port(server_index: u32, owner_pid: u64, server_index_out: &mut u3
         sp.state = port::PortState::Active;
     }
     reg.ports[client_idx].peer_index = server_comm_idx as u32;
-    reg.count = reg.count + 1;
+    reg.count += 1;
 
     // Link the connection port to the server communication port.
     reg.ports[server_index as usize].peer_index = server_comm_idx as u32;
@@ -545,22 +545,17 @@ pub fn connect_port(server_index: u32, owner_pid: u64, server_index_out: &mut u3
 /// already has a `peer_index` on its local port, so the
 /// implementation just routes the message to `ports[peer_index]`.
 pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
-    let g = match lock_registry() {
-        Some(g) => g,
-        None => return None,
-    };
+    let g = lock_registry()?;
     let reg: &mut LpcRegistry = &mut *g.reg;
     if (port_index as usize) >= reg.count as usize {
         return None;
     }
     // Look up the local port's peer.
-    let connected: bool;
-    let peer_index: u32;
-    let max_message_length: u32;
+
     let p = &reg.ports[port_index as usize];
-    connected = p.connected;
-    peer_index = p.peer_index;
-    max_message_length = p.attributes.max_message_length;
+    let connected: bool = p.connected;
+    let peer_index: u32 = p.peer_index;
+    let max_message_length: u32 = p.attributes.max_message_length;
     if !connected {
         return None;
     }
@@ -574,16 +569,15 @@ pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
     }
     // read the peer's head / pending so we can drop the message
     // onto the peer's queue.
-    let pending: u32;
-    let head: u32;
+
     let p = &reg.ports[peer_index as usize];
-    pending = p.pending;
-    head = p.head;
+    let pending: u32 = p.pending;
+    let head: u32 = p.head;
     if (pending as usize) >= MAX_PORT_MESSAGES {
         return None;
     }
     let slot = (head as usize) % MAX_PORT_MESSAGES;
-    let copy_len;
+
     let dst = &mut reg.messages[peer_index as usize][slot];
     dst.header.data_length = msg.header.data_length;
     dst.header.total_length = msg.header.total_length;
@@ -592,7 +586,7 @@ pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
     dst.header.sender_tid = msg.header.sender_tid;
     dst.header.client_pid = msg.header.client_pid;
     dst.header.client_tid = msg.header.client_tid;
-    copy_len = core::cmp::min(msg.data_len as usize, dst.data.len());
+    let copy_len = core::cmp::min(msg.data_len as usize, dst.data.len());
     for i in 0..copy_len {
         dst.data[i] = msg.data[i];
     }
@@ -615,19 +609,15 @@ pub fn send(port_index: u32, msg: &LpcMessage) -> Option<usize> {
 /// Receive a message from a port. Returns the head message (or
 /// `None` if the queue is empty).
 pub fn receive(port_index: u32) -> Option<LpcMessage> {
-    let g = match lock_registry() {
-        Some(g) => g,
-        None => return None,
-    };
+    let g = lock_registry()?;
     let reg: &mut LpcRegistry = &mut *g.reg;
     if (port_index as usize) >= reg.count as usize {
         return None;
     }
-    let pending: u32;
-    let tail: u32;
+
     let p = &reg.ports[port_index as usize];
-    pending = p.pending;
-    tail = p.tail;
+    let pending: u32 = p.pending;
+    let tail: u32 = p.tail;
     if pending == 0 {
         return None;
     }
@@ -661,13 +651,14 @@ pub fn receive_from_owner_server_port(owner_pid: u64) -> Option<(u32, LpcMessage
     let reg: &LpcRegistry = g.reg;
     for i in 0..reg.count as usize {
         let p = &reg.ports[i];
-        if p.port_type == LpcPortType::ServerCommunication && p.owner_pid == owner_pid {
-            if p.pending > 0 {
-                let idx = i as u32;
-                drop(g);
-                let msg = receive(idx)?;
-                return Some((idx, msg));
-            }
+        if p.port_type == LpcPortType::ServerCommunication
+            && p.owner_pid == owner_pid
+            && p.pending > 0
+        {
+            let idx = i as u32;
+            drop(g);
+            let msg = receive(idx)?;
+            return Some((idx, msg));
         }
     }
     None

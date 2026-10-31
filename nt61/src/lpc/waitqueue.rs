@@ -55,6 +55,12 @@ impl WaitQueue {
     }
 }
 
+impl Default for WaitQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static WAIT_COUNT: AtomicU32 = AtomicU32::new(0);
 static WAKE_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -72,7 +78,7 @@ pub fn wait_on_port(
             queue.entries[i].wait_reason = reason;
             queue.entries[i].message_id = message_id;
             queue.entries[i].active = true;
-            queue.count = queue.count + 1;
+            queue.count += 1;
             WAIT_COUNT.fetch_add(1, Ordering::Relaxed);
             return Some(i as u32);
         }

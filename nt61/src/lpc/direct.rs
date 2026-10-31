@@ -54,6 +54,12 @@ impl DirectBufferRegistry {
     }
 }
 
+impl Default for DirectBufferRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 static DIRECT_SEND_COUNT: AtomicU64 = AtomicU64::new(0);
 static DIRECT_RECV_COUNT: AtomicU64 = AtomicU64::new(0);
 
@@ -65,7 +71,7 @@ pub fn allocate_direct_buffer(port_index: u32, registry: &mut DirectBufferRegist
     let idx = registry.count as usize;
     registry.port_mapping[idx] = port_index;
     registry.buffers[idx] = DirectBuffer::empty();
-    registry.count = registry.count + 1;
+    registry.count += 1;
 
     Some(idx as u32)
 }

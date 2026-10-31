@@ -62,6 +62,12 @@ impl JobAccountingInfo {
     }
 }
 
+impl Default for JobAccountingInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Job notification callback type
 pub type JobNotificationCallback = fn(job_id: u64, event: JobNotificationEvent);
 
@@ -151,6 +157,12 @@ impl JobAccounting {
         let mut info = self.info.lock();
         info.this_period_user_time = 0;
         info.this_period_kernel_time = 0;
+    }
+}
+
+impl Default for JobAccounting {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -503,7 +515,7 @@ mod tests {
             .lock()
             .iter()
             .find(|j| j.job_id == parent_id)
-            .map(|j| j.as_ref() as *const JobObject)
+            .map(|j| j as *const JobObject)
             .unwrap();
         let parent_ref = unsafe { &*parent };
         parent_ref.set_process_limit(4);
@@ -523,14 +535,14 @@ mod tests {
             .lock()
             .iter()
             .find(|j| j.job_id == child_id)
-            .map(|j| j.as_ref() as *const JobObject)
+            .map(|j| j as *const JobObject)
             .unwrap();
         let child_ref = unsafe { &*child };
         let parent = crate::ps::job::JOB_TABLE
             .lock()
             .iter()
             .find(|j| j.job_id == parent_id)
-            .map(|j| j.as_ref() as *const JobObject)
+            .map(|j| j as *const JobObject)
             .unwrap();
         let parent_ref = unsafe { &*parent };
 
@@ -578,7 +590,7 @@ mod tests {
             .lock()
             .iter()
             .find(|j| j.job_id == parent_id)
-            .map(|j| j.as_ref() as *const JobObject)
+            .map(|j| j as *const JobObject)
             .unwrap();
         let parent_ref = unsafe { &*parent };
         parent_ref

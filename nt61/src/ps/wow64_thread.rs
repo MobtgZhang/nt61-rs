@@ -10,7 +10,7 @@
 //!   * 32-bit stack setup
 //!   * CONTEXT32 initialization
 //
-//! References:
+//!     References:
 //!   * geoffchappell.com — WoW64 thread creation
 
 use crate::libs::wow64::types::*;
@@ -108,35 +108,35 @@ pub fn create_wow64_thread(
     start_address: ULONG32,
     parameter: ULONG32,
 ) -> Option<&'static mut Ethread> {
-    // 1. create a standard 64-bit thread first
-    let thread = create_thread(process, 0)?;
-
-    // 2. Allocate TEB32
-    let teb32 = allocate_teb32()?;
-    // 3. Allocate 32-bit stack
-    let stack_base = allocate_32bit_stack(DEFAULT_WOW64_STACK_SIZE)?;
-    let stack_top = stack_base + DEFAULT_WOW64_STACK_SIZE;
-
-    // 4. Initialize CONTEXT32 and retain its storage for the loader.
-    let context = Box::new(init_thread_context32(start_address, parameter, stack_top));
-    let _context_ptr = Box::into_raw(context);
-    // _context_ptr is reserved for future use - thread context tracking
-
-    // 5. Initialize TEB32
     unsafe {
-        init_teb32(teb32, thread, process, stack_top);
-        thread.set_wow64_teb32(teb32);
-    }
+        // 1. create a standard 64-bit thread first
+        let thread = create_thread(process, 0)?;
 
-    Some(thread)
+        // 2. Allocate TEB32
+        let teb32 = allocate_teb32()?;
+        // 3. Allocate 32-bit stack
+        let stack_base = allocate_32bit_stack(DEFAULT_WOW64_STACK_SIZE)?;
+        let stack_top = stack_base + DEFAULT_WOW64_STACK_SIZE;
+
+        // 4. Initialize CONTEXT32 and retain its storage for the loader.
+        let context = Box::new(init_thread_context32(start_address, parameter, stack_top));
+        let _context_ptr = Box::into_raw(context);
+        // _context_ptr is reserved for future use - thread context tracking
+
+        // 5. Initialize TEB32
+        unsafe {
+            unsafe { init_teb32(teb32, thread, process, stack_top) };
+            thread.set_wow64_teb32(teb32);
+        }
+
+        Some(thread)
+    }
 }
 
 /// Allocate TEB32 for a Wow64 thread.
 pub fn allocate_teb32() -> Option<*mut Teb32> {
     static mut TEB32_BUFFER: [u32; 0x1100 / 4] = [0; 0x1100 / 4];
-    Some(
-        core::ptr::addr_of_mut!(TEB32_BUFFER).cast::<Teb32>()
-    )
+    Some(core::ptr::addr_of_mut!(TEB32_BUFFER).cast::<Teb32>())
 }
 
 /// Allocate and attach a TEB32 to an existing WOW64 thread.
@@ -146,10 +146,9 @@ pub fn initialize_wow64_thread(
     stack_top: ULONG32,
 ) -> Option<*mut Teb32> {
     let teb32 = allocate_teb32()?;
-    unsafe {
-        init_teb32(teb32, thread, process, stack_top);
-        thread.set_wow64_teb32(teb32);
-    }
+    unsafe { init_teb32(teb32, thread, process, stack_top) };
+    thread.set_wow64_teb32(teb32);
+
     Some(teb32)
 }
 
@@ -210,6 +209,9 @@ fn init_thread_context32(
     context
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialize TEB32 for a Wow64 thread.
 unsafe fn init_teb32(
     teb: *mut Teb32,

@@ -62,32 +62,33 @@ pub fn nt_create_process(
     debug_port: u64,
     exception_port: u64,
 ) -> u32 {
-    // 1. Validate parent process
-    let parent = if parent_process_handle != 0 {
-        match ob::reference_object_by_handle(parent_process_handle) {
-            header if !header.is_null() => {
-                // SAFETY: caller has validated the handle via
-                // `reference_object_by_handle`, so `header` points at a
-                // live `OBJECT_HEADER`. `get_object_body` is itself
-                // an `unsafe fn`, so we keep the wrapper `unsafe` here.
-                ob::get_object_body::<Eprocess>(header)
-            }
-            _ => return STATUS_INVALID_HANDLE,
-        }
-    } else {
-        core::ptr::null_mut()
-    };
-
-    // 2. Allocate process object from pool
-    let process_size = core::mem::size_of::<Eprocess>().max(4096);
-    let process_ptr = pool::allocate(pool::PoolType::NonPaged, process_size) as *mut Eprocess;
-
-    if process_ptr.is_null() {
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    // 3. Initialize process structure
     unsafe {
+        // 1. Validate parent process
+        let parent = if parent_process_handle != 0 {
+            match ob::reference_object_by_handle(parent_process_handle) {
+                header if !header.is_null() => {
+                    // SAFETY: caller has validated the handle via
+                    // `reference_object_by_handle`, so `header` points at a
+                    // live `OBJECT_HEADER`. `get_object_body` is itself
+                    // an `unsafe fn`, so we keep the wrapper `unsafe` here.
+                    ob::get_object_body::<Eprocess>(header)
+                }
+                _ => return STATUS_INVALID_HANDLE,
+            }
+        } else {
+            core::ptr::null_mut()
+        };
+
+        // 2. Allocate process object from pool
+        let process_size = core::mem::size_of::<Eprocess>().max(4096);
+        let process_ptr = pool::allocate(pool::PoolType::NonPaged, process_size) as *mut Eprocess;
+
+        if process_ptr.is_null() {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
+        // 3. Initialize process structure
+
         core::ptr::write_bytes(process_ptr as *mut u8, 0, process_size);
 
         // Allocate PID
@@ -103,159 +104,156 @@ pub fn nt_create_process(
 
         // Initialize thread list
         (*process_ptr).kprocess_thread_list_head.init();
-    }
 
-    // 4. create address space
-    let address_space = match ProcessAddressSpace::new() {
-        Some(vas) => vas,
-        None => {
-            // `pool::free` is a safe function, so no `unsafe` wrapper is
-            // needed — calling it directly is enough.
+        // 4. create address space
+        let address_space = match ProcessAddressSpace::new() {
+            Some(vas) => vas,
+            None => {
+                // `pool::free` is a safe function, so no `unsafe` wrapper is
+                // needed — calling it directly is enough.
+                pool::free(process_ptr as *mut u8);
+                return STATUS_INSUFFICIENT_RESOURCES;
+            }
+        };
+
+        // Store PML4 in process
+        unsafe {
+            (*process_ptr).page_table_pml4 = address_space.pml4_phys;
+            (*process_ptr).pml4_phys = address_space.pml4_phys;
+        }
+
+        // 5. Map PEB and stack
+        let mut addr_space = address_space;
+        if addr_space.map_peb().is_err() {
+            // `pool::free` is a safe function, so the unsafe wrapper is
+            // not required.
             pool::free(process_ptr as *mut u8);
             return STATUS_INSUFFICIENT_RESOURCES;
         }
-    };
 
-    // Store PML4 in process
-    unsafe {
-        (*process_ptr).page_table_pml4 = address_space.pml4_phys;
-        (*process_ptr).pml4_phys = address_space.pml4_phys;
-    }
+        if addr_space.map_user_stack().is_err() {
+            pool::free(process_ptr as *mut u8);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
 
-    // 5. Map PEB and stack
-    let mut addr_space = address_space;
-    if addr_space.map_peb().is_err() {
-        // `pool::free` is a safe function, so the unsafe wrapper is
-        // not required.
-        pool::free(process_ptr as *mut u8);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
+        // Store stack info
+        unsafe {
+            (*process_ptr).user_stack_base = addr_space.user_stack_base;
+            (*process_ptr).user_stack_limit =
+                addr_space.user_stack_base + addr_space.user_stack_size;
+            (*process_ptr).user_rsp = addr_space.get_stack_top();
+            (*process_ptr).peb = addr_space.peb_address as *mut crate::ps::process::peb;
+        }
 
-    if addr_space.map_user_stack().is_err() {
-        pool::free(process_ptr as *mut u8);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
+        // Transfer ownership of the address space to the process. Without
+        // this the `ProcessAddressSpace` stack local is dropped when
+        // `create_process` returns, which runs `Drop::cleanup()` and frees
+        // the PML4 page *while the process is still running with that CR3*.
+        // The freed page is then reused as an ordinary data buffer, so the
+        // next write (e.g. a command line) corrupts the live PML4 and the
+        // next page walk triple-faults.
+        core::mem::forget(addr_space);
 
-    // Store stack info
-    unsafe {
-        (*process_ptr).user_stack_base = addr_space.user_stack_base;
-        (*process_ptr).user_stack_limit = addr_space.user_stack_base + addr_space.user_stack_size;
-        (*process_ptr).user_rsp = addr_space.get_stack_top();
-        (*process_ptr).peb = addr_space.peb_address as *mut crate::ps::process::peb;
-    }
+        // 6. Allocate handle table
+        let ht_size = core::mem::size_of::<ProcessHandleTable>().max(4096);
+        let ht_ptr = pool::allocate(pool::PoolType::NonPaged, ht_size) as *mut ProcessHandleTable;
 
-    // Transfer ownership of the address space to the process. Without
-    // this the `ProcessAddressSpace` stack local is dropped when
-    // `create_process` returns, which runs `Drop::cleanup()` and frees
-    // the PML4 page *while the process is still running with that CR3*.
-    // The freed page is then reused as an ordinary data buffer, so the
-    // next write (e.g. a command line) corrupts the live PML4 and the
-    // next page walk triple-faults.
-    core::mem::forget(addr_space);
+        if ht_ptr.is_null() {
+            // `pool::free` is safe; drop the redundant ` ` wrapper.
+            pool::free(process_ptr as *mut u8);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
 
-    // 6. Allocate handle table
-    let ht_size = core::mem::size_of::<ProcessHandleTable>().max(4096);
-    let ht_ptr = pool::allocate(pool::PoolType::NonPaged, ht_size) as *mut ProcessHandleTable;
+        unsafe {
+            core::ptr::write_bytes(ht_ptr as *mut u8, 0, ht_size);
+            (*ht_ptr).next_slot = 1;
+            (*process_ptr).object_table = ht_ptr;
+        }
 
-    if ht_ptr.is_null() {
-        // `pool::free` is safe; drop the redundant `unsafe {}` wrapper.
-        pool::free(process_ptr as *mut u8);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
+        // 7. create initial token
+        let process_token = if !parent.is_null() {
+            (*parent)
+                .get_token()
+                .as_ref()
+                .map(crate::se::token::duplicate_for_process)
+        } else {
+            Some(token::create_user_token(crate::se::sid::SID_USERS))
+        };
 
-    unsafe {
-        core::ptr::write_bytes(ht_ptr as *mut u8, 0, ht_size);
-        (*ht_ptr).next_slot = 1;
-        (*process_ptr).object_table = ht_ptr;
-    }
+        if let Some(process_token) = process_token {
+            if process_token.is_null() {
+                pool::free(ht_ptr as *mut u8);
+                pool::free(process_ptr as *mut u8);
+                return STATUS_INSUFFICIENT_RESOURCES;
+            }
+            (*process_ptr).set_token(process_token);
+        }
 
-    // 7. create initial token
-    let process_token = if !parent.is_null() {
-        unsafe { (*parent).get_token().as_ref() }
-            .map(|token| crate::se::token::duplicate_for_process(token))
-    } else {
-        Some(token::create_user_token(crate::se::sid::SID_USERS))
-    };
-
-    if let Some(process_token) = process_token {
-        if process_token.is_null() {
+        if inherit_handles && !ob::inherit_process_handle_table(process_ptr, parent) {
             pool::free(ht_ptr as *mut u8);
             pool::free(process_ptr as *mut u8);
             return STATUS_INSUFFICIENT_RESOURCES;
         }
-        unsafe {
-            (*process_ptr).set_token(process_token);
-        }
-    }
 
-    if inherit_handles && !ob::inherit_process_handle_table(process_ptr, parent) {
-        pool::free(ht_ptr as *mut u8);
-        pool::free(process_ptr as *mut u8);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    // 8. Set debug and exception ports
-    unsafe {
+        // 8. Set debug and exception ports
         (*process_ptr).debug_port = debug_port;
         (*process_ptr).exception_port = exception_port;
-    }
 
-    // 9. Load image from section if provided
-    if section_handle != 0 {
-        // Map the section object body and load the PE image from its
-        // base address into the new process's address space.
-        let header = ob::reference_object_by_handle(section_handle);
-        if !header.is_null() {
-            let section = ob::get_object_body::<crate::mm::section::Section>(header);
-            let base = unsafe { (*section).base_address };
-            let size = unsafe { (*section).size } as usize;
-            if base != 0 && size > 0 {
-                let image = unsafe { core::slice::from_raw_parts(base as *const u8, size) };
-                if crate::loader::load_pe(image).is_none() {
-                    // PE parsing failed; the process remains in a suspended
-                    // state that NT_CREATE_THREAD can terminate.
+        // 9. Load image from section if provided
+        if section_handle != 0 {
+            // Map the section object body and load the PE image from its
+            // base address into the new process's address space.
+            let header = ob::reference_object_by_handle(section_handle);
+            if !header.is_null() {
+                let section = ob::get_object_body::<crate::mm::section::Section>(header);
+                let base = (*section).base_address;
+                let size = (*section).size as usize;
+                if base != 0 && size > 0 {
+                    let image = core::slice::from_raw_parts(base as *const u8, size);
+                    if crate::loader::load_pe(image).is_none() {
+                        // PE parsing failed; the process remains in a suspended
+                        // state that NT_CREATE_THREAD can terminate.
+                    }
                 }
             }
         }
-    }
 
-    // 10. create initial thread (deferred to NT_CREATE_THREAD)
-    // The process is created but not yet runnable until a thread is created
+        // 10. create initial thread (deferred to NT_CREATE_THREAD)
+        // The process is created but not yet runnable until a thread is created
 
-    // 11. Insert into object manager and create handle
-    let obj_header = ob::create_object(
-        b"\\Process",
-        b"", // Anonymous process
-        ob::ObType::Process,
-        process_size,
-    );
+        // 11. Insert into object manager and create handle
+        let obj_header = ob::create_object(
+            b"\\Process",
+            b"", // Anonymous process
+            ob::ObType::Process,
+            process_size,
+        );
 
-    if obj_header.is_null() {
-        // `pool::free` is safe; no `unsafe` wrapper needed.
-        pool::free(ht_ptr as *mut u8);
-        pool::free(process_ptr as *mut u8);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
+        if obj_header.is_null() {
+            // `pool::free` is safe; no `unsafe` wrapper needed.
+            pool::free(ht_ptr as *mut u8);
+            pool::free(process_ptr as *mut u8);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
 
-    // Copy process data to object body
-    unsafe {
+        // Copy process data to object body
         let body = ob::get_object_body::<Eprocess>(obj_header);
         core::ptr::copy_nonoverlapping(process_ptr, body, 1);
         pool::free(process_ptr as *mut u8);
+
+        // 12. create handle for caller
+        let handle = ob::insert_object(b"\\Process", obj_header);
+        *process_handle = handle;
+
+        // 13. Add to global process list
+        if !crate::ps::process::add_to_global_list(&mut *ob::get_object_body::<Eprocess>(
+            obj_header,
+        )) {
+            return crate::libs::ntdll::status::STATUS_NO_MEMORY as u32;
+        }
+
+        STATUS_SUCCESS
     }
-
-    // 12. create handle for caller
-    let handle = ob::insert_object(b"\\Process", obj_header);
-    *process_handle = handle;
-
-    // 13. Add to global process list
-    if !crate::ps::process::add_to_global_list(unsafe {
-        &mut *ob::get_object_body::<Eprocess>(obj_header)
-    }) {
-        return crate::libs::ntdll::status::STATUS_NO_MEMORY as u32;
-    }
-
-    STATUS_SUCCESS
 }
 
 /// nt_create_process_ex - Extended process creation with section mapping

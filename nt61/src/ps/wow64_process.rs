@@ -9,7 +9,7 @@
 //!   * Wow64 VAS initialization
 //!   * 32-bit system DLL loading
 //
-//! References:
+//!     References:
 //!   * geoffchappell.com — WoW64 process creation
 
 use crate::libs::wow64::types::*;
@@ -170,9 +170,9 @@ pub fn initialize_wow64_process(
     let heap_base = crate::libs::wow64::wow64vas::allocate_heap(0x1000)?;
     unsafe {
         init_peb32(peb32, process);
-        (*peb32).process_heap = heap_base;
-        (*peb32).teb = TEB32_BASE_ADDRESS;
-        (*peb32).teb32 = TEB32_BASE_ADDRESS;
+        peb32.process_heap = heap_base;
+        peb32.teb = TEB32_BASE_ADDRESS;
+        peb32.teb32 = TEB32_BASE_ADDRESS;
     }
     process.wow64_peb32_ptr = peb32 as *mut Peb32 as u64;
 
@@ -201,6 +201,9 @@ pub fn initialize_wow64_process(
     Some(process)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialize PEB32 for a Wow64 process.
 unsafe fn init_peb32(peb: *mut Peb32, process: &Eprocess) {
     if peb.is_null() {
@@ -231,8 +234,7 @@ unsafe fn init_peb32(peb: *mut Peb32, process: &Eprocess) {
 // =============================================================================
 // Wow64 Process Query Functions
 // =============================================================================
-
-/// Get the PEB32 address for a Wow64 process.
+///     Get the PEB32 address for a Wow64 process.
 pub fn get_peb32_address(process: &Eprocess) -> ULONG32 {
     process.get_wow64_peb32_va()
 }
@@ -297,7 +299,7 @@ pub fn query_wow64_information(
         Wow64ProcessInformationClass::XeKeys => {
             0 // XeKeys not used
         }
-        Wow64ProcessInformationClass::SessionInformation => process.session_id as u32,
+        Wow64ProcessInformationClass::SessionInformation => process.session_id,
     }
 }
 
