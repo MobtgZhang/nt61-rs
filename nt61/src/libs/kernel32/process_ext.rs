@@ -101,6 +101,9 @@ fn parse_command_line(cmd_line: &str) -> Vec<String> {
     args
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn wide_to_string(p: *const u16) -> Option<String> {
     if p.is_null() {
         return None;
@@ -138,6 +141,9 @@ pub fn build_environment_block(env: &[(String, String)]) -> Vec<u16> {
     block
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn create_process_w(
     application_name: *const u16,
     command_line: *mut u16,
@@ -309,6 +315,9 @@ pub unsafe extern "C" fn create_process_w(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_startup_info_w(startup_info: *mut STARTUPINFOW) {
     if startup_info.is_null() {
         return;
@@ -336,6 +345,9 @@ pub unsafe extern "C" fn get_startup_info_w(startup_info: *mut STARTUPINFOW) {
     si.h_std_error = super::console::get_std_handle(super::console::STD_ERROR_HANDLE);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_process_times(
     process: HANDLE,
     creation_time: *mut super::thread::FileTime,
@@ -364,6 +376,9 @@ pub unsafe extern "C" fn get_process_times(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn command_line_to_argv_w(
     cmd_line: *const u16,
     num_args: *mut i32,

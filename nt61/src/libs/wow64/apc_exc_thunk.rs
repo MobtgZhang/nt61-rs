@@ -6,7 +6,7 @@
 //!   * Converting 32-bit exceptions to 64-bit and vice versa
 //!   * Setting up 32-bit exception handlers
 //
-//! References:
+//!     References:
 //!   * geoffchappell.com — wow64 exception handling
 //!   * ReactOS `dll/win32/kernel32/client/thread.c`
 
@@ -73,6 +73,9 @@ pub unsafe extern "C" fn wow64_apc_routine_impl(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_apc_kernel_routine` — Kernel-mode APC routine.
 ///
 /// This is called when a kernel-mode APC needs to be delivered to a 32-bit thread.
@@ -97,6 +100,9 @@ pub unsafe extern "C" fn wow64_apc_kernel_routine(apc: *mut Kapc32, thread: u64,
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_apc_rundown_routine` — APC rundown routine.
 ///
 /// Called when a thread is being terminated while APCs are queued.
@@ -118,6 +124,9 @@ pub unsafe extern "C" fn wow64_apc_rundown_routine(apc: *mut Kapc32) {
 // wow64_prepare_for_exception
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_prepare_for_exception` — Prepare a 32-bit thread for exception handling.
 ///
 /// This is called when an exception occurs and needs to be handled by 32-bit
@@ -156,6 +165,9 @@ pub unsafe extern "C" fn wow64_prepare_for_exception_impl(
 // wow64_raise_exception / wow64_dispatch_exception
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_raise_exception` — Raise a 32-bit exception.
 ///
 /// Called from the 32-bit exception handling code to raise an exception
@@ -205,6 +217,9 @@ pub unsafe extern "C" fn wow64_raise_exception(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_dispatch_exception` — Dispatch a 32-bit exception.
 ///
 /// This is the main exception dispatching routine for 32-bit exceptions.
@@ -259,6 +274,9 @@ pub unsafe extern "C" fn wow64_dispatch_exception(
 // Wow64 Callback Return
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_callback_return` — Return from a callback into 32-bit code.
 ///
 /// When the kernel needs to callback into 32-bit code (e.g., for APCs or
@@ -290,6 +308,9 @@ pub unsafe extern "C" fn wow64_callback_return(buffer: *const u8, buffer_length:
 // Exception Record Conversion
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Convert exception record from 64-bit format to 32-bit.
 /// This is a simplified version that handles common fields.
 pub unsafe fn exception_record_64_to_32_simple(
@@ -309,6 +330,9 @@ pub unsafe fn exception_record_64_to_32_simple(
     (*dst).number_parameters = 0;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Convert exception record from 32-bit format to 64-bit.
 /// This is a simplified version that handles common fields.
 pub unsafe fn exception_record_32_to_64_simple(
@@ -350,6 +374,9 @@ pub struct ExceptionFrame32 {
 }
 
 impl ExceptionFrame32 {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Push a new frame on the stack.
     pub unsafe fn push(&mut self, prev: *mut ExceptionFrame32, ret_addr: ULONG32) {
         self.prev = prev as ULONG32;
@@ -371,6 +398,9 @@ pub fn init() {
 // Public Entry Points (for thunk.rs forwarding)
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_prepare_for_exception` — handle exception in WoW64 context.
 pub unsafe extern "C" fn wow64_prepare_for_exception(
     exception_record: *const core::ffi::c_void,
@@ -387,12 +417,18 @@ pub unsafe extern "C" fn wow64_prepare_for_exception(
     0 // STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_apc_routine` — APC delivery thunk for 32-bit threads.
 pub unsafe extern "C" fn wow64_apc_routine(apc: *mut core::ffi::c_void) {
     crate::wow64_klog!("wow64_apc_routine apc={:p}", apc);
     let _ = apc;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_ldrp_initialize` — Initialize the 32-bit loader.
 pub unsafe extern "C" fn wow64_ldrp_initialize(
     context: *mut core::ffi::c_void,

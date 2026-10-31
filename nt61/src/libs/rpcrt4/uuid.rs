@@ -7,6 +7,9 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 static UUID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// In a real system, this would use cryptographic random sources.
 #[no_mangle]
 pub unsafe extern "C" fn UuidCreate(uuid: *mut UUID) -> RpcStatus {
@@ -32,6 +35,9 @@ pub unsafe extern "C" fn UuidCreate(uuid: *mut UUID) -> RpcStatus {
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn UuidToStringW(uuid: *const UUID, string_uuid: *mut *mut u16) -> RpcStatus {
     if uuid.is_null() || string_uuid.is_null() {
@@ -102,6 +108,9 @@ fn parse_hex_digit(c: u16) -> Option<u8> {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn UuidFromStringW(string_uuid: *const u16, uuid: *mut UUID) -> RpcStatus {
     if string_uuid.is_null() || uuid.is_null() {
@@ -188,6 +197,9 @@ pub unsafe extern "C" fn UuidFromStringW(string_uuid: *const u16, uuid: *mut UUI
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn UuidCompare(
     uuid1: *const UUID,
@@ -243,6 +255,9 @@ pub unsafe extern "C" fn UuidCompare(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn UuidIsNil(uuid: *const UUID, status: *mut RpcStatus) -> i32 {
     if !status.is_null() {
@@ -265,6 +280,9 @@ pub unsafe extern "C" fn UuidIsNil(uuid: *const UUID, status: *mut RpcStatus) ->
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn UuidCreateNil(uuid: *mut UUID) -> RpcStatus {
     if uuid.is_null() {
@@ -279,6 +297,9 @@ pub unsafe extern "C" fn UuidCreateNil(uuid: *mut UUID) -> RpcStatus {
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn UuidEqual(
     uuid1: *const UUID,

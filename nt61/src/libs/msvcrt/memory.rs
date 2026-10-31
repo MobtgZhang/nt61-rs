@@ -24,16 +24,25 @@ struct AllocHeader {
 const ALLOC_MAGIC: u32 = 0xDEADBEEF;
 const HEADER_SIZE: usize = core::mem::size_of::<AllocHeader>();
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get header from user pointer
 unsafe fn get_header(ptr: *mut c_void) -> *mut AllocHeader {
     (ptr as usize - HEADER_SIZE) as *mut AllocHeader
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get user pointer from header
 unsafe fn get_user_ptr(header: *mut AllocHeader) -> *mut c_void {
     (header as usize + HEADER_SIZE) as *mut c_void
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
     if size == 0 {
@@ -63,6 +72,9 @@ pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
     get_user_ptr(header)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     if ptr.is_null() {
@@ -86,6 +98,9 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn calloc(count: SizeT, size: SizeT) -> *mut c_void {
     let total_size = match count.checked_mul(size) {
@@ -123,6 +138,9 @@ pub unsafe extern "C" fn calloc(count: SizeT, size: SizeT) -> *mut c_void {
     get_user_ptr(header)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: SizeT) -> *mut c_void {
     if ptr.is_null() {
@@ -168,6 +186,9 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: SizeT) -> *mut c_vo
     get_user_ptr(new_header)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _aligned_malloc(size: SizeT, alignment: SizeT) -> *mut c_void {
     if size == 0 || alignment == 0 || !alignment.is_power_of_two() {
@@ -203,11 +224,17 @@ pub unsafe extern "C" fn _aligned_malloc(size: SizeT, alignment: SizeT) -> *mut 
     get_user_ptr(header)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _aligned_free(ptr: *mut c_void) {
     free(ptr);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _aligned_realloc(
     ptr: *mut c_void,
@@ -278,6 +305,9 @@ pub unsafe extern "C" fn _aligned_realloc(
     get_user_ptr(new_header)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _malloc_dbg(
     size: SizeT,
@@ -288,11 +318,17 @@ pub unsafe extern "C" fn _malloc_dbg(
     malloc(size)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _free_dbg(ptr: *mut c_void, _block_type: CInt) {
     free(ptr);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _calloc_dbg(
     count: SizeT,
@@ -304,6 +340,9 @@ pub unsafe extern "C" fn _calloc_dbg(
     calloc(count, size)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _realloc_dbg(
     ptr: *mut c_void,
@@ -315,11 +354,17 @@ pub unsafe extern "C" fn _realloc_dbg(
     realloc(ptr, new_size)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _expand(_ptr: *mut c_void, _new_size: SizeT) -> *mut c_void {
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _msize(ptr: *mut c_void) -> SizeT {
     if ptr.is_null() {
@@ -335,21 +380,33 @@ pub unsafe extern "C" fn _msize(ptr: *mut c_void) -> SizeT {
     (*header).size
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _heapchk() -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _heapmin() -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _set_new_handler(_handler: *const c_void) -> *const c_void {
     ptr::null()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _query_new_handler() -> *const c_void {
     ptr::null()

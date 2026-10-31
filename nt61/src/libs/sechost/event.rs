@@ -32,6 +32,9 @@ static EVENT_LOG_HANDLES: Lazy<Mutex<[EventLogHandle; 32]>> = Lazy::new(|| {
     )
 });
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegisterEventSourceW(
     lp_uncserver_name: LPCWSTR,
@@ -75,6 +78,9 @@ pub unsafe extern "C" fn RegisterEventSourceW(
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn DeregisterEventSource(h_event_log: EventSourceHandle) -> BOOL {
     if h_event_log.is_null() {
@@ -96,6 +102,9 @@ pub unsafe extern "C" fn DeregisterEventSource(h_event_log: EventSourceHandle) -
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn ReportEventW(
     h_event_log: EventSourceHandle,
@@ -194,6 +203,9 @@ pub unsafe extern "C" fn ReportEventW(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn ClearEventLogW(h_event_log: HANDLE, lp_backup_file_name: LPCWSTR) -> BOOL {
     if h_event_log.is_null() {
@@ -201,7 +213,7 @@ pub unsafe extern "C" fn ClearEventLogW(h_event_log: HANDLE, lp_backup_file_name
         return FALSE;
     }
 
-    if !lp_backup_file_name.is_null() {}
+    lp_backup_file_name.is_null();
 
     // A source registered through `RegisterEventSourceW` reports to the
     // Application channel; audit sources report to the Security channel.
@@ -222,6 +234,9 @@ pub unsafe extern "C" fn ClearEventLogW(h_event_log: HANDLE, lp_backup_file_name
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn OpenEventLogW(
     lp_uncserver_name: LPCWSTR,
@@ -236,6 +251,9 @@ pub unsafe extern "C" fn OpenEventLogW(
     RegisterEventSourceW(lp_uncserver_name, lp_source_name) as HANDLE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CloseEventLog(h_event_log: HANDLE) -> BOOL {
     DeregisterEventSource(h_event_log as EventSourceHandle)

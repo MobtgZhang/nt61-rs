@@ -31,23 +31,32 @@ pub struct FileTime {
 
 const EPOCH_DIFF_100NS: u64 = 116_444_736_000_000_000;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_system_time`.
 pub unsafe extern "C" fn get_system_time(out: *mut SystemTime) {
     if out.is_null() {
         return;
     }
     let ms = crate::ke::time::get_system_time();
-    let s = (ms / 1000) as u64;
-    let ns = ((ms % 1000) as u64) * 1_000_000;
+    let s = ms / 1000;
+    let ns = (ms % 1000) * 1_000_000;
     fill_system_time(out, s, ns);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_local_time` — same as `get_system_time` since we
 /// have no concept of time zones.
 pub unsafe extern "C" fn get_local_time(out: *mut SystemTime) {
     get_system_time(out);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_system_time_as_file_time`.
 pub unsafe extern "C" fn get_system_time_as_file_time(out: *mut FileTime) {
     if out.is_null() {
@@ -61,16 +70,17 @@ pub unsafe extern "C" fn get_system_time_as_file_time(out: *mut FileTime) {
 
 /// `get_tick_count` — milliseconds since boot, lower 32 bits.
 pub extern "C" fn get_tick_count() -> DWORD {
-    let t = crate::ke::time::get_tick_count();
-    t
+    crate::ke::time::get_tick_count()
 }
 
 /// `get_tick_count64` — milliseconds since boot, full 64 bits.
 pub extern "C" fn get_tick_count64() -> u64 {
-    let t = crate::ke::time::get_system_time();
-    t
+    crate::ke::time::get_system_time()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `query_performance_counter`.
 pub unsafe extern "C" fn query_performance_counter(counter: *mut i64) -> i32 {
     if counter.is_null() {
@@ -80,6 +90,9 @@ pub unsafe extern "C" fn query_performance_counter(counter: *mut i64) -> i32 {
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `query_performance_frequency` — 1 MHz.
 pub unsafe extern "C" fn query_performance_frequency(freq: *mut i64) -> i32 {
     if freq.is_null() {

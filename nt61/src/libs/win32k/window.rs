@@ -670,7 +670,7 @@ impl WindowManager {
             if y < 0 {
                 continue;
             }
-            let row = unsafe { surface.bits.offset(((y as usize) * fb_pitch) as isize) };
+            let row = unsafe { surface.bits.add(y as usize * fb_pitch) };
             for x in window.client_rect.left..window.client_rect.right {
                 if x < 0 {
                     continue;
@@ -832,6 +832,12 @@ impl WindowManager {
     /// Check if a window is enabled.
     pub fn is_window_enabled(&self, hwnd: u64) -> bool {
         self.get_window(hwnd).map(|w| w.enabled).unwrap_or(false)
+    }
+}
+
+impl Default for WindowManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

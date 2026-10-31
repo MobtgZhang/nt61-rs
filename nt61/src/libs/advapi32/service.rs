@@ -109,6 +109,9 @@ fn get_scm_handle(handle: ScHandle) -> Option<&'static ScmHandle> {
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn find_service(name: PCWSTR) -> Option<usize> {
     if name.is_null() {
         return None;
@@ -142,6 +145,9 @@ unsafe fn find_service(name: PCWSTR) -> Option<usize> {
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn alloc_service() -> Option<usize> {
     for (i, service) in (*core::ptr::addr_of_mut!(SERVICE_TABLE))
         .iter_mut()
@@ -155,6 +161,9 @@ unsafe fn alloc_service() -> Option<usize> {
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn copy_to_buffer(dest: &mut [u16], src: PCWSTR) {
     if src.is_null() {
         dest[0] = 0;
@@ -171,6 +180,9 @@ unsafe fn copy_to_buffer(dest: &mut [u16], src: PCWSTR) {
     dest[i] = 0;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn OpenSCManagerW(
     _lp_machine_name: PCWSTR,
@@ -183,6 +195,9 @@ pub unsafe extern "C" fn OpenSCManagerW(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CloseServiceHandle(h_scobject: ScHandle) -> LONG {
     if free_scm_handle(h_scobject) {
@@ -192,6 +207,9 @@ pub unsafe extern "C" fn CloseServiceHandle(h_scobject: ScHandle) -> LONG {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CreateServiceW(
     h_scmanager: ScHandle,
@@ -251,6 +269,9 @@ pub unsafe extern "C" fn CreateServiceW(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn OpenServiceW(
     h_scmanager: ScHandle,
@@ -272,6 +293,9 @@ pub unsafe extern "C" fn OpenServiceW(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn StartServiceW(
     h_service: ScHandle,
@@ -300,6 +324,9 @@ pub unsafe extern "C" fn StartServiceW(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn ControlService(
     h_service: ScHandle,
@@ -354,6 +381,9 @@ pub unsafe extern "C" fn ControlService(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn QueryServiceStatus(
     h_service: ScHandle,
@@ -385,6 +415,9 @@ pub unsafe extern "C" fn QueryServiceStatus(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn DeleteService(h_service: ScHandle) -> LONG {
     let handle_entry = match get_scm_handle(h_service) {
@@ -407,6 +440,9 @@ pub unsafe extern "C" fn DeleteService(h_service: ScHandle) -> LONG {
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn ChangeServiceConfigW(
     h_service: ScHandle,
@@ -452,6 +488,9 @@ pub unsafe extern "C" fn ChangeServiceConfigW(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn EnumServicesStatusW(
     h_scmanager: ScHandle,
@@ -483,10 +522,8 @@ pub unsafe extern "C" fn EnumServicesStatusW(
                     continue;
                 }
             }
-            2 => {
-                if service.current_state == SERVICE_STOPPED {
-                    continue;
-                }
+            2 if service.current_state == SERVICE_STOPPED => {
+                continue;
             }
             _ => {}
         }
@@ -505,6 +542,9 @@ pub unsafe extern "C" fn EnumServicesStatusW(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn QueryServiceConfigW(
     h_service: ScHandle,
@@ -529,11 +569,17 @@ pub unsafe extern "C" fn QueryServiceConfigW(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn StartServiceCtrlDispatcherW(_lp_service_start_table: PVOID) -> LONG {
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegisterServiceCtrlHandlerW(
     _lp_service_name: PCWSTR,
@@ -542,6 +588,9 @@ pub unsafe extern "C" fn RegisterServiceCtrlHandlerW(
     0x3000 as ScHandle
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn SetServiceStatus(
     _h_service_status: ScHandle,

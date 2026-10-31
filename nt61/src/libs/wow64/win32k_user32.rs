@@ -194,6 +194,9 @@ pub mod messages {
     pub const WM_MOUSELEAVE: ULONG32 = 0x02A3;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_create_window_ex_w(
     ex_style: ULONG32,
     class_name: ULONG32,
@@ -223,11 +226,12 @@ pub unsafe extern "C" fn wow64_create_window_ex_w(
         param,
     ];
 
-    let result = wow64_win32k_syscall(syscall_numbers::NT_USER_CREATE_WINDOW_EX, params.as_ptr());
-
-    result
+    wow64_win32k_syscall(syscall_numbers::NT_USER_CREATE_WINDOW_EX, params.as_ptr())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_destroy_window(hwnd: HWND32) -> BOOL32 {
     let params: [ULONG32; 1] = [hwnd];
     let result = wow64_win32k_syscall(syscall_numbers::NT_USER_DESTROY_WINDOW, params.as_ptr());
@@ -235,6 +239,9 @@ pub unsafe extern "C" fn wow64_destroy_window(hwnd: HWND32) -> BOOL32 {
     result as BOOL32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_show_window(hwnd: HWND32, cmd_show: ULONG32) -> BOOL32 {
     let params: [ULONG32; 2] = [hwnd, cmd_show];
     let result = wow64_win32k_syscall(syscall_numbers::NT_USER_SHOW_WINDOW, params.as_ptr());
@@ -242,6 +249,9 @@ pub unsafe extern "C" fn wow64_show_window(hwnd: HWND32, cmd_show: ULONG32) -> B
     result as BOOL32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_get_message_w(
     msg: *mut Msg32,
     _hwnd: HWND32,
@@ -255,6 +265,9 @@ pub unsafe extern "C" fn wow64_get_message_w(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_peek_message_w(
     _msg: *mut Msg32,
     _hwnd: HWND32,
@@ -265,14 +278,23 @@ pub unsafe extern "C" fn wow64_peek_message_w(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_translate_message(_msg: *const Msg32) -> BOOL32 {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_dispatch_message_w(_msg: *const Msg32) -> LRESULT32 {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_post_message_w(
     hwnd: HWND32,
     msg: ULONG32,
@@ -285,6 +307,9 @@ pub unsafe extern "C" fn wow64_post_message_w(
     result as BOOL32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_send_message_w(
     hwnd: HWND32,
     msg: ULONG32,
@@ -297,13 +322,18 @@ pub unsafe extern "C" fn wow64_send_message_w(
     result as LRESULT32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_get_dc(hwnd: HWND32) -> HDC32 {
     let params: [ULONG32; 1] = [hwnd];
-    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_GET_DC, params.as_ptr());
 
-    result
+    wow64_win32k_syscall(syscall_numbers::NT_GDI_GET_DC, params.as_ptr())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_release_dc(hwnd: HWND32, hdc: HDC32) -> i32 {
     let params: [ULONG32; 2] = [hwnd, hdc];
     let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_RELEASE_DC, params.as_ptr());

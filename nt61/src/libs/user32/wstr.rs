@@ -38,6 +38,9 @@ macro_rules! utf16 {
     }};
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Read a NUL-terminated UTF-16 string, bounded by
 /// MAX_STRING_CHARS so a missing terminator cannot run away.
 pub unsafe fn units_of(ptr: *const u16) -> Vec<u16> {

@@ -35,6 +35,9 @@ fn encode_event_state(event_type: u32, signaled: bool, manual_reset: bool) -> u6
     et | mr | sig
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_create_event`.
 pub unsafe extern "C" fn nt_create_event(
     event_handle: *mut HANDLE,
@@ -63,6 +66,9 @@ pub unsafe extern "C" fn nt_create_event(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_set_event` / `nt_reset_event` / `nt_pulse_event`.
 ///
 /// nt_set_event sets the event to the signaled state and releases
@@ -94,6 +100,9 @@ pub unsafe extern "C" fn nt_set_event(event_handle: HANDLE, previous_state: *mut
     STATUS_INVALID_HANDLE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_reset_event sets the event to the non-signaled state.
 pub unsafe extern "C" fn nt_reset_event(
     event_handle: HANDLE,
@@ -121,6 +130,9 @@ pub unsafe extern "C" fn nt_reset_event(
     STATUS_INVALID_HANDLE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_clear_event clears the event to non-signaled state (same as reset_event).
 pub unsafe extern "C" fn nt_clear_event(event_handle: HANDLE) -> NTSTATUS {
     use super::status::STATUS_INVALID_HANDLE;
@@ -137,6 +149,9 @@ pub unsafe extern "C" fn nt_clear_event(event_handle: HANDLE) -> NTSTATUS {
     STATUS_INVALID_HANDLE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_pulse_event sets the event to signaled state, releases waiting threads,
 /// then resets to non-signaled. For auto-reset events, only one thread is released.
 pub unsafe extern "C" fn nt_pulse_event(
@@ -166,6 +181,9 @@ pub unsafe extern "C" fn nt_pulse_event(
     STATUS_INVALID_HANDLE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_create_mutant` (mutex).
 /// A mutex can be created with or without initial ownership.
 pub unsafe extern "C" fn nt_create_mutant(
@@ -203,6 +221,9 @@ pub unsafe extern "C" fn nt_create_mutant(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_release_mutant`.
 /// Releases ownership of the mutex. If the thread doesn't own the mutex,
 /// returns an error.
@@ -224,7 +245,7 @@ pub unsafe extern "C" fn nt_release_mutant(
                 return STATUS_INVALID_HANDLE;
             }
             let current_tid = unsafe { (*current_ethread).client_id.unique_thread };
-            let owned_tid = (entry.target >> 8) as u64;
+            let owned_tid = entry.target >> 8;
             let is_owned = (entry.target & 0x01) != 0;
 
             if is_owned && owned_tid == current_tid {
@@ -247,6 +268,9 @@ pub unsafe extern "C" fn nt_release_mutant(
     STATUS_INVALID_HANDLE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_create_semaphore`.
 pub unsafe extern "C" fn nt_create_semaphore(
     semaphore_handle: *mut HANDLE,
@@ -270,6 +294,9 @@ pub unsafe extern "C" fn nt_create_semaphore(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_release_semaphore`.
 pub unsafe extern "C" fn nt_release_semaphore(
     semaphore_handle: HANDLE,
@@ -285,6 +312,9 @@ pub unsafe extern "C" fn nt_release_semaphore(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_create_timer`.
 pub unsafe extern "C" fn nt_create_timer(
     timer_handle: *mut HANDLE,
@@ -304,6 +334,9 @@ pub unsafe extern "C" fn nt_create_timer(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_set_timer` - Sets a timer to expire at a specified time.
 ///
 /// Timer types:
@@ -343,6 +376,9 @@ pub unsafe extern "C" fn nt_set_timer(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_cancel_timer` - Cancels a timer.
 ///
 /// # Arguments
@@ -364,6 +400,9 @@ pub unsafe extern "C" fn nt_cancel_timer(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_wait_for_single_object` — waits for an object to become signaled.
 /// Returns `STATUS_SUCCESS` (0), `STATUS_TIMEOUT`, or `STATUS_INVALID_HANDLE`.
 ///
@@ -430,6 +469,9 @@ pub fn nt_wait_for_single_object_kernel(
     STATUS_INVALID_HANDLE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_wait_for_multiple_objects`.
 pub unsafe extern "C" fn nt_wait_for_multiple_objects(
     count: u32,
@@ -559,6 +601,9 @@ pub fn nt_delay_execution_kernel(alertable: u8, interval: i64) -> NTSTATUS {
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `NT_CLOSE` re-export for kernel32.
 pub unsafe extern "C" fn nt_close_sync(h: HANDLE) -> NTSTATUS {
     if free_handle(h) {

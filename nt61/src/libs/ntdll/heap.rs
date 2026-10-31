@@ -8,15 +8,15 @@
 //!   * `rtl_size_heap`
 //!   * `rtl_get_process_heaps`
 //
-//! The default process heap is created by `rtl_create_heap` and
-//! torn down by `rtl_destroy_heap`. Each allocation has a small
-//! 16-byte header (size + canary + free-list link) so we can
-//! detect overflows in the smoke test and merge adjacent free
-//! blocks on release.
+//!     The default process heap is created by `rtl_create_heap` and
+//!     torn down by `rtl_destroy_heap`. Each allocation has a small
+//!     16-byte header (size + canary + free-list link) so we can
+//!     detect overflows in the smoke test and merge adjacent free
+//!     blocks on release.
 //
-//! The actual memory backing the heap is the kernel pool
-//! (`mm::pool::NonPaged`) — the user-mode side of this kernel
-//! never executes, so the heap is shared with the kernel itself.
+//!     The actual memory backing the heap is the kernel pool
+//!     (`mm::pool::NonPaged`) — the user-mode side of this kernel
+//!     never executes, so the heap is shared with the kernel itself.
 
 use super::types::{HANDLE, PVOID};
 use crate::ke::sync::Spinlock;
@@ -54,6 +54,9 @@ impl BlockHeader {
     fn user_ptr(&self) -> *mut u8 {
         unsafe { (self as *const _ as *const u8).add(HEADER_SIZE) as *mut u8 }
     }
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn from_user(p: *mut u8) -> *mut BlockHeader {
         p.sub(HEADER_SIZE) as *mut BlockHeader
     }
@@ -88,6 +91,9 @@ struct HeapState {
 }
 
 impl HeapState {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn owns_block(&self, hdr: *mut BlockHeader) -> bool {
         if self.lowest_block.is_null() {
             return false;
@@ -95,6 +101,9 @@ impl HeapState {
         hdr >= self.lowest_block && hdr < self.highest_block_end
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn record_block(&mut self, hdr: *mut BlockHeader, size: usize) {
         if self.lowest_block.is_null() || hdr < self.lowest_block {
             self.lowest_block = hdr;
@@ -117,6 +126,9 @@ pub const POOL_TAG_HEAP: u32 =
 static mut PROCESS_HEAP: *mut Heap = ptr::null_mut();
 static PROCESS_HEAP_INIT: AtomicU32 = AtomicU32::new(0);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_create_heap` — allocate and initialise a new heap. In
 /// practice the kernel returns a pointer to its internal pool.
 pub unsafe extern "C" fn rtl_create_heap(
@@ -147,6 +159,9 @@ pub unsafe extern "C" fn rtl_create_heap(
     h as HANDLE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_destroy_heap` — release a heap previously returned by
 /// `rtl_create_heap`.
 pub unsafe extern "C" fn rtl_destroy_heap(heap_handle: HANDLE) -> HANDLE {
@@ -168,12 +183,18 @@ pub unsafe extern "C" fn rtl_destroy_heap(heap_handle: HANDLE) -> HANDLE {
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_get_process_heap` — return the default process heap.
 pub unsafe extern "C" fn rtl_get_process_heap() -> HANDLE {
     ensure_process_heap();
     PROCESS_HEAP as HANDLE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_get_process_heaps` — fill the caller-supplied array with
 /// heap handles and return the number written. We only have one
 /// heap (the default process heap), so this is always 1.
@@ -191,6 +212,9 @@ pub unsafe extern "C" fn rtl_get_process_heaps(count: u32, process_heaps: *mut H
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn ensure_process_heap() {
     if PROCESS_HEAP_INIT.load(Ordering::Acquire) != 0 {
         return;
@@ -200,6 +224,9 @@ unsafe fn ensure_process_heap() {
     PROCESS_HEAP_INIT.store(1, Ordering::Release);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_allocate_heap` — allocate `size` bytes from `heap`. If
 /// `heap` is NULL the default process heap is used.
 pub unsafe extern "C" fn rtl_allocate_heap(heap_handle: HANDLE, flags: u32, size: usize) -> PVOID {
@@ -272,6 +299,9 @@ pub unsafe extern "C" fn rtl_allocate_heap(heap_handle: HANDLE, flags: u32, size
     p as PVOID
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_free_heap` — release a block back to `heap`. Returns
 /// TRUE on success, FALSE if the block is invalid.
 pub unsafe extern "C" fn rtl_free_heap(
@@ -311,6 +341,9 @@ pub unsafe extern "C" fn rtl_free_heap(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_re_allocate_heap` — resize an existing allocation. The
 /// original block's contents are preserved up to `min(old, new)`.
 pub unsafe extern "C" fn rtl_re_allocate_heap(
@@ -357,6 +390,9 @@ pub unsafe extern "C" fn rtl_re_allocate_heap(
     new_p
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_size_heap` — return the allocated size of `memory`.
 pub unsafe extern "C" fn rtl_size_heap(heap_handle: HANDLE, _flags: u32, memory: PVOID) -> usize {
     if memory.is_null() {
@@ -386,6 +422,9 @@ pub struct HeapStats {
     pub double_free_rejected: u64,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn heap_stats(heap_handle: HANDLE) -> Option<HeapStats> {
     let heap = resolve_heap(heap_handle);
     if heap.is_null() {
@@ -405,6 +444,9 @@ pub unsafe fn heap_stats(heap_handle: HANDLE) -> Option<HeapStats> {
 // Internals
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn resolve_heap(heap_handle: HANDLE) -> *mut Heap {
     if heap_handle.is_null() {
         ensure_process_heap();

@@ -99,7 +99,7 @@ pub enum CoordinateSpace {
 /// - MM_HIMETRIC: 1 logical unit = 0.01 mm
 /// - MM_LOENGLISH: 1 logical unit = 0.01 inch
 /// - MM_HIENGLISH: 1 logical unit = 0.001 inch
-/// Formula: Device = (Logical - WindowOrg) * (ViewportExt / WindowExt) + ViewportOrg
+///   Formula: Device = (Logical - WindowOrg) * (ViewportExt / WindowExt) + ViewportOrg
 pub fn lp_to_dp(hdc: u64, points: &mut [POINT]) -> bool {
     let table = crate::libs::win32k::dc::get_dc_table();
     let _ = &table;
@@ -523,9 +523,9 @@ pub fn fill_rect(hdc: u64, rect: &Rect, hbr: u64) -> i32 {
     }
 
     // Fill the rectangle
-    if let Some(mut dc) = crate::libs::win32k::dc::get_dc(hdc) {
+    if let Some(dc) = crate::libs::win32k::dc::get_dc(hdc) {
         let _ = crate::libs::win32k::gdi_ops::gre_rectangle(
-            &mut dc,
+            dc,
             rect.left,
             rect.top,
             rect.right,

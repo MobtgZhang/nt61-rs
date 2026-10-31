@@ -86,6 +86,9 @@ fn get_nt_handle(key: HKEY) -> Option<HANDLE> {
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn wide_str_to_unicode_string(s: PCWSTR) -> Option<UnicodeString> {
     if s.is_null() {
         return None;
@@ -105,6 +108,9 @@ unsafe fn wide_str_to_unicode_string(s: PCWSTR) -> Option<UnicodeString> {
     })
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn copy_wide_string(dest: PWSTR, src: PCWSTR, max_chars: usize) -> usize {
     let mut count = 0;
     let mut s = src;
@@ -121,6 +127,9 @@ pub unsafe fn copy_wide_string(dest: PWSTR, src: PCWSTR, max_chars: usize) -> us
     count
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegCreateKeyExW(
     h_key: HKEY,
@@ -191,6 +200,9 @@ pub unsafe extern "C" fn RegCreateKeyExW(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegOpenKeyExW(
     h_key: HKEY,
@@ -242,6 +254,9 @@ pub unsafe extern "C" fn RegOpenKeyExW(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegCloseKey(h_key: HKEY) -> LONG {
     if is_predefined_key(h_key) {
@@ -262,6 +277,9 @@ pub unsafe extern "C" fn RegCloseKey(h_key: HKEY) -> LONG {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegQueryValueExW(
     h_key: HKEY,
@@ -308,6 +326,9 @@ pub unsafe extern "C" fn RegQueryValueExW(
     ERROR_SUCCESS as LONG
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegSetValueExW(
     h_key: HKEY,
@@ -343,6 +364,9 @@ pub unsafe extern "C" fn RegSetValueExW(
     ERROR_SUCCESS as LONG
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegDeleteKeyW(h_key: HKEY, lp_sub_key: PCWSTR) -> LONG {
     let mut subkey_handle: HKEY = null_mut();
@@ -370,6 +394,9 @@ pub unsafe extern "C" fn RegDeleteKeyW(h_key: HKEY, lp_sub_key: PCWSTR) -> LONG 
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegDeleteValueW(h_key: HKEY, lp_value_name: PCWSTR) -> LONG {
     let nt_handle = match get_nt_handle(h_key) {
@@ -391,6 +418,9 @@ pub unsafe extern "C" fn RegDeleteValueW(h_key: HKEY, lp_value_name: PCWSTR) -> 
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegEnumKeyExW(
     h_key: HKEY,
@@ -434,6 +464,9 @@ pub unsafe extern "C" fn RegEnumKeyExW(
     ERROR_SUCCESS as LONG
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegEnumValueW(
     h_key: HKEY,
@@ -477,6 +510,9 @@ pub unsafe extern "C" fn RegEnumValueW(
     ERROR_SUCCESS as LONG
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegFlushKey(h_key: HKEY) -> LONG {
     let nt_handle = match get_nt_handle(h_key) {
@@ -493,6 +529,9 @@ pub unsafe extern "C" fn RegFlushKey(h_key: HKEY) -> LONG {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RegNotifyChangeKeyValue(
     h_key: HKEY,

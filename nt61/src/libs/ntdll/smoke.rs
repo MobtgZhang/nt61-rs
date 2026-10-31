@@ -9,8 +9,8 @@
 //!   3. The data structures stay consistent (handle table
 //!      bookkeeping, heap alloc/free, LDR list, etc.).
 //
-//! Each test returns true on success; the aggregator returns
-//! the conjunction of all of them.
+//!      Each test returns true on success; the aggregator returns
+//!      the conjunction of all of them.
 
 // The smoke test imports the *union* of every submodule so a
 // newly-added public function only needs to be wired into the
@@ -179,13 +179,13 @@ pub fn test_nt_create_file_and_close() -> bool {
 
 pub fn test_nt_create_file_invalid_name() -> bool {
     unsafe {
-        let mut oa = ObjectAttributes::new();
+        let oa = ObjectAttributes::new();
         let mut handle: HANDLE = ptr::null_mut();
         let mut iosb: IoStatusBlock = IoStatusBlock::new();
         let r = file::nt_create_file_kernel(
             &mut handle,
             0,
-            &mut oa,
+            &oa,
             &mut iosb,
             ptr::null_mut(),
             0,
@@ -604,13 +604,13 @@ pub fn test_nt_query_information_file() -> bool {
             maximum_length: 12,
             buffer: name_buf.as_ptr() as *mut u16,
         };
-        let mut oa = ObjectAttributes::with_name(&mut name);
+        let oa = ObjectAttributes::with_name(&mut name);
         let mut handle: HANDLE = ptr::null_mut();
         let mut iosb: IoStatusBlock = IoStatusBlock::new();
         if file::nt_create_file_kernel(
             &mut handle,
             0,
-            &mut oa,
+            &oa,
             &mut iosb,
             ptr::null_mut(),
             0,

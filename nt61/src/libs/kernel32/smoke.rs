@@ -332,7 +332,7 @@ pub fn test_create_process() -> bool {
 // ---------------------------------------------------------------------------
 
 pub fn test_get_current_process() -> bool {
-    if process::get_current_process() == ptr::null_mut() {
+    if process::get_current_process().is_null() {
         return report("GetCurrentProcess", false);
     }
     if process::get_current_process_id() == 0 {

@@ -90,6 +90,9 @@ fn next_string_atom(table: &[RegisteredClass], hash: u32) -> ATOM {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// RegisterClassExW — deep-copy the class into the table and
 /// return its string atom. Fails with 0 when cbSize is too
 /// small, the name is missing/oversized, or the class already
@@ -138,6 +141,9 @@ pub unsafe extern "C" fn register_class_ex_w(class: *const WndClassExW) -> ATOM 
     atom
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// UnregisterClassW — remove the class by name. Fails when the
 /// class is unknown, owned by a different instance, or still
 /// has open windows (ERROR_CLASS_HAS_WINDOWS).
@@ -163,6 +169,9 @@ pub unsafe extern "C" fn unregister_class_w(class_name: LPCWSTR, instance: HINST
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// GetClassInfoW — copy the stored class back into the caller
 /// WNDCLASSEXW. Only classes owned by the calling instance (or
 /// global classes) are visible, matching the documented

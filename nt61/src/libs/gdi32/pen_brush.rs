@@ -169,6 +169,9 @@ const LOGPEN_WIDTH_X: usize = 4;
 const LOGPEN_WIDTH_Y: usize = 8;
 const LOGPEN_COLOR: usize = 12;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `create_pen_indirect` — create a pen from a
 /// `LOGPEN` struct.
 pub unsafe extern "C" fn create_pen_indirect(log_pen: *const ()) -> HPEN {
@@ -193,6 +196,9 @@ const LOGBRUSH_STYLE: usize = 0;
 const LOGBRUSH_COLOR: usize = 4;
 const LOGBRUSH_HATCH: usize = 8;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `create_brush_indirect` — create a brush from a
 /// `LOGBRUSH` struct. `lbStyle == BS_NULL` (1) yields
 /// a null brush (transparent fill).
@@ -222,6 +228,9 @@ pub unsafe extern "C" fn create_brush_indirect(log_brush: *const ()) -> HBRUSH {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `create_font_w` — create a logical font matching the
 /// given `LOGFONTW` arguments. The 14 scalar parameters
 /// mirror the Windows SDK layout.
@@ -316,6 +325,9 @@ pub extern "C" fn select_object(dc: HDC, obj: *mut core::ffi::c_void) -> *mut co
     obj
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `delete_object` — free a GDI object. Returns 1 if
 /// the handle was known. Stock handles are not
 /// deletable (returns 0) because they live for the

@@ -10,10 +10,10 @@
 //! * `ob_lookup_handle` — resolve a handle to an object header pointer.
 //! * `ob_reference_by_handle` — resolve a handle and increment refcount.
 //
-//! The ntdll flat handle table (in `file.rs`) stores the mapping from
-//! user-mode handles (1-based indices) to kernel object pointers.
-//! When `OB_INTEGRATION` is enabled, each allocation also registers
-//! the object in ob's global kernel handle table.
+//!   The ntdll flat handle table (in `file.rs`) stores the mapping from
+//!   user-mode handles (1-based indices) to kernel object pointers.
+//!   When `OB_INTEGRATION` is enabled, each allocation also registers
+//!   the object in ob's global kernel handle table.
 
 use super::super::super::ob;
 use super::super::super::ps::process::Eprocess;
@@ -127,20 +127,25 @@ pub fn ob_lookup_handle_in_process(handle: u64, process: *mut Eprocess) -> *mut 
     ob::reference_object_by_handle_in_process(handle, process)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Look up a handle and run `SeAccessCheck` for `desired_access`.
 ///
 /// This is the handle-path entry point that enforces the object's
 /// security descriptor; `ob_lookup_handle*` above stay as pure lookups
 /// for kernel-mode callers, which do not need an access check.
-pub fn ob_lookup_handle_with_access(
+pub unsafe fn ob_lookup_handle_with_access(
     handle: u64,
     desired_access: u32,
     process: *mut Eprocess,
 ) -> *mut ob::ObjectHeader {
-    if handle == 0 {
-        return core::ptr::null_mut();
+    unsafe {
+        if handle == 0 {
+            return core::ptr::null_mut();
+        }
+        ob::reference_object_by_handle_with_access(handle, desired_access, process)
     }
-    ob::reference_object_by_handle_with_access(handle, desired_access, process)
 }
 
 /// Reference an object by handle and return the body pointer.
@@ -181,6 +186,9 @@ pub fn init() {}
 use super::status::STATUS_SUCCESS;
 use super::types::{HANDLE, NTSTATUS};
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_create_directory_object - Creates a directory object
 pub unsafe extern "C" fn nt_create_directory_object(
     directory_handle: *mut HANDLE,
@@ -197,6 +205,9 @@ pub unsafe extern "C" fn nt_create_directory_object(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_open_directory_object - Opens a directory object
 pub unsafe extern "C" fn nt_open_directory_object(
     directory_handle: *mut HANDLE,
@@ -212,6 +223,9 @@ pub unsafe extern "C" fn nt_open_directory_object(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_query_directory_object - Query information about a directory object
 pub unsafe extern "C" fn nt_query_directory_object(
     directory_handle: HANDLE,
@@ -238,6 +252,9 @@ pub unsafe extern "C" fn nt_query_directory_object(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_open_process_token - Opens the token of a process
 pub unsafe extern "C" fn nt_open_process_token(
     _process_handle: HANDLE,

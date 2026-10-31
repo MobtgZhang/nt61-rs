@@ -35,7 +35,7 @@ pub fn wsaclose_event(h_event: WSAEVENT) -> bool {
     }
 
     let mut table = EVENT_TABLE.lock();
-    let idx = (h_event - 1) as usize;
+    let idx = h_event - 1;
 
     if idx < table.len() && table[idx] {
         table[idx] = false;
@@ -98,7 +98,10 @@ pub fn wsaevent_select(s: usize, _h_event_object: WSAEVENT, _l_network_events: i
     0
 }
 
-pub fn wsaenum_network_events(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn wsaenum_network_events(
     s: usize,
     _h_event_object: WSAEVENT,
     lp_network_events: *mut WSANETWORKEVENTS,
@@ -124,7 +127,10 @@ pub fn wsaenum_network_events(
     0
 }
 
-pub fn wsasend(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn wsasend(
     s: usize,
     lp_buffers: *const WSABUF,
     dw_buffer_count: u32,
@@ -161,7 +167,10 @@ pub fn wsasend(
     0
 }
 
-pub fn wsarecv(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn wsarecv(
     s: usize,
     lp_buffers: *mut WSABUF,
     dw_buffer_count: u32,
@@ -198,7 +207,10 @@ pub fn wsarecv(
     0
 }
 
-pub fn wsasend_to(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn wsasend_to(
     s: usize,
     lp_buffers: *const WSABUF,
     dw_buffer_count: u32,
@@ -209,19 +221,24 @@ pub fn wsasend_to(
     lp_overlapped: *mut WSAOVERLAPPED,
     lp_completion_routine: LpwsaoverlappedCompletionRoutine,
 ) -> i32 {
-    // Simplified: use wsasend
-    wsasend(
-        s,
-        lp_buffers,
-        dw_buffer_count,
-        lp_number_of_bytes_sent,
-        dw_flags,
-        lp_overlapped,
-        lp_completion_routine,
-    )
+    unsafe {
+        // Simplified: use wsasend
+        wsasend(
+            s,
+            lp_buffers,
+            dw_buffer_count,
+            lp_number_of_bytes_sent,
+            dw_flags,
+            lp_overlapped,
+            lp_completion_routine,
+        )
+    }
 }
 
-pub fn wsarecv_from(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn wsarecv_from(
     s: usize,
     lp_buffers: *mut WSABUF,
     dw_buffer_count: u32,
@@ -232,16 +249,18 @@ pub fn wsarecv_from(
     lp_overlapped: *mut WSAOVERLAPPED,
     lp_completion_routine: LpwsaoverlappedCompletionRoutine,
 ) -> i32 {
-    // Simplified: use wsarecv
-    wsarecv(
-        s,
-        lp_buffers,
-        dw_buffer_count,
-        lp_number_of_bytes_recvd,
-        lp_flags,
-        lp_overlapped,
-        lp_completion_routine,
-    )
+    unsafe {
+        // Simplified: use wsarecv
+        wsarecv(
+            s,
+            lp_buffers,
+            dw_buffer_count,
+            lp_number_of_bytes_recvd,
+            lp_flags,
+            lp_overlapped,
+            lp_completion_routine,
+        )
+    }
 }
 
 pub fn wsaconnect(
@@ -256,17 +275,23 @@ pub fn wsaconnect(
     connect(s, name, namelen)
 }
 
-pub fn wsaaccept(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn wsaaccept(
     s: usize,
     addr: *mut sockaddr,
     addrlen: *mut i32,
     _lpfn_condition: *const u8, // callback
     _dw_callback_data: usize,
 ) -> usize {
-    accept(s, addr, addrlen)
+    unsafe { accept(s, addr, addrlen) }
 }
 
-pub fn wsapoll(fd_array: *mut WSAPOLLFD, fds: u32, _timeout: i32) -> i32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn wsapoll(fd_array: *mut WSAPOLLFD, fds: u32, _timeout: i32) -> i32 {
     if fd_array.is_null() || fds == 0 {
         set_last_error(WSAEINVAL);
         return SOCKET_ERROR;
@@ -311,7 +336,10 @@ pub fn wsaduplicate_socket_a(
     SOCKET_ERROR
 }
 
-pub fn wsaioctl(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn wsaioctl(
     s: usize,
     dw_io_control_code: u32,
     _lpv_in_buffer: *const u8,
@@ -352,7 +380,10 @@ pub fn wsaioctl(
     }
 }
 
-pub fn wsaget_overlapped_result(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn wsaget_overlapped_result(
     _s: usize,
     lp_overlapped: *const WSAOVERLAPPED,
     lpcb_transfer: *mut u32,

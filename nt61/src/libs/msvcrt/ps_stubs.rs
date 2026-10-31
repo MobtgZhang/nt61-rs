@@ -1,6 +1,7 @@
 //! Process Management Stubs for MSVCRT
 //!
 //! Stub implementations for process-related operations
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use crate::libs::msvcrt::types::*;
 use alloc::string::String;
@@ -27,8 +28,8 @@ pub fn set_environment_variable(_name: *const CChar, _value: *const CChar) -> bo
     false // Not implemented
 }
 
-pub fn execute_command(_command: *const CChar) -> Result<CInt, ()> {
-    Err(()) // Not implemented
+pub fn execute_command(_command: *const CChar) -> Result<CInt, NTSTATUS> {
+    Err(STATUS_UNSUCCESSFUL) // Not implemented
 }
 
 pub fn get_program_name() -> String {
@@ -43,8 +44,8 @@ pub fn get_current_directory() -> Option<String> {
     Some(String::from("/"))
 }
 
-pub fn change_directory(_path: *const CChar) -> Result<(), ()> {
-    Err(()) // Not implemented
+pub fn change_directory(_path: *const CChar) -> Result<(), NTSTATUS> {
+    Err(STATUS_UNSUCCESSFUL) // Not implemented
 }
 
 pub fn get_command_line() -> String {

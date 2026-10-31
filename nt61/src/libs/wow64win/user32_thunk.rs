@@ -231,6 +231,9 @@ pub mod messages {
 // create_window_ex_w
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// create a window with extended styles (Unicode version).
 ///
 /// # Arguments
@@ -288,6 +291,9 @@ pub unsafe extern "C" fn wow64_create_window_ex_w(
 // destroy_window
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Destroy a window.
 ///
 /// # Returns
@@ -305,6 +311,9 @@ pub unsafe extern "C" fn wow64_destroy_window(hwnd: HWND32) -> BOOL32 {
 // show_window
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Set the specified window's show state.
 ///
 /// # Returns
@@ -320,6 +329,9 @@ pub unsafe extern "C" fn wow64_show_window(hwnd: HWND32, cmd_show: ULONG32) -> B
 // get_message_w
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Retrieves a message from the message queue.
 ///
 /// # Returns
@@ -347,6 +359,9 @@ pub unsafe extern "C" fn wow64_get_message_w(
 // peek_message_w
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Checks the message queue for messages.
 ///
 /// # Returns
@@ -365,6 +380,9 @@ pub unsafe extern "C" fn wow64_peek_message_w(
 // translate_message
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Translates virtual-key messages into character messages.
 ///
 /// # Returns
@@ -380,6 +398,9 @@ pub unsafe extern "C" fn wow64_translate_message(_msg: *const Msg32) -> BOOL32 {
 // dispatch_message_w
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Dispatches a message to the window procedure.
 ///
 /// # Returns
@@ -395,6 +416,9 @@ pub unsafe extern "C" fn wow64_dispatch_message_w(_msg: *const Msg32) -> LRESULT
 // post_message_w
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Places a message in the message queue and returns without waiting.
 ///
 /// # Returns
@@ -415,6 +439,9 @@ pub unsafe extern "C" fn wow64_post_message_w(
 // send_message_w
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Sends a message to the window procedure and waits for a result.
 ///
 /// # Returns
@@ -435,6 +462,9 @@ pub unsafe extern "C" fn wow64_send_message_w(
 // get_dc / release_dc
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Retrieves the device context for the entire window.
 ///
 /// # Returns
@@ -443,11 +473,13 @@ pub unsafe extern "C" fn wow64_get_dc(hwnd: HWND32) -> HDC32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [hwnd];
-    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_GET_DC, params.as_ptr());
 
-    result
+    wow64_win32k_syscall(syscall_numbers::NT_GDI_GET_DC, params.as_ptr())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Releases a device context.
 ///
 /// # Returns

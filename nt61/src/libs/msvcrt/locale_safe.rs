@@ -87,6 +87,9 @@ static LOCALE_DATA: Lazy<Mutex<LocaleData>> = Lazy::new(|| {
 
 pub static LOCALE_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn init_c_locale_internal(data: &mut LocaleData) {
     let c_locale = b"C\0";
     for i in 0..c_locale.len() {
@@ -112,6 +115,9 @@ pub const LC_MONETARY: CInt = 3;
 pub const LC_NUMERIC: CInt = 4;
 pub const LC_TIME: CInt = 5;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn setlocale(_category: CInt, locale: *const CChar) -> *mut CChar {
     if locale.is_null() {
@@ -129,12 +135,18 @@ pub unsafe extern "C" fn setlocale(_category: CInt, locale: *const CChar) -> *mu
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn localeconv() -> *mut lconv {
     let data = LOCALE_DATA.lock();
     &data.locale_conv as *const lconv as *mut lconv
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _wsetlocale(_category: CInt, locale: *const WcharT) -> *mut WcharT {
     static mut WIDE_LOCALE: Mutex<[WcharT; 32]> = Mutex::new([0; 32]);

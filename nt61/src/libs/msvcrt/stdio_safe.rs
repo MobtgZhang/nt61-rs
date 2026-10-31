@@ -44,17 +44,26 @@ pub static STDERR: Lazy<Mutex<FILE>> = Lazy::new(|| {
     Mutex::new(file)
 });
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn __get_stdin() -> *mut FILE {
     // For now, return null and let callers use file descriptors 0/1/2
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn __get_stdout() -> *mut FILE {
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn __get_stderr() -> *mut FILE {
     ptr::null_mut()

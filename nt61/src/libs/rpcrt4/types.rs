@@ -199,6 +199,12 @@ impl RpcBindingInternal {
     }
 }
 
+impl Default for RpcBindingInternal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct RpcServerInterface {
@@ -229,6 +235,12 @@ impl RpcServerInterface {
             if_callback: null_mut(),
             registered: false,
         }
+    }
+}
+
+impl Default for RpcServerInterface {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

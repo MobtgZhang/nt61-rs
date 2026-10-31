@@ -76,6 +76,9 @@ const INVALID_SET_FILE_POINTER: u32 = 0xFFFF_FFFF;
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn wide_to_string(p: *const u16) -> Option<String> {
     if p.is_null() {
         return None;
@@ -132,6 +135,9 @@ fn map_desired_access(a: u32) -> u32 {
 // create_file_w
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `create_file_w`.
 pub unsafe extern "C" fn create_file_w(
     file_name: LPCWSTR,
@@ -204,6 +210,9 @@ pub unsafe extern "C" fn create_file_w(
 // read_file / write_file
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `read_file`.
 pub unsafe extern "C" fn read_file(
     file: HANDLE,
@@ -220,19 +229,22 @@ pub unsafe extern "C" fn read_file(
         core::slice::from_raw_parts_mut(buffer, bytes_to_read as usize),
         None,
     );
-    if status != STATUS_SUCCESS && status != crate::libs::ntdll::status::STATUS_END_OF_FILE as i32 {
+    if status != STATUS_SUCCESS && status != crate::libs::ntdll::status::STATUS_END_OF_FILE {
         set_last_error(map_nt_status(status));
         return FALSE;
     }
     if !bytes_read.is_null() {
         *bytes_read = iosb.information as u32;
     }
-    if status == crate::libs::ntdll::status::STATUS_END_OF_FILE as i32 {
+    if status == crate::libs::ntdll::status::STATUS_END_OF_FILE {
         set_last_error(38); // ERROR_HANDLE_EOF
     }
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `write_file`.
 pub unsafe extern "C" fn write_file(
     file: HANDLE,
@@ -263,6 +275,9 @@ pub unsafe extern "C" fn write_file(
 // get_file_size / get_file_size_ex
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_file_size`.
 pub unsafe extern "C" fn get_file_size(file: HANDLE, file_size_high: *mut DWORD) -> DWORD {
     let mut iosb: IoStatusBlock = IoStatusBlock::new();
@@ -288,6 +303,9 @@ pub unsafe extern "C" fn get_file_size(file: HANDLE, file_size_high: *mut DWORD)
     size as u32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_file_size_ex`.
 pub unsafe extern "C" fn get_file_size_ex(file: HANDLE, file_size: *mut i64) -> BOOL {
     let mut iosb: IoStatusBlock = IoStatusBlock::new();
@@ -316,6 +334,9 @@ pub unsafe extern "C" fn get_file_size_ex(file: HANDLE, file_size: *mut i64) -> 
 // delete_file_w / move_file_ex_w
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `delete_file_w`.
 pub unsafe extern "C" fn delete_file_w(file_name: LPCWSTR) -> BOOL {
     if file_name.is_null() {
@@ -355,6 +376,9 @@ pub unsafe extern "C" fn delete_file_w(file_name: LPCWSTR) -> BOOL {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `move_file_ex_w`.
 pub unsafe extern "C" fn move_file_ex_w(_existing: LPCWSTR, _new: LPCWSTR, _flags: DWORD) -> BOOL {
     set_last_error(50); // ERROR_NOT_IMPLEMENTED
@@ -365,6 +389,9 @@ pub unsafe extern "C" fn move_file_ex_w(_existing: LPCWSTR, _new: LPCWSTR, _flag
 // flush_file_buffers / set_file_pointer / set_end_of_file / close_handle
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `flush_file_buffers`.
 pub unsafe extern "C" fn flush_file_buffers(file: HANDLE) -> BOOL {
     let mut iosb: IoStatusBlock = IoStatusBlock::new();
@@ -377,6 +404,9 @@ pub unsafe extern "C" fn flush_file_buffers(file: HANDLE) -> BOOL {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `set_file_pointer`.
 pub unsafe extern "C" fn set_file_pointer(
     file: HANDLE,
@@ -388,6 +418,9 @@ pub unsafe extern "C" fn set_file_pointer(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `set_end_of_file`.
 pub unsafe extern "C" fn set_end_of_file(_file: HANDLE) -> BOOL {
     TRUE

@@ -59,6 +59,9 @@ pub extern "C" fn create_compatible_dc(_src: HDC) -> HDC {
     }) as HDC
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `delete_dc` — free a DC. Returns 1 if the handle
 /// was known.
 pub unsafe extern "C" fn delete_dc(dc: HDC) -> BOOL {

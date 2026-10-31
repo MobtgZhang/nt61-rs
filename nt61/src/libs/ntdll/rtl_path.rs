@@ -12,6 +12,9 @@ use super::types::{UnicodeString, PVOID};
 
 extern crate alloc;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_get_full_path_name_u` — given a relative path, return the
 /// full path. We prepend `C:\` if the input does not have a
 /// drive letter.
@@ -60,6 +63,9 @@ pub unsafe extern "C" fn rtl_get_full_path_name_u(
     total as u32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_dos_path_name_to_nt_path_name_u` — convert a DOS path to the
 /// NT `\` form. The standard transform is to prepend
 /// `\??\C:\` to a drive-letter path.
@@ -119,6 +125,9 @@ pub unsafe extern "C" fn rtl_dos_path_name_to_nt_path_name_u(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_nt_path_name_to_dos_path_name` — inverse of the above. The
 /// SDK function modifies the input buffer in place and
 /// returns a `BOOLEAN`.
@@ -129,6 +138,9 @@ pub unsafe extern "C" fn rtl_nt_path_name_to_dos_path_name(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_prefix_string` — string-prefix test.
 pub unsafe extern "C" fn rtl_prefix_string(
     string1: *const UnicodeString,
@@ -159,6 +171,9 @@ pub unsafe extern "C" fn rtl_prefix_string(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_create_unicode_string` — initialise a `UnicodeString`
 /// pointing at a fresh heap-allocated copy of `source`.
 pub unsafe extern "C" fn rtl_create_unicode_string(

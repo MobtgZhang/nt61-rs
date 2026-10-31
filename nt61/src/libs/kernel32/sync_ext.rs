@@ -10,6 +10,9 @@ use crate::libs::ntdll::timer as ntdll_timer;
 use core::ptr;
 use core::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn create_waitable_timer_w(
     _security_attributes: *const u8,
     manual_reset: BOOL,
@@ -26,6 +29,9 @@ pub unsafe extern "C" fn create_waitable_timer_w(
     h
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn set_waitable_timer(
     timer: HANDLE,
     due_time: *const i64,
@@ -58,6 +64,9 @@ pub unsafe extern "C" fn set_waitable_timer(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn cancel_waitable_timer(timer: HANDLE) -> BOOL {
     if timer.is_null() {
         set_last_error(6);
@@ -73,6 +82,9 @@ pub unsafe extern "C" fn cancel_waitable_timer(timer: HANDLE) -> BOOL {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_increment(addend: *mut i32) -> i32 {
     if addend.is_null() {
         return 0;
@@ -81,6 +93,9 @@ pub unsafe extern "C" fn interlocked_increment(addend: *mut i32) -> i32 {
     atomic.fetch_add(1, Ordering::SeqCst) + 1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_decrement(addend: *mut i32) -> i32 {
     if addend.is_null() {
         return 0;
@@ -89,6 +104,9 @@ pub unsafe extern "C" fn interlocked_decrement(addend: *mut i32) -> i32 {
     atomic.fetch_sub(1, Ordering::SeqCst) - 1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_exchange(target: *mut i32, value: i32) -> i32 {
     if target.is_null() {
         return 0;
@@ -97,6 +115,9 @@ pub unsafe extern "C" fn interlocked_exchange(target: *mut i32, value: i32) -> i
     atomic.swap(value, Ordering::SeqCst)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_exchange_add(addend: *mut i32, value: i32) -> i32 {
     if addend.is_null() {
         return 0;
@@ -105,6 +126,9 @@ pub unsafe extern "C" fn interlocked_exchange_add(addend: *mut i32, value: i32) 
     atomic.fetch_add(value, Ordering::SeqCst)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_compare_exchange(
     destination: *mut i32,
     exchange: i32,
@@ -120,6 +144,9 @@ pub unsafe extern "C" fn interlocked_compare_exchange(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_exchange_pointer(
     target: *mut *mut core::ffi::c_void,
     value: *mut core::ffi::c_void,
@@ -131,6 +158,9 @@ pub unsafe extern "C" fn interlocked_exchange_pointer(
     atomic.swap(value, Ordering::SeqCst)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_compare_exchange_pointer(
     destination: *mut *mut core::ffi::c_void,
     exchange: *mut core::ffi::c_void,
@@ -146,6 +176,9 @@ pub unsafe extern "C" fn interlocked_compare_exchange_pointer(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_increment64(addend: *mut i64) -> i64 {
     if addend.is_null() {
         return 0;
@@ -154,6 +187,9 @@ pub unsafe extern "C" fn interlocked_increment64(addend: *mut i64) -> i64 {
     atomic.fetch_add(1, Ordering::SeqCst) + 1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_decrement64(addend: *mut i64) -> i64 {
     if addend.is_null() {
         return 0;
@@ -162,6 +198,9 @@ pub unsafe extern "C" fn interlocked_decrement64(addend: *mut i64) -> i64 {
     atomic.fetch_sub(1, Ordering::SeqCst) - 1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_exchange64(target: *mut i64, value: i64) -> i64 {
     if target.is_null() {
         return 0;
@@ -170,6 +209,9 @@ pub unsafe extern "C" fn interlocked_exchange64(target: *mut i64, value: i64) ->
     atomic.swap(value, Ordering::SeqCst)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_compare_exchange64(
     destination: *mut i64,
     exchange: i64,
@@ -185,6 +227,9 @@ pub unsafe extern "C" fn interlocked_compare_exchange64(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_and(destination: *mut i32, value: i32) -> i32 {
     if destination.is_null() {
         return 0;
@@ -193,6 +238,9 @@ pub unsafe extern "C" fn interlocked_and(destination: *mut i32, value: i32) -> i
     atomic.fetch_and(value, Ordering::SeqCst)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_or(destination: *mut i32, value: i32) -> i32 {
     if destination.is_null() {
         return 0;
@@ -201,6 +249,9 @@ pub unsafe extern "C" fn interlocked_or(destination: *mut i32, value: i32) -> i3
     atomic.fetch_or(value, Ordering::SeqCst)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn interlocked_xor(destination: *mut i32, value: i32) -> i32 {
     if destination.is_null() {
         return 0;

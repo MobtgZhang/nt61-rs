@@ -73,6 +73,9 @@ pub struct ProcessInformation {
     pub dw_thread_id: DWORD,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn wide_to_string(p: *const u16) -> Option<String> {
     if p.is_null() {
         return None;
@@ -91,6 +94,9 @@ unsafe fn wide_to_string(p: *const u16) -> Option<String> {
     Some(out)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `create_process_w`.
 pub unsafe extern "C" fn create_process_w(
     application_name: *const u16,
@@ -174,6 +180,9 @@ pub unsafe extern "C" fn create_process_w(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `exit_process` — terminate the current process with the
 /// supplied exit code.
 pub unsafe extern "C" fn exit_process(exit_code: u32) -> ! {
@@ -183,6 +192,9 @@ pub unsafe extern "C" fn exit_process(exit_code: u32) -> ! {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `terminate_process`.
 pub unsafe extern "C" fn terminate_process(process: HANDLE, exit_code: u32) -> BOOL {
     if ntdll_process::nt_terminate_process(process, exit_code as i32) == STATUS_SUCCESS {
@@ -207,6 +219,9 @@ pub extern "C" fn get_process_id(process: HANDLE) -> DWORD {
     crate::ps::process::PID_SYSTEM as u32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_exit_code_process` — we always report `STILL_ACTIVE`.
 pub unsafe extern "C" fn get_exit_code_process(_process: HANDLE, exit_code: *mut DWORD) -> BOOL {
     if exit_code.is_null() {
@@ -217,6 +232,9 @@ pub unsafe extern "C" fn get_exit_code_process(_process: HANDLE, exit_code: *mut
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `open_process`.
 pub unsafe extern "C" fn open_process(
     _desired_access: DWORD,
@@ -239,6 +257,9 @@ pub unsafe extern "C" fn open_process(
     h
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wait_for_single_object` re-exported for process wait.
 ///
 /// `ms` is part of the Win32 ABI but the stub does not sleep

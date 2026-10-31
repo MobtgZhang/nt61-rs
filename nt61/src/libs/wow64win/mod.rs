@@ -15,7 +15,7 @@
 //!   * wow64_win32k_syscall - Make a syscall to win32k.sys
 //!   * wow64_win32k_callback_return - Return from a callback
 //
-//! References:
+//!     References:
 //!   * geoffchappell.com — Win32k syscalls in WoW64
 //!   * ReactOS `win32ss/gdi/gdi32/objects/thunk.c`
 
@@ -129,6 +129,9 @@ static WIN32K_SYSCALL_TABLE: [Option<Win32kSyscallEntry>; MAX_WIN32K_SERVICES] =
 // wow64_win32k_initialize_thunk
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialize the Win32k thunk layer.
 ///
 /// This function is called during Wow64 process initialization to set up
@@ -182,6 +185,9 @@ pub struct Wow64CallbackInfo {
 // wow64_win32k_syscall
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Make a syscall to win32k.sys from 32-bit code.
 ///
 /// This function translates the 32-bit syscall parameters to 64-bit
@@ -243,6 +249,9 @@ pub unsafe extern "C" fn wow64_win32k_syscall(
 // wow64_win32k_callback_return
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Return from a callback into 32-bit code.
 ///
 /// When win32k.sys needs to call back into 32-bit code (e.g., for

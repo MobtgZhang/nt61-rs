@@ -13,6 +13,9 @@ use crate::libs::kernel32::types::{DWORD, LPWSTR};
 use crate::libs::ntdll::types::ULONG;
 use core::ptr;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn SetEntriesInAclW(
     c_count_of_explicit_entries: ULONG,
@@ -37,6 +40,9 @@ pub unsafe extern "C" fn SetEntriesInAclW(
     ERROR_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn GetExplicitEntriesFromAclW(
     pacl: PACL,
@@ -62,6 +68,9 @@ pub unsafe extern "C" fn GetExplicitEntriesFromAclW(
     ERROR_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn GetEffectiveRightsFromAclW(
     pacl: PACL,
@@ -82,6 +91,9 @@ pub unsafe extern "C" fn GetEffectiveRightsFromAclW(
     ERROR_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn GetAuditedPermissionsFromAclW(
     pacl: PACL,
@@ -106,6 +118,9 @@ pub unsafe extern "C" fn GetAuditedPermissionsFromAclW(
     ERROR_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn BuildExplicitAccessWithNameW(
     p_explicit_access: *mut EXPLICIT_ACCESS_W,
@@ -129,6 +144,9 @@ pub unsafe extern "C" fn BuildExplicitAccessWithNameW(
     ea.trustee.ptstr_name = p_trustee_name;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn BuildTrusteeWithNameW(p_trustee: *mut TRUSTEE_W, p_name: LPWSTR) {
     if p_trustee.is_null() {
@@ -143,6 +161,9 @@ pub unsafe extern "C" fn BuildTrusteeWithNameW(p_trustee: *mut TRUSTEE_W, p_name
     trustee.ptstr_name = p_name;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn BuildTrusteeWithSidW(p_trustee: *mut TRUSTEE_W, p_sid: PSID) {
     if p_trustee.is_null() {

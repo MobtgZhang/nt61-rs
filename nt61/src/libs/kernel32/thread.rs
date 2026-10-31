@@ -12,6 +12,9 @@ use crate::libs::ntdll::thread as ntdll_thread;
 use crate::libs::ntdll::types::PVOID;
 use core::ptr;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `create_thread`.
 pub unsafe extern "C" fn create_thread(
     _security: *const u8,
@@ -59,6 +62,9 @@ pub extern "C" fn get_thread_id(thread: HANDLE) -> DWORD {
     crate::ps::process::PID_SYSTEM.wrapping_add(1) as u32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `exit_thread` — terminate the current thread.
 pub unsafe extern "C" fn exit_thread(exit_code: DWORD) -> ! {
     ntdll_thread::nt_terminate_thread(HANDLE_CURRENT_THREAD, exit_code);
@@ -67,6 +73,9 @@ pub unsafe extern "C" fn exit_thread(exit_code: DWORD) -> ! {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `terminate_thread`.
 pub unsafe extern "C" fn terminate_thread(thread: HANDLE, exit_code: DWORD) -> BOOL {
     if ntdll_thread::nt_terminate_thread(thread, exit_code) == STATUS_SUCCESS {
@@ -77,6 +86,9 @@ pub unsafe extern "C" fn terminate_thread(thread: HANDLE, exit_code: DWORD) -> B
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `suspend_thread` / `resume_thread`.
 pub unsafe extern "C" fn suspend_thread(thread: HANDLE) -> DWORD {
     let mut prev = 0u32;
@@ -86,6 +98,9 @@ pub unsafe extern "C" fn suspend_thread(thread: HANDLE) -> DWORD {
     }
     prev
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn resume_thread(thread: HANDLE) -> DWORD {
     let mut prev = 0u32;
     if ntdll_thread::nt_resume_thread(thread, &mut prev) != STATUS_SUCCESS {
@@ -114,6 +129,9 @@ pub extern "C" fn switch_to_thread() -> BOOL {
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_thread_priority` / `set_thread_priority` — accept the call.
 pub unsafe extern "C" fn get_thread_priority(thread: HANDLE) -> i32 {
     if thread.is_null() {
@@ -122,6 +140,9 @@ pub unsafe extern "C" fn get_thread_priority(thread: HANDLE) -> i32 {
     let ethread = thread as *mut crate::ps::thread::Ethread;
     (*ethread).kthread.base_priority as i32
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn set_thread_priority(thread: HANDLE, priority: i32) -> BOOL {
     if thread.is_null() {
         return FALSE;
@@ -141,6 +162,9 @@ pub struct FileTime {
     pub high: u32,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_thread_times(
     _thread: HANDLE,
     creation: *mut FileTime,

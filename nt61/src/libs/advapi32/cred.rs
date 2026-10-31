@@ -55,6 +55,9 @@ impl StoredCredential {
 static mut CREDENTIAL_STORE: [StoredCredential; MAX_CREDENTIALS] =
     [StoredCredential::new(); MAX_CREDENTIALS];
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn copy_wide_to_buffer(dest: &mut [u16], src: PCWSTR) {
     if src.is_null() {
         dest[0] = 0;
@@ -71,6 +74,9 @@ unsafe fn copy_wide_to_buffer(dest: &mut [u16], src: PCWSTR) {
     dest[i] = 0;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn wide_str_equal(s1: &[u16], s2: PCWSTR) -> bool {
     if s2.is_null() {
         return s1[0] == 0;
@@ -98,6 +104,9 @@ fn get_current_filetime() -> FILETIME {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredWriteW(credential: PCREDENTIALW, _flags: DWORD) -> LONG {
     if credential.is_null() {
@@ -163,6 +172,9 @@ pub unsafe extern "C" fn CredWriteW(credential: PCREDENTIALW, _flags: DWORD) -> 
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredReadW(
     target_name: PCWSTR,
@@ -227,6 +239,9 @@ pub unsafe extern "C" fn CredReadW(
     0 // FALSE - not found
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredDeleteW(target_name: PCWSTR, r#type: DWORD, _flags: DWORD) -> LONG {
     if target_name.is_null() {
@@ -253,6 +268,9 @@ pub unsafe extern "C" fn CredDeleteW(target_name: PCWSTR, r#type: DWORD, _flags:
     0 // FALSE - not found
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredEnumerateW(
     _filter: PCWSTR,
@@ -284,11 +302,17 @@ pub unsafe extern "C" fn CredEnumerateW(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredFree(_buffer: PVOID) {
     // For kernel stub, we use static buffers so nothing to free
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredGetSessionTypes(
     maximum_persist_count: DWORD,
@@ -308,6 +332,9 @@ pub unsafe extern "C" fn CredGetSessionTypes(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredIsMarshaledCredentialW(marshaled_credential: PCWSTR) -> LONG {
     if marshaled_credential.is_null() {
@@ -321,6 +348,9 @@ pub unsafe extern "C" fn CredIsMarshaledCredentialW(marshaled_credential: PCWSTR
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredUnmarshalCredentialW(
     marshaled_credential: PCWSTR,
@@ -334,6 +364,9 @@ pub unsafe extern "C" fn CredUnmarshalCredentialW(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredMarshalCredentialW(
     _cred_type: DWORD,
@@ -347,6 +380,9 @@ pub unsafe extern "C" fn CredMarshalCredentialW(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredGetTargetInfoW(
     target_name: PCWSTR,
@@ -360,6 +396,9 @@ pub unsafe extern "C" fn CredGetTargetInfoW(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredRenameW(
     old_target_name: PCWSTR,
@@ -391,6 +430,9 @@ pub unsafe extern "C" fn CredRenameW(
     0 // FALSE - not found
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredFindBestCredentialW(
     target_name: PCWSTR,
@@ -402,6 +444,9 @@ pub unsafe extern "C" fn CredFindBestCredentialW(
     CredReadW(target_name, r#type, flags, credential)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredProtectW(
     _f_as_self: LONG,
@@ -433,6 +478,9 @@ pub unsafe extern "C" fn CredProtectW(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CredUnprotectW(
     _f_as_self: LONG,

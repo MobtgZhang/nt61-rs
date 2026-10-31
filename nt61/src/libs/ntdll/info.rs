@@ -9,8 +9,8 @@
 //!   * `SystemProcessInformation` (5) — list of registered
 //!     processes
 //
-//! References: MSDN Library "Windows 7" —
-//! `ntdll.dll` system information APIs.
+//!     References: MSDN Library "Windows 7" —
+//!     `ntdll.dll` system information APIs.
 
 use super::status::{STATUS_INVALID_INFO_CLASS, STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::types::{NTSTATUS, PVOID};
@@ -86,6 +86,9 @@ pub struct SystemTimeOfDayInformation {
     pub current_time_cycles: u64,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_query_system_information`.
 pub unsafe extern "C" fn nt_query_system_information(
     system_information_class: u32,
@@ -128,7 +131,7 @@ pub unsafe extern "C" fn nt_query_system_information(
             s.minimum_user_mode_address = 0x10000 as PVOID;
             s.maximum_user_mode_address = 0x0000_7FFF_FFFF_FFFFusize as PVOID;
             let cpu_count = crate::ke::scheduler::get_cpu_count();
-            let affinity_mask = if cpu_count >= usize::BITS as u32 {
+            let affinity_mask = if cpu_count >= usize::BITS {
                 usize::MAX
             } else {
                 (1usize << cpu_count) - 1
@@ -208,6 +211,9 @@ pub unsafe extern "C" fn nt_query_system_information(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_set_system_information` — most classes are read-only; the
 /// only writable one is `SystemLoadGdiDriverInformation`
 /// (class 26), which we don't implement. The failure is explicit
@@ -222,6 +228,9 @@ pub unsafe extern "C" fn nt_set_system_information(
     super::status::STATUS_NOT_SUPPORTED
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_get_native_system_information` — alias kept for compat
 /// with very old applications.
 pub unsafe extern "C" fn rtl_get_native_system_information(

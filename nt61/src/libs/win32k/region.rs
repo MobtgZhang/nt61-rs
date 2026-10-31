@@ -55,6 +55,12 @@ impl GdiRegionData {
     }
 }
 
+impl Default for GdiRegionData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Region handle wrapper
 pub struct RegionHandle {
     pub data: Box<GdiRegionData>,
@@ -73,6 +79,12 @@ impl RegionHandle {
         region.data.extents = *rect;
         region.data.rects[0] = *rect;
         region
+    }
+}
+
+impl Default for RegionHandle {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

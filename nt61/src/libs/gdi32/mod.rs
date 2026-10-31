@@ -205,7 +205,7 @@ pub fn alloc_gdi_handle() -> u64 {
 
 /// Look up a GDI handle; returns true if it exists.
 pub fn has_gdi_handle(h: u64) -> bool {
-    GDI_OBJECTS.lock().iter().any(|x| *x == h)
+    GDI_OBJECTS.lock().contains(&h)
 }
 
 /// Register a new object in the table and return the

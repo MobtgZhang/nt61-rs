@@ -41,12 +41,7 @@ impl ClientState {
     }
 
     fn find_connection(&self, binding: RpcBindingHandle) -> Option<usize> {
-        for i in 0..self.connection_count {
-            if self.connections[i].binding == binding {
-                return Some(i);
-            }
-        }
-        None
+        (0..self.connection_count).find(|&i| self.connections[i].binding == binding)
     }
 
     fn add_connection(&mut self, binding: RpcBindingHandle) -> Option<usize> {
@@ -71,6 +66,9 @@ impl ClientState {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn wstrcmp(s1: *const u16, s2: *const u16) -> bool {
     let mut i = 0;
     loop {
@@ -86,6 +84,9 @@ unsafe fn wstrcmp(s1: *const u16, s2: *const u16) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn wstrlen(s: *const u16) -> usize {
     let mut len = 0;
     while *s.add(len) != 0 {
@@ -94,6 +95,9 @@ unsafe fn wstrlen(s: *const u16) -> usize {
     len
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn establish_connection(binding: RpcBindingHandle) -> RpcStatus {
     if binding.is_null() {
         return RPC_S_INVALID_BINDING;
@@ -193,6 +197,9 @@ unsafe fn establish_connection(binding: RpcBindingHandle) -> RpcStatus {
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcClientCall(
     binding: RpcBindingHandle,
@@ -262,19 +269,27 @@ pub unsafe extern "C" fn RpcClientCall(
     RPC_S_CALL_FAILED
 }
 
-/// (Client code should use the server.rs implementation directly)
-
+/// (Client code should use the server.rs implementation directly)///
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcMgmtSetServerStackSize(thread_stack_size: u32) -> RpcStatus {
     let _ = thread_stack_size;
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcMgmtEnableIdleCleanup() -> RpcStatus {
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcMgmtSetComTimeout(
     binding: RpcBindingHandle,
@@ -288,6 +303,9 @@ pub unsafe extern "C" fn RpcMgmtSetComTimeout(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcMgmtInqServerPrincName(
     binding: RpcBindingHandle,
@@ -315,6 +333,9 @@ pub unsafe extern "C" fn RpcMgmtInqServerPrincName(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcAsyncCancelCall(
     async_handle: *mut core::ffi::c_void,
@@ -329,6 +350,9 @@ pub unsafe extern "C" fn RpcAsyncCancelCall(
     RPC_S_CANNOT_SUPPORT
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcAsyncGetCallStatus(async_handle: *mut core::ffi::c_void) -> RpcStatus {
     if async_handle.is_null() {
@@ -338,6 +362,9 @@ pub unsafe extern "C" fn RpcAsyncGetCallStatus(async_handle: *mut core::ffi::c_v
     RPC_S_ASYNC_CALL_PENDING
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcNetworkIsProtseqValidW(protseq: *const u16) -> RpcStatus {
     if protseq.is_null() {
@@ -394,6 +421,9 @@ pub unsafe extern "C" fn RpcNetworkIsProtseqValidW(protseq: *const u16) -> RpcSt
     RPC_S_PROTSEQ_NOT_SUPPORTED
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcMgmtInqDefaultProtectLevel(
     authn_svc: u32,

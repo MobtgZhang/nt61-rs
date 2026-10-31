@@ -28,12 +28,21 @@ impl SRWLOCK {
     }
 }
 
+impl Default for SRWLOCK {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 const SRW_LOCKED: u64 = 0x01;
 pub const SRW_WAITING: u64 = 0x02;
 pub const SRW_WAKING: u64 = 0x04;
 const SRW_MULTIPLE_SHARED: u64 = 0x08;
 const SRW_MASK: u64 = 0x0F;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn initialize_srwlock(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
         return;
@@ -41,6 +50,9 @@ pub unsafe extern "C" fn initialize_srwlock(srw_lock: *mut SRWLOCK) {
     (*srw_lock).ptr.store(0, Ordering::Release);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn acquire_srwlock_exclusive(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
         return;
@@ -84,6 +96,9 @@ pub unsafe extern "C" fn acquire_srwlock_exclusive(srw_lock: *mut SRWLOCK) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn try_acquire_srwlock_exclusive(srw_lock: *mut SRWLOCK) -> BOOL {
     if srw_lock.is_null() {
         return FALSE;
@@ -107,6 +122,9 @@ pub unsafe extern "C" fn try_acquire_srwlock_exclusive(srw_lock: *mut SRWLOCK) -
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn release_srwlock_exclusive(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
         return;
@@ -120,6 +138,9 @@ pub unsafe extern "C" fn release_srwlock_exclusive(srw_lock: *mut SRWLOCK) {
     lock.store(new_state, Ordering::Release);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn acquire_srwlock_shared(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
         return;
@@ -150,6 +171,9 @@ pub unsafe extern "C" fn acquire_srwlock_shared(srw_lock: *mut SRWLOCK) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn try_acquire_srwlock_shared(srw_lock: *mut SRWLOCK) -> BOOL {
     if srw_lock.is_null() {
         return FALSE;
@@ -176,6 +200,9 @@ pub unsafe extern "C" fn try_acquire_srwlock_shared(srw_lock: *mut SRWLOCK) -> B
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn release_srwlock_shared(srw_lock: *mut SRWLOCK) {
     if srw_lock.is_null() {
         return;
@@ -220,6 +247,12 @@ impl CONDITION_VARIABLE {
     }
 }
 
+impl Default for CONDITION_VARIABLE {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Copy, Clone)]
 struct WaiterNode {
     thread_id: u64,
@@ -248,6 +281,9 @@ impl CVWaiters {
 
 static CV_WAITER_TABLE: Spinlock<[CVWaiters; MAX_CVS]> = Spinlock::new([CVWaiters::new(); MAX_CVS]);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn initialize_condition_variable(
     condition_variable: *mut CONDITION_VARIABLE,
 ) {
@@ -257,6 +293,9 @@ pub unsafe extern "C" fn initialize_condition_variable(
     (*condition_variable).ptr.store(0, Ordering::Release);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn sleep_condition_variable_cs(
     condition_variable: *mut CONDITION_VARIABLE,
     critical_section: *mut super::sync::CriticalSection,
@@ -305,12 +344,10 @@ pub unsafe extern "C" fn sleep_condition_variable_cs(
             let table = CV_WAITER_TABLE.lock();
             let slot = &table[slot_idx];
             if slot.cv_addr == cv_addr {
-                for waiter in slot.waiters.iter().take(slot.count) {
-                    if let Some(node) = waiter {
-                        if node.thread_id == thread_id && node.signaled {
-                            signaled = true;
-                            break;
-                        }
+                for node in slot.waiters.iter().take(slot.count).flatten() {
+                    if node.thread_id == thread_id && node.signaled {
+                        signaled = true;
+                        break;
                     }
                 }
             }
@@ -359,6 +396,9 @@ pub unsafe extern "C" fn sleep_condition_variable_cs(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn sleep_condition_variable_srw(
     condition_variable: *mut CONDITION_VARIABLE,
     srw_lock: *mut SRWLOCK,
@@ -413,12 +453,10 @@ pub unsafe extern "C" fn sleep_condition_variable_srw(
             let table = CV_WAITER_TABLE.lock();
             let slot = &table[slot_idx];
             if slot.cv_addr == cv_addr {
-                for waiter in slot.waiters.iter().take(slot.count) {
-                    if let Some(node) = waiter {
-                        if node.thread_id == thread_id && node.signaled {
-                            signaled = true;
-                            break;
-                        }
+                for node in slot.waiters.iter().take(slot.count).flatten() {
+                    if node.thread_id == thread_id && node.signaled {
+                        signaled = true;
+                        break;
                     }
                 }
             }
@@ -471,6 +509,9 @@ pub unsafe extern "C" fn sleep_condition_variable_srw(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wake_condition_variable(condition_variable: *mut CONDITION_VARIABLE) {
     if condition_variable.is_null() {
         return;
@@ -486,14 +527,14 @@ pub unsafe extern "C" fn wake_condition_variable(condition_variable: *mut CONDIT
         return;
     }
 
-    for waiter in slot.waiters.iter_mut().take(slot.count) {
-        if let Some(node) = waiter {
-            node.signaled = true;
-            break;
-        }
+    if let Some(node) = slot.waiters.iter_mut().take(slot.count).flatten().next() {
+        node.signaled = true;
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wake_all_condition_variable(condition_variable: *mut CONDITION_VARIABLE) {
     if condition_variable.is_null() {
         return;
@@ -509,10 +550,8 @@ pub unsafe extern "C" fn wake_all_condition_variable(condition_variable: *mut CO
         return;
     }
 
-    for waiter in slot.waiters.iter_mut().take(slot.count) {
-        if let Some(node) = waiter {
-            node.signaled = true;
-        }
+    for node in slot.waiters.iter_mut().take(slot.count).flatten() {
+        node.signaled = true;
     }
 }
 

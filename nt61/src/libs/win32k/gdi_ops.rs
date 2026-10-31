@@ -577,54 +577,56 @@ fn invert_rect(surface: *mut GdiSurface, x: i32, y: i32, width: i32, height: i32
 
 /// gre_rectangle - Draw rectangle outline
 pub fn gre_rectangle(dc: &mut DcObject, left: i32, top: i32, right: i32, bottom: i32) -> bool {
-    let surface = get_dc_surface(dc);
-    let _ = &surface;
-    let _ = &surface;
-    if surface.is_null() {
-        return false;
+    unsafe {
+        let surface = get_dc_surface(dc);
+        let _ = &surface;
+        let _ = &surface;
+        if surface.is_null() {
+            return false;
+        }
+
+        let pen_color = if dc.pen != 0 {
+            crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
+        } else {
+            0
+        };
+
+        let _ = &pen_color;
+
+        let width = right - left;
+
+        let _ = &width;
+        let _ = &width;
+        let height = bottom - top;
+        let _ = &height;
+        let _ = &height;
+
+        // Draw outline
+        draw_line(surface, left, top, right - 1, top, pen_color); // Top
+        draw_line(surface, left, bottom - 1, right - 1, bottom - 1, pen_color); // Bottom
+        draw_line(surface, left, top, left, bottom - 1, pen_color); // Left
+        draw_line(surface, right - 1, top, right - 1, bottom - 1, pen_color); // Right
+
+        // Fill with brush if present
+        if dc.brush != 0 {
+            let brush_color = crate::libs::win32k::objects::gdi_get_brush_color(dc.brush);
+            let _ = &brush_color;
+            let _ = &brush_color;
+            fill_rect_solid(
+                surface,
+                left + 1,
+                top + 1,
+                width - 1,
+                height - 1,
+                brush_color,
+            );
+        }
+
+        // kprintln!("[win32k] gre_rectangle: ({},{})-({},{}) pen=0x{:x} brush=0x{:x}",
+        //               left, top, right, bottom, dc.pen, dc.brush);
+
+        true
     }
-
-    let pen_color = if dc.pen != 0 {
-        crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
-    } else {
-        0
-    };
-
-    let _ = &pen_color;
-
-    let width = right - left;
-
-    let _ = &width;
-    let _ = &width;
-    let height = bottom - top;
-    let _ = &height;
-    let _ = &height;
-
-    // Draw outline
-    draw_line(surface, left, top, right - 1, top, pen_color); // Top
-    draw_line(surface, left, bottom - 1, right - 1, bottom - 1, pen_color); // Bottom
-    draw_line(surface, left, top, left, bottom - 1, pen_color); // Left
-    draw_line(surface, right - 1, top, right - 1, bottom - 1, pen_color); // Right
-
-    // Fill with brush if present
-    if dc.brush != 0 {
-        let brush_color = crate::libs::win32k::objects::gdi_get_brush_color(dc.brush);
-        let _ = &brush_color;
-        let _ = &brush_color;
-        fill_rect_solid(
-            surface,
-            left + 1,
-            top + 1,
-            width - 1,
-            height - 1,
-            brush_color,
-        );
-    }
-
-    // kprintln!("[win32k] gre_rectangle: ({},{})-({},{}) pen=0x{:x} brush=0x{:x}",
-    //               left, top, right, bottom, dc.pen, dc.brush);
-
-    true
 }
 
 /// gre_round_rect - Draw rounded rectangle
@@ -647,8 +649,18 @@ pub fn gre_round_rect(
 // Line Drawing
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Draw a line on a surface
-pub fn draw_line(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: i32, color: u32) -> bool {
+pub unsafe fn draw_line(
+    surface: *mut GdiSurface,
+    x1: i32,
+    y1: i32,
+    x2: i32,
+    y2: i32,
+    color: u32,
+) -> bool {
     if surface.is_null() {
         return false;
     }
@@ -716,8 +728,11 @@ pub fn draw_line(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: i32, c
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Draw a line with specified width (rounded caps)
-pub fn draw_line_width(
+pub unsafe fn draw_line_width(
     surface: *mut GdiSurface,
     x1: i32,
     y1: i32,
@@ -822,39 +837,41 @@ pub fn draw_line_width(
 
 /// gre_line_to - Draw line to point using pen width
 pub fn gre_line_to(dc: &mut DcObject, end_x: i32, end_y: i32) -> bool {
-    let surface = get_dc_surface(dc);
-    if surface.is_null() {
-        return false;
+    unsafe {
+        let surface = get_dc_surface(dc);
+        if surface.is_null() {
+            return false;
+        }
+
+        let pen_color = if dc.pen != 0 {
+            crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
+        } else {
+            0
+        };
+
+        // Get pen width from pen object
+        let pen_width = if dc.pen != 0 {
+            crate::libs::win32k::objects::gdi_get_pen_width(dc.pen)
+        } else {
+            1
+        };
+
+        let (start_x, start_y) = get_dc_current_pos(dc);
+
+        let drawn = if pen_width > 1 {
+            draw_line_width(
+                surface, start_x, start_y, end_x, end_y, pen_width, pen_color,
+            )
+        } else {
+            draw_line(surface, start_x, start_y, end_x, end_y, pen_color)
+        };
+
+        if drawn {
+            set_dc_current_pos(dc, end_x, end_y);
+        }
+
+        drawn
     }
-
-    let pen_color = if dc.pen != 0 {
-        crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
-    } else {
-        0
-    };
-
-    // Get pen width from pen object
-    let pen_width = if dc.pen != 0 {
-        crate::libs::win32k::objects::gdi_get_pen_width(dc.pen)
-    } else {
-        1
-    };
-
-    let (start_x, start_y) = get_dc_current_pos(dc);
-
-    let drawn = if pen_width > 1 {
-        draw_line_width(
-            surface, start_x, start_y, end_x, end_y, pen_width, pen_color,
-        )
-    } else {
-        draw_line(surface, start_x, start_y, end_x, end_y, pen_color)
-    };
-
-    if drawn {
-        set_dc_current_pos(dc, end_x, end_y);
-    }
-
-    drawn
 }
 
 /// gre_move_to - Set the current drawing position.
@@ -1094,46 +1111,48 @@ fn fill_ellipse(surface: *mut GdiSurface, cx: i32, cy: i32, rx: i32, ry: i32, co
 
 /// gre_polygon - Draw and fill polygon
 pub fn gre_polygon(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
-    if points.len() < 3 {
-        return false;
+    unsafe {
+        if points.len() < 3 {
+            return false;
+        }
+
+        let surface = get_dc_surface(dc);
+
+        let _ = &surface;
+        let _ = &surface;
+        if surface.is_null() {
+            return false;
+        }
+
+        let pen_color = if dc.pen != 0 {
+            crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
+        } else {
+            0
+        };
+
+        let _ = &pen_color;
+
+        // Draw outline
+        for i in 0..points.len() {
+            let p1 = points[i];
+            let _ = &p1;
+            let _ = &p1;
+            let p2 = points[(i + 1) % points.len()];
+            let _ = &p2;
+            let _ = &p2;
+            draw_line(surface, p1.0, p1.1, p2.0, p2.1, pen_color);
+        }
+
+        // Fill using scanline algorithm
+        if dc.brush != 0 {
+            let brush_color = crate::libs::win32k::objects::gdi_get_brush_color(dc.brush);
+            let _ = &brush_color;
+            let _ = &brush_color;
+            fill_polygon(surface, points, brush_color);
+        }
+
+        true
     }
-
-    let surface = get_dc_surface(dc);
-
-    let _ = &surface;
-    let _ = &surface;
-    if surface.is_null() {
-        return false;
-    }
-
-    let pen_color = if dc.pen != 0 {
-        crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
-    } else {
-        0
-    };
-
-    let _ = &pen_color;
-
-    // Draw outline
-    for i in 0..points.len() {
-        let p1 = points[i];
-        let _ = &p1;
-        let _ = &p1;
-        let p2 = points[(i + 1) % points.len()];
-        let _ = &p2;
-        let _ = &p2;
-        draw_line(surface, p1.0, p1.1, p2.0, p2.1, pen_color);
-    }
-
-    // Fill using scanline algorithm
-    if dc.brush != 0 {
-        let brush_color = crate::libs::win32k::objects::gdi_get_brush_color(dc.brush);
-        let _ = &brush_color;
-        let _ = &brush_color;
-        fill_polygon(surface, points, brush_color);
-    }
-
-    true
 }
 
 /// Fill polygon using scanline algorithm
@@ -1179,7 +1198,7 @@ fn fill_polygon(surface: *mut GdiSurface, points: &[(i32, i32)], color: u32) {
         }
 
         // Sort and fill between pairs
-        intersections.sort_by(|a, b| a.cmp(b));
+        intersections.sort();
 
         for i in (0..intersections.len()).step_by(2) {
             if i + 1 < intersections.len() {
@@ -1211,38 +1230,40 @@ fn fill_polygon(surface: *mut GdiSurface, points: &[(i32, i32)], color: u32) {
 
 /// gre_polyline - Draw connected lines
 pub fn gre_polyline(dc: &mut DcObject, points: &[(i32, i32)]) -> bool {
-    if points.len() < 2 {
-        return false;
+    unsafe {
+        if points.len() < 2 {
+            return false;
+        }
+
+        let surface = get_dc_surface(dc);
+
+        let _ = &surface;
+        let _ = &surface;
+        if surface.is_null() {
+            return false;
+        }
+
+        let pen_color = if dc.pen != 0 {
+            crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
+        } else {
+            0
+        };
+
+        let _ = &pen_color;
+
+        for i in 0..points.len() - 1 {
+            draw_line(
+                surface,
+                points[i].0,
+                points[i].1,
+                points[i + 1].0,
+                points[i + 1].1,
+                pen_color,
+            );
+        }
+
+        true
     }
-
-    let surface = get_dc_surface(dc);
-
-    let _ = &surface;
-    let _ = &surface;
-    if surface.is_null() {
-        return false;
-    }
-
-    let pen_color = if dc.pen != 0 {
-        crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
-    } else {
-        0
-    };
-
-    let _ = &pen_color;
-
-    for i in 0..points.len() - 1 {
-        draw_line(
-            surface,
-            points[i].0,
-            points[i].1,
-            points[i + 1].0,
-            points[i + 1].1,
-            pen_color,
-        );
-    }
-
-    true
 }
 
 // =============================================================================
@@ -1313,8 +1334,11 @@ pub fn gre_set_pixel(dc: &mut DcObject, x: i32, y: i32, color: u32) -> bool {
 // Gradient Fill (Extended)
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Fill rectangle with horizontal gradient
-pub fn gre_gradient_fill_horizontal(
+pub unsafe fn gre_gradient_fill_horizontal(
     surface: *mut GdiSurface,
     left: i32,
     top: i32,
@@ -1363,8 +1387,11 @@ pub fn gre_gradient_fill_horizontal(
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Fill rectangle with vertical gradient
-pub fn gre_gradient_fill_vertical(
+pub unsafe fn gre_gradient_fill_vertical(
     surface: *mut GdiSurface,
     left: i32,
     top: i32,
@@ -1456,7 +1483,7 @@ fn isqrt(n: u64) -> u64 {
         return 0;
     }
     let mut x = n;
-    let mut y = (x + 1) / 2;
+    let mut y = x.div_ceil(2);
     while y < x {
         x = y;
         y = (x + n / x) / 2;

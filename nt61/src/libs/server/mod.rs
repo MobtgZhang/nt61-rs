@@ -10,7 +10,7 @@
 //!   * ReactOS 0.3.x `base/system/smss`, `csrss`, `wininit`, etc.
 
 //
-//! Modules:
+//!     Modules:
 //!   * `smss`     — Session Manager
 //!   * `csrss`    — Client/Server Runtime Subsystem
 //!   * `wininit`  — Boot-time init helper

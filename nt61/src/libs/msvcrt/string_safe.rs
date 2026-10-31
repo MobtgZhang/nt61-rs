@@ -5,6 +5,9 @@ use core::ptr;
 
 static STRTOK_NEXT: AtomicPtr<CChar> = AtomicPtr::new(ptr::null_mut());
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtok(str: *mut CChar, delim: *const CChar) -> *mut CChar {
     if str.is_null() {
@@ -24,6 +27,9 @@ pub unsafe extern "C" fn strtok(str: *mut CChar, delim: *const CChar) -> *mut CC
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtok_r(
     str: *mut CChar,
@@ -64,6 +70,9 @@ pub unsafe extern "C" fn strtok_r(
     token_start
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn is_delimiter(c: CChar, delim: *const CChar) -> bool {
     let mut d = delim;
     while *d != 0 {

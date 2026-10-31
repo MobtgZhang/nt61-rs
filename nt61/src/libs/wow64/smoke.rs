@@ -11,7 +11,7 @@ static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 fn run_case(name: &str, ok: bool) -> bool {
     let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
-    let _ = crate::wow64_klog!(
+    crate::wow64_klog!(
         "      [wow64/{:02}] {} {}",
         n,
         if ok { "PASS" } else { "FAIL" },

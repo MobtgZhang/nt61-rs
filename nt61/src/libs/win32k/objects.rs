@@ -264,6 +264,12 @@ impl GdiHandleTable {
     }
 }
 
+impl Default for GdiHandleTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Global GDI handle table - protected by spinlock for thread safety.
 //
 // The inner table pointer is cached statically so `get_handle_table` can
@@ -490,6 +496,12 @@ impl GdiFont {
     }
 }
 
+impl Default for GdiFont {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Bitmap object
 #[repr(C)]
 #[derive(Clone)]
@@ -540,8 +552,10 @@ impl GdiBitmap {
 
 impl Drop for GdiBitmap {
     fn drop(&mut self) {
-        if !self.bits.is_null() {
-            let _ = crate::mm::pool::free(self.bits);
+        unsafe {
+            if !self.bits.is_null() {
+                let _ = crate::mm::pool::free(self.bits);
+            }
         }
     }
 }
@@ -616,6 +630,12 @@ impl GdiPalette {
             num_entries: 20,
             entries,
         }
+    }
+}
+
+impl Default for GdiPalette {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -963,64 +983,66 @@ pub fn gdi_create_palette() -> u64 {
 
 /// Delete a GDI object
 pub fn gdi_delete_object(handle: u64) -> bool {
-    if handle == 0 {
-        return false;
-    }
-
-    let handle_table = get_handle_table();
-    let _ = &handle_table;
-    let entry = match handle_table.get(handle) {
-        Some(e) => e,
-        None => {
-            // kprintln!("[win32k] gdi_delete_object: invalid handle 0x{:016x}", handle);
+    unsafe {
+        if handle == 0 {
             return false;
         }
-    };
 
-    let obj_ptr = entry.obj_ptr;
-    let _ = &obj_ptr;
-    let obj_type = entry.get_type();
-    let _ = &obj_type;
+        let handle_table = get_handle_table();
+        let _ = &handle_table;
+        let entry = match handle_table.get(handle) {
+            Some(e) => e,
+            None => {
+                // kprintln!("[win32k] gdi_delete_object: invalid handle 0x{:016x}", handle);
+                return false;
+            }
+        };
 
-    // Free the object memory
-    if obj_ptr != 0 {
-        match obj_type {
-            Some(GdiObjectType::Pen) => {
-                let _ = crate::mm::pool::free(obj_ptr as *mut u8);
-            }
-            Some(GdiObjectType::Brush) => {
-                let _ = crate::mm::pool::free(obj_ptr as *mut u8);
-            }
-            Some(GdiObjectType::Font) => {
-                let _ = crate::mm::pool::free(obj_ptr as *mut u8);
-            }
-            Some(GdiObjectType::Bitmap) => {
-                // Bitmap's Drop will free the bits
-                let bitmap = unsafe { &mut *(obj_ptr as *mut GdiBitmap) };
-                let _ = &bitmap;
-                if !bitmap.bits.is_null() {
-                    let _ = crate::mm::pool::free(bitmap.bits);
+        let obj_ptr = entry.obj_ptr;
+        let _ = &obj_ptr;
+        let obj_type = entry.get_type();
+        let _ = &obj_type;
+
+        // Free the object memory
+        if obj_ptr != 0 {
+            match obj_type {
+                Some(GdiObjectType::Pen) => {
+                    let _ = crate::mm::pool::free(obj_ptr as *mut u8);
                 }
-                let _ = crate::mm::pool::free(obj_ptr as *mut u8);
-            }
-            Some(GdiObjectType::Region) => {
-                let _ = crate::mm::pool::free(obj_ptr as *mut u8);
-            }
-            Some(GdiObjectType::Palette) => {
-                let _ = crate::mm::pool::free(obj_ptr as *mut u8);
-            }
-            _ => {
-                let _ = crate::mm::pool::free(obj_ptr as *mut u8);
+                Some(GdiObjectType::Brush) => {
+                    let _ = crate::mm::pool::free(obj_ptr as *mut u8);
+                }
+                Some(GdiObjectType::Font) => {
+                    let _ = crate::mm::pool::free(obj_ptr as *mut u8);
+                }
+                Some(GdiObjectType::Bitmap) => {
+                    // Bitmap's Drop will free the bits
+                    let bitmap = unsafe { &mut *(obj_ptr as *mut GdiBitmap) };
+                    let _ = &bitmap;
+                    if !bitmap.bits.is_null() {
+                        let _ = crate::mm::pool::free(bitmap.bits);
+                    }
+                    let _ = crate::mm::pool::free(obj_ptr as *mut u8);
+                }
+                Some(GdiObjectType::Region) => {
+                    let _ = crate::mm::pool::free(obj_ptr as *mut u8);
+                }
+                Some(GdiObjectType::Palette) => {
+                    let _ = crate::mm::pool::free(obj_ptr as *mut u8);
+                }
+                _ => {
+                    let _ = crate::mm::pool::free(obj_ptr as *mut u8);
+                }
             }
         }
+
+        // Remove from handle table
+        handle_table.free(handle);
+
+        // kprintln!("[win32k] gdi_delete_object: handle=0x{:016x}, type={:?} deleted", handle, obj_type);
+
+        true
     }
-
-    // Remove from handle table
-    handle_table.free(handle);
-
-    // kprintln!("[win32k] gdi_delete_object: handle=0x{:016x}, type={:?} deleted", handle, obj_type);
-
-    true
 }
 
 /// Get object pointer from handle
@@ -1066,10 +1088,8 @@ pub fn gdi_validate_handle_for_process(handle: u64, process_id: u32) -> Option<u
 
     if let Some(entry) = handle_table.get(handle) {
         // Check process ownership (0 means kernel/system handle, valid for all)
-        if entry.process_id == process_id || entry.process_id == 0 {
-            if entry.obj_ptr != 0 {
-                return Some(entry.obj_ptr);
-            }
+        if (entry.process_id == process_id || entry.process_id == 0) && entry.obj_ptr != 0 {
+            return Some(entry.obj_ptr);
         }
         // kprintln!("[win32k] gdi_validate_handle_for_process: handle=0x{:016x}, pid={}, owner={}",
         //             handle, process_id, entry.process_id);

@@ -82,6 +82,9 @@ static CONSOLE_INPUT_BUFFER: Spinlock<[u16; CONSOLE_INPUT_BUFFER_SIZE]> =
     Spinlock::new([0; CONSOLE_INPUT_BUFFER_SIZE]);
 static CONSOLE_INPUT_LENGTH: Spinlock<usize> = Spinlock::new(0);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn read_console_w(
     console_input: HANDLE,
     buffer: *mut u16,
@@ -118,6 +121,9 @@ pub unsafe extern "C" fn read_console_w(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn _simulate_console_input(text: &str) {
     let mut input_buf = CONSOLE_INPUT_BUFFER.lock();
     let mut len = CONSOLE_INPUT_LENGTH.lock();
@@ -132,6 +138,9 @@ pub unsafe fn _simulate_console_input(text: &str) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_console_screen_buffer_info(
     console_output: HANDLE,
     console_screen_buffer_info: *mut CONSOLE_SCREEN_BUFFER_INFO,
@@ -167,6 +176,9 @@ pub unsafe extern "C" fn get_console_screen_buffer_info(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn set_console_cursor_position(
     console_output: HANDLE,
     cursor_position: COORD,
@@ -193,6 +205,9 @@ pub unsafe extern "C" fn set_console_cursor_position(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_console_mode(console_handle: HANDLE, mode: *mut DWORD) -> BOOL {
     if console_handle.is_null() || mode.is_null() {
         set_last_error(6);
@@ -206,6 +221,9 @@ pub unsafe extern "C" fn get_console_mode(console_handle: HANDLE, mode: *mut DWO
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn set_console_mode(console_handle: HANDLE, mode: DWORD) -> BOOL {
     if console_handle.is_null() {
         set_last_error(6);
@@ -225,6 +243,9 @@ pub struct CONSOLE_CURSOR_INFO {
     pub b_visible: BOOL,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_console_cursor_info(
     console_output: HANDLE,
     console_cursor_info: *mut CONSOLE_CURSOR_INFO,
@@ -241,6 +262,9 @@ pub unsafe extern "C" fn get_console_cursor_info(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn set_console_cursor_info(
     console_output: HANDLE,
     console_cursor_info: *const CONSOLE_CURSOR_INFO,
@@ -255,6 +279,9 @@ pub unsafe extern "C" fn set_console_cursor_info(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn set_console_text_attribute(
     console_output: HANDLE,
     attributes: u16,

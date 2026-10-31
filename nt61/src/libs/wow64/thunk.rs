@@ -28,6 +28,9 @@ pub fn register_services() {
     crate::wow64_klog!("Registered {} WoW64 services", t.len());
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_prepare_for_exception` — handle exception in WoW64 context.
 /// Returns 0 on success, error code on failure.
 pub unsafe extern "C" fn wow64_prepare_for_exception(
@@ -43,6 +46,9 @@ pub unsafe extern "C" fn wow64_prepare_for_exception(
     super::apc_exc_thunk::wow64_prepare_for_exception(exception_record, context)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_apc_routine` — APC delivery thunk for 32-bit threads.
 /// This is called when a kernel APC needs to be delivered to a 32-bit thread.
 pub unsafe extern "C" fn wow64_apc_routine(apc: *mut core::ffi::c_void) {
@@ -51,6 +57,9 @@ pub unsafe extern "C" fn wow64_apc_routine(apc: *mut core::ffi::c_void) {
     super::apc_exc_thunk::wow64_apc_routine(apc);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_ldrp_initialize` — Initialize the 32-bit loader.
 /// This sets up the 32-bit ntdll and prepares for module loading.
 pub unsafe extern "C" fn wow64_ldrp_initialize(
@@ -68,6 +77,9 @@ pub unsafe extern "C" fn wow64_ldrp_initialize(
     super::apc_exc_thunk::wow64_ldrp_initialize(context, entry, param)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_system_service_ex` — System call dispatcher for WoW64.
 /// Translates 32-bit system calls to 64-bit and back.
 pub unsafe extern "C" fn wow64_system_service_ex(
@@ -85,6 +97,9 @@ pub unsafe extern "C" fn wow64_system_service_ex(
     super::ssd::dispatch_service(service_number, args)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_allocate_virtual_memory32` — Allocate virtual memory in
 /// 32-bit address space.
 pub unsafe extern "C" fn wow64_allocate_virtual_memory32(
@@ -111,6 +126,9 @@ pub unsafe extern "C" fn wow64_allocate_virtual_memory32(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_free_virtual_memory32` — Free virtual memory in 32-bit address space.
 pub unsafe extern "C" fn wow64_free_virtual_memory32(
     process_handle: u32,
@@ -134,6 +152,9 @@ pub unsafe extern "C" fn wow64_free_virtual_memory32(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_read_virtual_memory32` — read memory from a 32-bit process.
 pub unsafe extern "C" fn wow64_read_virtual_memory32(
     process_handle: u32,
@@ -152,6 +173,9 @@ pub unsafe extern "C" fn wow64_read_virtual_memory32(
     super::mem_thunk::wow64_read_virtual_memory(process_handle, base_address, buffer, size)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_write_virtual_memory32` — write memory to a 32-bit process.
 pub unsafe extern "C" fn wow64_write_virtual_memory32(
     process_handle: u32,
@@ -170,6 +194,9 @@ pub unsafe extern "C" fn wow64_write_virtual_memory32(
     super::mem_thunk::wow64_write_virtual_memory(process_handle, base_address, buffer, size)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_query_information_process` — Query process information for WoW64 process.
 pub unsafe extern "C" fn wow64_query_information_process(
     process_handle: u32,
@@ -193,6 +220,9 @@ pub unsafe extern "C" fn wow64_query_information_process(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_set_information_thread` — Set thread information for WoW64 thread.
 pub unsafe extern "C" fn wow64_set_information_thread(
     thread_handle: u32,

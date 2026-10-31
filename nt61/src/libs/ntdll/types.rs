@@ -146,7 +146,7 @@ impl UnicodeString {
         Self {
             length: (i * 2) as u16,
             maximum_length: ((i + 1) * 2) as u16,
-            buffer: buffer,
+            buffer,
         }
     }
 
@@ -281,6 +281,12 @@ impl ObjectAttributes {
             object_name: name,
             ..Self::new()
         }
+    }
+}
+
+impl Default for ObjectAttributes {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

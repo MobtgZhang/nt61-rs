@@ -8,7 +8,7 @@
 //!   * 32-bit service number to handler mapping
 //!   * Argument extraction from 32-bit stack
 //
-//! References:
+//!     References:
 //!   * geoffchappell.com — wow64 system service dispatching
 //!   * ReactOS `win32ss/gdi/gdi32/objects/thunk.c`
 
@@ -481,6 +481,9 @@ pub fn update_shadow_service_handler(service_number: ULONG32, handler: ServiceHa
     register_shadow_service(service_number, handler, 0);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Stub handler for unregistered services.
 unsafe extern "C" fn stub_handler(_args: *const u32) -> ULONG32 {
     STATUS_INVALID_SYSTEM_SERVICE_32
@@ -490,6 +493,9 @@ unsafe extern "C" fn stub_handler(_args: *const u32) -> ULONG32 {
 // Service Dispatch
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Dispatch a 32-bit system call.
 /// This is called from the syscall thunk when a 32-bit app makes a syscall.
 ///

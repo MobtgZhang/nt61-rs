@@ -91,6 +91,9 @@ fn get_current_tid() -> usize {
     thread as usize
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn __errno_location() -> *mut CInt {
     let tid = get_current_tid();
@@ -99,6 +102,9 @@ pub unsafe extern "C" fn __errno_location() -> *mut CInt {
     &mut locked.errno_val as *mut CInt
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn __doserrno() -> *mut CUlong {
     let tid = get_current_tid();
@@ -107,6 +113,9 @@ pub unsafe extern "C" fn __doserrno() -> *mut CUlong {
     &mut locked.doserrno_val as *mut CUlong as *mut CUlong
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _get_errno(value: *mut CInt) -> ErrnoT {
     if value.is_null() {
@@ -120,6 +129,9 @@ pub unsafe extern "C" fn _get_errno(value: *mut CInt) -> ErrnoT {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _set_errno(value: CInt) -> ErrnoT {
     let tid = get_current_tid();
@@ -129,6 +141,9 @@ pub unsafe extern "C" fn _set_errno(value: CInt) -> ErrnoT {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _get_doserrno(value: *mut CUlong) -> ErrnoT {
     if value.is_null() {
@@ -142,6 +157,9 @@ pub unsafe extern "C" fn _get_doserrno(value: *mut CUlong) -> ErrnoT {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _set_doserrno(value: CUlong) -> ErrnoT {
     let tid = get_current_tid();
@@ -151,6 +169,9 @@ pub unsafe extern "C" fn _set_doserrno(value: CUlong) -> ErrnoT {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strerror(errnum: CInt) -> *const CChar {
     static BUFFER: Mutex<[CChar; 64]> = Mutex::new([0; 64]);
@@ -210,16 +231,25 @@ pub unsafe extern "C" fn strerror(errnum: CInt) -> *const CChar {
     buf.as_ptr()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _errno() -> *mut CInt {
     __errno_location()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _doserrno() -> *mut CUlong {
     __doserrno()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn __tls_cleanup_thread(thread_id: usize) {
     let entry = TLS_ERRNO.get_entry(thread_id);
@@ -231,6 +261,9 @@ pub unsafe extern "C" fn __tls_cleanup_thread(thread_id: usize) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strerror_s(
     buffer: *mut CChar,
@@ -257,6 +290,9 @@ pub unsafe extern "C" fn strerror_s(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn perror(s: *const CChar) {
     let errnum = *_errno();
@@ -264,7 +300,7 @@ pub unsafe extern "C" fn perror(s: *const CChar) {
 
     if !s.is_null() && *s != 0 {
         super::stdio::fputs(s, stderr);
-        super::stdio::fputs(b": \0".as_ptr() as *const CChar, stderr);
+        super::stdio::fputs(c": ".as_ptr() as *const CChar, stderr);
     }
 
     let msg = strerror(errnum);

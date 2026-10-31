@@ -7,6 +7,9 @@ use core::ptr::null_mut;
 
 static mut CURRENT_IMPERSONATION_CONTEXT: *mut core::ffi::c_void = null_mut();
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingSetAuthInfoW(
     binding: RpcBindingHandle,
@@ -61,6 +64,9 @@ pub unsafe extern "C" fn RpcBindingSetAuthInfoW(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingSetAuthInfoExW(
     binding: RpcBindingHandle,
@@ -83,6 +89,9 @@ pub unsafe extern "C" fn RpcBindingSetAuthInfoExW(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqAuthInfoW(
     binding: RpcBindingHandle,
@@ -128,6 +137,9 @@ pub unsafe extern "C" fn RpcBindingInqAuthInfoW(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqAuthInfoExW(
     binding: RpcBindingHandle,
@@ -152,31 +164,41 @@ pub unsafe extern "C" fn RpcBindingInqAuthInfoExW(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcImpersonateClient(binding_handle: RpcBindingHandle) -> RpcStatus {
     if !binding_handle.is_null() {
-        CURRENT_IMPERSONATION_CONTEXT = binding_handle as *mut core::ffi::c_void;
+        CURRENT_IMPERSONATION_CONTEXT = binding_handle;
     }
 
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcRevertToSelf() -> RpcStatus {
     CURRENT_IMPERSONATION_CONTEXT = null_mut();
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcRevertToSelfEx(binding_handle: RpcBindingHandle) -> RpcStatus {
-    if !binding_handle.is_null() {
-        if CURRENT_IMPERSONATION_CONTEXT == binding_handle as *mut core::ffi::c_void {
-            CURRENT_IMPERSONATION_CONTEXT = null_mut();
-        }
+    if !binding_handle.is_null() && core::ptr::eq(CURRENT_IMPERSONATION_CONTEXT, binding_handle) {
+        CURRENT_IMPERSONATION_CONTEXT = null_mut();
     }
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqAuthClientW(
     client_binding: RpcBindingHandle,
@@ -222,6 +244,9 @@ pub unsafe extern "C" fn RpcBindingInqAuthClientW(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqAuthClientExW(
     client_binding: RpcBindingHandle,
@@ -244,6 +269,9 @@ pub unsafe extern "C" fn RpcBindingInqAuthClientExW(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingSetOption(
     binding: RpcBindingHandle,
@@ -260,6 +288,9 @@ pub unsafe extern "C" fn RpcBindingSetOption(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqOption(
     binding: RpcBindingHandle,
@@ -276,6 +307,9 @@ pub unsafe extern "C" fn RpcBindingInqOption(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcServerRegisterAuthInfoW(
     server_princ_name: *const u16,
@@ -302,6 +336,9 @@ pub unsafe extern "C" fn RpcServerRegisterAuthInfoW(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcServerInqDefaultPrincNameW(
     authn_svc: u32,
@@ -330,6 +367,9 @@ pub type RpcIfCallbackFn = unsafe extern "C" fn(
     context: *mut core::ffi::c_void,
 ) -> RpcStatus;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcServerRegisterIfCallback(
     if_spec: RpcIfHandle,
@@ -344,6 +384,9 @@ pub unsafe extern "C" fn RpcServerRegisterIfCallback(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcGetAuthorizationContextForClient(
     client_binding: RpcBindingHandle,

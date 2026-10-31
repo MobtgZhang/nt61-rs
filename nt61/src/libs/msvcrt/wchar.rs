@@ -15,6 +15,9 @@ fn to_lower_wchar(c: WcharT) -> WcharT {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcslen(s: *const WcharT) -> SizeT {
     if s.is_null() {
@@ -28,6 +31,9 @@ pub unsafe extern "C" fn wcslen(s: *const WcharT) -> SizeT {
     len
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcscpy(dest: *mut WcharT, src: *const WcharT) -> *mut WcharT {
     if dest.is_null() || src.is_null() {
@@ -46,6 +52,9 @@ pub unsafe extern "C" fn wcscpy(dest: *mut WcharT, src: *const WcharT) -> *mut W
     dest
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcsncpy(dest: *mut WcharT, src: *const WcharT, n: SizeT) -> *mut WcharT {
     if dest.is_null() || src.is_null() || n == 0 {
@@ -69,6 +78,9 @@ pub unsafe extern "C" fn wcsncpy(dest: *mut WcharT, src: *const WcharT, n: SizeT
     dest
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcscat(dest: *mut WcharT, src: *const WcharT) -> *mut WcharT {
     if dest.is_null() || src.is_null() {
@@ -80,6 +92,9 @@ pub unsafe extern "C" fn wcscat(dest: *mut WcharT, src: *const WcharT) -> *mut W
     dest
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcsncat(dest: *mut WcharT, src: *const WcharT, n: SizeT) -> *mut WcharT {
     if dest.is_null() || src.is_null() || n == 0 {
@@ -98,6 +113,9 @@ pub unsafe extern "C" fn wcsncat(dest: *mut WcharT, src: *const WcharT, n: SizeT
     dest
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcscmp(s1: *const WcharT, s2: *const WcharT) -> CInt {
     if s1.is_null() || s2.is_null() {
@@ -120,6 +138,9 @@ pub unsafe extern "C" fn wcscmp(s1: *const WcharT, s2: *const WcharT) -> CInt {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcsncmp(s1: *const WcharT, s2: *const WcharT, n: SizeT) -> CInt {
     if s1.is_null() || s2.is_null() || n == 0 {
@@ -141,6 +162,9 @@ pub unsafe extern "C" fn wcsncmp(s1: *const WcharT, s2: *const WcharT, n: SizeT)
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcschr(s: *const WcharT, c: WcharT) -> *mut WcharT {
     if s.is_null() {
@@ -161,6 +185,9 @@ pub unsafe extern "C" fn wcschr(s: *const WcharT, c: WcharT) -> *mut WcharT {
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcsrchr(s: *const WcharT, c: WcharT) -> *mut WcharT {
     if s.is_null() {
@@ -176,6 +203,9 @@ pub unsafe extern "C" fn wcsrchr(s: *const WcharT, c: WcharT) -> *mut WcharT {
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcsstr(haystack: *const WcharT, needle: *const WcharT) -> *mut WcharT {
     if haystack.is_null() || needle.is_null() {
@@ -200,6 +230,9 @@ pub unsafe extern "C" fn wcsstr(haystack: *const WcharT, needle: *const WcharT) 
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcsdup(s: *const WcharT) -> *mut WcharT {
     if s.is_null() {
@@ -214,6 +247,9 @@ pub unsafe extern "C" fn wcsdup(s: *const WcharT) -> *mut WcharT {
     new_str
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _wcsicmp(s1: *const WcharT, s2: *const WcharT) -> CInt {
     if s1.is_null() || s2.is_null() {
@@ -236,6 +272,9 @@ pub unsafe extern "C" fn _wcsicmp(s1: *const WcharT, s2: *const WcharT) -> CInt 
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _wcsnicmp(s1: *const WcharT, s2: *const WcharT, n: SizeT) -> CInt {
     if s1.is_null() || s2.is_null() || n == 0 {
@@ -257,6 +296,9 @@ pub unsafe extern "C" fn _wcsnicmp(s1: *const WcharT, s2: *const WcharT, n: Size
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn mbstowcs(dest: *mut WcharT, src: *const CChar, n: SizeT) -> SizeT {
     if src.is_null() {
@@ -286,6 +328,9 @@ pub unsafe extern "C" fn mbstowcs(dest: *mut WcharT, src: *const CChar, n: SizeT
     convert_len
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcstombs(dest: *mut CChar, src: *const WcharT, n: SizeT) -> SizeT {
     if src.is_null() {
@@ -320,6 +365,9 @@ pub unsafe extern "C" fn wcstombs(dest: *mut CChar, src: *const WcharT, n: SizeT
     convert_len
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn mbtowc(pwc: *mut WcharT, s: *const CChar, n: SizeT) -> CInt {
     if s.is_null() {
@@ -342,6 +390,9 @@ pub unsafe extern "C" fn mbtowc(pwc: *mut WcharT, s: *const CChar, n: SizeT) -> 
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wctomb(s: *mut CChar, wc: WcharT) -> CInt {
     if s.is_null() {
@@ -357,6 +408,9 @@ pub unsafe extern "C" fn wctomb(s: *mut CChar, wc: WcharT) -> CInt {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcscpy_s(
     dest: *mut WcharT,
@@ -377,6 +431,9 @@ pub unsafe extern "C" fn wcscpy_s(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn wcscat_s(
     dest: *mut WcharT,
@@ -398,6 +455,9 @@ pub unsafe extern "C" fn wcscat_s(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fputwc(wc: WcharT, stream: *mut FILE) -> WcharT {
     if stream.is_null() {
@@ -412,6 +472,9 @@ pub unsafe extern "C" fn fputwc(wc: WcharT, stream: *mut FILE) -> WcharT {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fgetwc(stream: *mut FILE) -> WcharT {
     if stream.is_null() {
@@ -426,6 +489,9 @@ pub unsafe extern "C" fn fgetwc(stream: *mut FILE) -> WcharT {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fputws(ws: *const WcharT, stream: *mut FILE) -> CInt {
     if ws.is_null() || stream.is_null() {
@@ -441,6 +507,9 @@ pub unsafe extern "C" fn fputws(ws: *const WcharT, stream: *mut FILE) -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fgetws(ws: *mut WcharT, n: CInt, stream: *mut FILE) -> *mut WcharT {
     if ws.is_null() || stream.is_null() || n <= 0 {

@@ -11,6 +11,9 @@
 use super::types::*;
 use crate::libs::kernel32::types::{BOOL, DWORD, FALSE, HANDLE, LPVOID, TRUE};
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CheckTokenMembership(
     token_handle: HANDLE,
@@ -34,6 +37,9 @@ pub unsafe extern "C" fn CheckTokenMembership(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn IsTokenRestricted(token_handle: HANDLE) -> BOOL {
     if token_handle.is_null() || token_handle == INVALID_HANDLE_VALUE {
@@ -46,6 +52,9 @@ pub unsafe extern "C" fn IsTokenRestricted(token_handle: HANDLE) -> BOOL {
     FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn GetTokenInformation(
     token_handle: HANDLE,
@@ -71,6 +80,9 @@ pub unsafe extern "C" fn GetTokenInformation(
     FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CheckTokenCapability(
     token_handle: HANDLE,
@@ -92,6 +104,9 @@ pub unsafe extern "C" fn CheckTokenCapability(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn IsWellKnownSid(p_sid: PSID, _well_known_sid_type: DWORD) -> BOOL {
     if p_sid.is_null() {
@@ -102,6 +117,9 @@ pub unsafe extern "C" fn IsWellKnownSid(p_sid: PSID, _well_known_sid_type: DWORD
     FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn CreateWellKnownSid(
     _well_known_sid_type: DWORD,

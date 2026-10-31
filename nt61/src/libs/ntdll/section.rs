@@ -74,6 +74,9 @@ pub struct SectionBasicInformation {
     pub maximum_size: i64,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_create_section` — create a section (file mapping) object.
 pub unsafe extern "C" fn nt_create_section(
     section_handle: *mut HANDLE,
@@ -87,10 +90,8 @@ pub unsafe extern "C" fn nt_create_section(
     if section_handle.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-    if !maximum_size.is_null() {
-        if read_user_object::<i64>(maximum_size as u64).is_err() {
-            return STATUS_ACCESS_VIOLATION;
-        }
+    if !maximum_size.is_null() && read_user_object::<i64>(maximum_size as u64).is_err() {
+        return STATUS_ACCESS_VIOLATION;
     }
     let mut output = 0 as HANDLE;
     let mut maximum_size_value = 0i64;
@@ -130,7 +131,7 @@ pub fn nt_create_section_kernel(
     if !is_supported_page_protection(section_page_protection) {
         return STATUS_INVALID_PARAMETER;
     }
-    if maximum_size.as_ref().map_or(false, |value| **value < 0) {
+    if maximum_size.as_ref().is_some_and(|value| **value < 0) {
         return STATUS_INVALID_PARAMETER;
     }
     let handle = alloc_handle(HandleKind::Section, 0xC0DE_CAFE_F00D_BEEF);
@@ -150,6 +151,9 @@ pub fn nt_create_section_kernel(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_map_view_of_section` — map a section into the process's
 /// address space.
 pub unsafe extern "C" fn nt_map_view_of_section(
@@ -198,6 +202,9 @@ pub unsafe extern "C" fn nt_map_view_of_section(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_unmap_view_of_section`.
 pub unsafe extern "C" fn nt_unmap_view_of_section(
     _process_handle: HANDLE,
@@ -206,6 +213,9 @@ pub unsafe extern "C" fn nt_unmap_view_of_section(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_query_section` — query section creation parameters.
 pub unsafe extern "C" fn nt_query_section(
     section_handle: HANDLE,
@@ -254,6 +264,9 @@ pub unsafe extern "C" fn nt_query_section(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `NT_CLOSE` (re-exported so kernel32 can call it without
 /// touching the file module).
 pub unsafe extern "C" fn nt_close_section(h: HANDLE) -> NTSTATUS {

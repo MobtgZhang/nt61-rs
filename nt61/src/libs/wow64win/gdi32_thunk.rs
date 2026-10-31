@@ -161,6 +161,9 @@ pub mod stock_object {
 // create_compatible_dc
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Creates a memory device context compatible with the specified device.
 ///
 /// # Returns
@@ -169,18 +172,20 @@ pub unsafe extern "C" fn wow64_create_compatible_dc(hdc: HDC32) -> HDC32 {
     // log via wow64_klog!; using wow64_klog! instead
 
     let params: [ULONG32; 1] = [hdc];
-    let result = wow64_win32k_syscall(
+
+    wow64_win32k_syscall(
         syscall_numbers::NT_GDI_CREATE_COMPATIBLE_DC,
         params.as_ptr(),
-    );
-
-    result
+    )
 }
 
 // =============================================================================
 // delete_dc
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Deletes the specified device context.
 ///
 /// # Returns
@@ -198,21 +203,26 @@ pub unsafe extern "C" fn wow64_delete_dc(hdc: HDC32) -> BOOL32 {
 // select_object
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Selects an object into the specified device context.
 ///
 /// # Returns
 /// * handle to the previously selected object or NULL on error
 pub unsafe extern "C" fn wow64_select_object(hdc: HDC32, h_object: HANDLE32) -> HANDLE32 {
     let params: [ULONG32; 2] = [hdc, h_object];
-    let result = wow64_win32k_syscall(syscall_numbers::NT_GDI_SELECT_OBJECT, params.as_ptr());
 
-    result
+    wow64_win32k_syscall(syscall_numbers::NT_GDI_SELECT_OBJECT, params.as_ptr())
 }
 
 // =============================================================================
 // delete_object
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Deletes a logical pen, brush, font, bitmap, region, or palette.
 ///
 /// # Returns
@@ -230,6 +240,9 @@ pub unsafe extern "C" fn wow64_delete_object(h_object: HANDLE32) -> BOOL32 {
 // create_pen
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Creates a logical pen with the specified style, width, and color.
 ///
 /// # Returns
@@ -248,6 +261,9 @@ pub unsafe extern "C" fn wow64_create_pen(
 // create_solid_brush
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Creates a logical brush with the specified solid color.
 ///
 /// # Returns
@@ -264,6 +280,9 @@ pub unsafe extern "C" fn wow64_create_solid_brush(_color: ULONG32) -> HBRUSH32 {
 // CreateCompatibleBitmap
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Creates a bitmap compatible with the specified device.
 ///
 /// # Returns
@@ -282,6 +301,9 @@ pub unsafe extern "C" fn wow64_create_compatible_bitmap(
 // GetObject
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Retrieves information about a logical pen, brush, font, bitmap, region, or palette.
 ///
 /// # Returns
@@ -300,6 +322,9 @@ pub unsafe extern "C" fn wow64_get_object(
 // text_out_w
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Writes a string of characters at the specified location.
 ///
 /// # Returns
@@ -321,6 +346,9 @@ pub unsafe extern "C" fn wow64_text_out_w(
 // ExtTextOutW
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Draws text using the currently selected font.
 ///
 /// # Returns
@@ -344,6 +372,9 @@ pub unsafe extern "C" fn wow64_ext_text_out_w(
 // bit_blt
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Performs a bit-block transfer (copy) between device contexts.
 ///
 /// # Returns
@@ -379,6 +410,9 @@ pub unsafe extern "C" fn wow64_bit_blt(
 // pat_blt
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Updates the current pen, brush, and bitmap pattern.
 ///
 /// # Returns
@@ -408,6 +442,9 @@ pub unsafe extern "C" fn wow64_pat_blt(
 // get_stock_object
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Retrieves a handle to one of the predefined stock objects.
 ///
 /// # Returns
@@ -435,6 +472,9 @@ pub unsafe extern "C" fn wow64_get_stock_object(object: i32) -> HANDLE32 {
 // fill_rect
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Fills a rectangle using the specified brush.
 ///
 /// # Returns
@@ -449,6 +489,9 @@ pub unsafe extern "C" fn wow64_fill_rect(_hdc: HDC32, _rect: ULONG32, _brush: HB
 // GetPixel
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Retrieves the color of the pixel at the specified coordinates.
 ///
 /// # Returns
@@ -463,6 +506,9 @@ pub unsafe extern "C" fn wow64_get_pixel(_hdc: HDC32, _x: i32, _y: i32) -> ULONG
 // SetPixel
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Sets the pixel at the specified coordinates to the specified color.
 ///
 /// # Returns

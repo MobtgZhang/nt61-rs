@@ -9,7 +9,10 @@ use crate::netstack::dns;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 
-pub fn getaddrinfo(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn getaddrinfo(
     nodename: *const u8,
     servname: *const u8,
     hints: *const addrinfo,
@@ -126,7 +129,10 @@ pub fn freeaddrinfo(ai: *mut addrinfo) {
     }
 }
 
-pub fn getnameinfo(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn getnameinfo(
     sa: *const sockaddr,
     salen: i32,
     host: *mut u8,
@@ -180,8 +186,11 @@ pub fn getnameinfo(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// gethostbyname() - get host information by name (deprecated but still used)
-pub fn gethostbyname(name: *const u8) -> *mut hostent {
+pub unsafe fn gethostbyname(name: *const u8) -> *mut hostent {
     if name.is_null() {
         set_last_error(WSAEFAULT);
         return core::ptr::null_mut();
@@ -265,6 +274,9 @@ pub struct servent {
     pub s_proto: *mut u8,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn cstr_to_string(ptr: *const u8) -> String {
     let mut len = 0;
     while *ptr.add(len) != 0 {
@@ -277,7 +289,10 @@ unsafe fn cstr_to_string(ptr: *const u8) -> String {
     String::from_utf8_lossy(slice).to_string()
 }
 
-pub fn wsaaddress_to_string_a(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn wsaaddress_to_string_a(
     lpsa_address: *const sockaddr,
     _dw_address_length: u32,
     _lp_protocol_info: *const WSAPROTOCOL_INFOW,
@@ -329,7 +344,10 @@ pub fn wsaaddress_to_string_a(
     0
 }
 
-pub fn wsastring_to_address_a(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn wsastring_to_address_a(
     address_string: *const u8,
     address_family: i32,
     _lp_protocol_info: *const WSAPROTOCOL_INFOW,
@@ -383,17 +401,17 @@ pub fn wsastring_to_address_a(
     0
 }
 
-pub fn inet_addr(cp: *const u8) -> u32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn inet_addr(cp: *const u8) -> u32 {
     if cp.is_null() {
         return 0xFFFFFFFF; // INADDR_NONE
     }
 
     let addr_string = unsafe { cstr_to_string(cp) };
 
-    match dns::parse_ipv4_literal(&addr_string) {
-        Some(ip) => ip,
-        None => 0xFFFFFFFF,
-    }
+    dns::parse_ipv4_literal(&addr_string).unwrap_or(0xFFFFFFFF)
 }
 
 pub fn inet_ntoa(_addr: in_addr) -> *const u8 {
@@ -401,7 +419,10 @@ pub fn inet_ntoa(_addr: in_addr) -> *const u8 {
     core::ptr::null()
 }
 
-pub fn inet_pton(family: i32, psz_addr_string: *const u8, p_addr_buf: *mut u8) -> i32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn inet_pton(family: i32, psz_addr_string: *const u8, p_addr_buf: *mut u8) -> i32 {
     if psz_addr_string.is_null() || p_addr_buf.is_null() {
         set_last_error(WSAEFAULT);
         return -1;
@@ -425,7 +446,10 @@ pub fn inet_pton(family: i32, psz_addr_string: *const u8, p_addr_buf: *mut u8) -
     }
 }
 
-pub fn inet_ntop(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn inet_ntop(
     family: i32,
     p_addr: *const u8,
     p_string_buf: *mut u8,

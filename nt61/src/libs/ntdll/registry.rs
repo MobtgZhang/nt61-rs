@@ -370,8 +370,11 @@ pub fn init() {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// create a subkey under the given parent.
-pub fn create_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut RegistryKey> {
+pub unsafe fn create_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut RegistryKey> {
     let key_ptr = crate::mm::pool::allocate(
         crate::mm::pool::PoolType::NonPaged,
         core::mem::size_of::<RegistryKey>(),
@@ -385,9 +388,7 @@ pub fn create_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut Regi
             }
             // Copy name one element at a time (avoid copy_from_slice)
             let len = name.len().min(255);
-            for i in 0..len {
-                (*key_ptr).name[i] = name[i];
-            }
+            (&mut (*key_ptr).name)[..len].copy_from_slice(&name[..len]);
             (*key_ptr).name_len = len as u16;
             (*key_ptr).key_type = KeyType::Directory;
             (*key_ptr).parent = parent;
@@ -408,7 +409,7 @@ pub fn create_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut Regi
             }
 
             if !parent.is_null() && (*parent).child_count < 32 {
-                let idx = (*parent).child_count as usize;
+                let idx = (*parent).child_count;
                 (*parent).children[idx] = Some(key_ptr);
                 (*parent).child_count += 1;
             }
@@ -420,97 +421,104 @@ pub fn create_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut Regi
 
 /// Create the shared default DACL for the in-memory registry shadow tree.
 fn registry_default_security() -> *const crate::se::seaccess::SecurityDescriptor {
-    use crate::se::acl::{AceFlags, Acl};
-    use crate::se::seaccess::{SecurityDescriptor, ACCESS_GENERIC_ALL, ACCESS_GENERIC_READ};
-    use crate::se::sid::{sid, WellKnownSid};
-
-    let acl_ptr = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<Acl>(),
-    ) as *mut Acl;
-    let sd_ptr = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<SecurityDescriptor>(),
-    ) as *mut SecurityDescriptor;
-    if acl_ptr.is_null() || sd_ptr.is_null() {
-        if !acl_ptr.is_null() {
-            crate::mm::pool::free(acl_ptr as *mut u8);
-        }
-        if !sd_ptr.is_null() {
-            crate::mm::pool::free(sd_ptr as *mut u8);
-        }
-        return core::ptr::null();
-    }
-
     unsafe {
-        core::ptr::write(acl_ptr, Acl::new());
-        let acl = &mut *acl_ptr;
-        if !acl.add_access_allowed(
-            &sid::well_known(WellKnownSid::LocalSystem),
-            ACCESS_GENERIC_ALL,
-            AceFlags::NONE,
-        ) || !acl.add_access_allowed(
-            &sid::well_known(WellKnownSid::Administrators),
-            ACCESS_GENERIC_ALL,
-            AceFlags::NONE,
-        ) || !acl.add_access_allowed(
-            &sid::well_known(WellKnownSid::Users),
-            ACCESS_GENERIC_READ,
-            AceFlags::NONE,
-        ) {
-            crate::mm::pool::free(acl_ptr as *mut u8);
-            crate::mm::pool::free(sd_ptr as *mut u8);
+        use crate::se::acl::{AceFlags, Acl};
+        use crate::se::seaccess::{SecurityDescriptor, ACCESS_GENERIC_ALL, ACCESS_GENERIC_READ};
+        use crate::se::sid::{sid, WellKnownSid};
+
+        let acl_ptr = crate::mm::pool::allocate(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<Acl>(),
+        ) as *mut Acl;
+        let sd_ptr = crate::mm::pool::allocate(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<SecurityDescriptor>(),
+        ) as *mut SecurityDescriptor;
+        if acl_ptr.is_null() || sd_ptr.is_null() {
+            if !acl_ptr.is_null() {
+                crate::mm::pool::free(acl_ptr as *mut u8);
+            }
+            if !sd_ptr.is_null() {
+                crate::mm::pool::free(sd_ptr as *mut u8);
+            }
             return core::ptr::null();
         }
 
-        core::ptr::write(
-            sd_ptr,
-            SecurityDescriptor {
-                revision: 1,
-                sbz1: 0,
-                control: 0x8004,
-                owner: sid::well_known(WellKnownSid::Administrators),
-                group: sid::well_known(WellKnownSid::Administrators),
-                sacl: core::ptr::null(),
-                dacl: acl_ptr,
-            },
-        );
+        unsafe {
+            core::ptr::write(acl_ptr, Acl::new());
+            let acl = &mut *acl_ptr;
+            if !acl.add_access_allowed(
+                &sid::well_known(WellKnownSid::LocalSystem),
+                ACCESS_GENERIC_ALL,
+                AceFlags::NONE,
+            ) || !acl.add_access_allowed(
+                &sid::well_known(WellKnownSid::Administrators),
+                ACCESS_GENERIC_ALL,
+                AceFlags::NONE,
+            ) || !acl.add_access_allowed(
+                &sid::well_known(WellKnownSid::Users),
+                ACCESS_GENERIC_READ,
+                AceFlags::NONE,
+            ) {
+                crate::mm::pool::free(acl_ptr as *mut u8);
+                crate::mm::pool::free(sd_ptr as *mut u8);
+                return core::ptr::null();
+            }
+
+            core::ptr::write(
+                sd_ptr,
+                SecurityDescriptor {
+                    revision: 1,
+                    sbz1: 0,
+                    control: 0x8004,
+                    owner: sid::well_known(WellKnownSid::Administrators),
+                    group: sid::well_known(WellKnownSid::Administrators),
+                    sacl: core::ptr::null(),
+                    dacl: acl_ptr,
+                },
+            );
+        }
+        sd_ptr
     }
-    sd_ptr
 }
 
 /// Enforce the key object's DACL with the caller's process token.
 fn registry_access_allowed(key: *mut RegistryKey, desired_access: u32) -> bool {
-    use crate::se::seaccess::{se_access_check, AccessCheckResult, ObTypeIndex};
+    unsafe {
+        use crate::se::seaccess::{se_access_check, AccessCheckResult, ObTypeIndex};
 
-    if key.is_null() {
-        return false;
-    }
-    let current_process = crate::arch::common::percpu::get_current_process();
-    if current_process.is_null() {
-        return false;
-    }
-    let token = unsafe { (*current_process).get_token() };
-    if token.is_null() {
-        return false;
-    }
-
-    let security = unsafe {
-        if (*key).security.is_null() {
-            (*key).security = registry_default_security();
+        if key.is_null() {
+            return false;
         }
-        (*key).security
-    };
-    if security.is_null() {
-        return false;
-    }
+        let current_process = crate::arch::common::percpu::get_current_process();
+        if current_process.is_null() {
+            return false;
+        }
+        let token = unsafe { (*current_process).get_token() };
+        if token.is_null() {
+            return false;
+        }
 
-    let (result, granted) = se_access_check(ObTypeIndex::Key, security, desired_access, token);
-    result == AccessCheckResult::Allowed && (granted & desired_access) == desired_access
+        let security = unsafe {
+            if (*key).security.is_null() {
+                (*key).security = registry_default_security();
+            }
+            (*key).security
+        };
+        if security.is_null() {
+            return false;
+        }
+
+        let (result, granted) = se_access_check(ObTypeIndex::Key, security, desired_access, token);
+        result == AccessCheckResult::Allowed && (granted & desired_access) == desired_access
+    }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Find a subkey by name (case-sensitive) under the given parent.
-pub fn find_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut RegistryKey> {
+pub unsafe fn find_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut RegistryKey> {
     if parent.is_null() {
         return None;
     }
@@ -537,8 +545,16 @@ pub fn find_subkey(parent: *mut RegistryKey, name: &[u16]) -> Option<*mut Regist
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Set a value on a registry key. Returns `true` on success.
-pub fn set_value(key: *mut RegistryKey, name: &[u16], vtype: ValueType, data: &[u8]) -> bool {
+pub unsafe fn set_value(
+    key: *mut RegistryKey,
+    name: &[u16],
+    vtype: ValueType,
+    data: &[u8],
+) -> bool {
     if key.is_null() {
         return false;
     }
@@ -599,8 +615,11 @@ pub fn set_value(key: *mut RegistryKey, name: &[u16], vtype: ValueType, data: &[
     false
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get a value by name. Returns `(ValueType, value_index)` on success.
-pub fn get_value(key: *mut RegistryKey, name: &[u16]) -> Option<(ValueType, usize)> {
+pub unsafe fn get_value(key: *mut RegistryKey, name: &[u16]) -> Option<(ValueType, usize)> {
     if key.is_null() {
         return None;
     }
@@ -631,6 +650,9 @@ pub fn get_value(key: *mut RegistryKey, name: &[u16]) -> Option<(ValueType, usiz
 // ntdll Registry API Functions
 // ============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_create_key — creates or opens a registry key and returns a handle.
 ///
 /// handle semantics: slot_index + 1 (1-based), so 0 is invalid.
@@ -735,10 +757,8 @@ pub unsafe extern "C" fn nt_create_key(
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
 
-    if !disposition.is_null() {
-        if write_user_object(disposition as u64, &1u32).is_err() {
-            return STATUS_INVALID_PARAMETER;
-        }
+    if !disposition.is_null() && write_user_object(disposition as u64, &1u32).is_err() {
+        return STATUS_INVALID_PARAMETER;
     }
 
     kprintln!(
@@ -751,6 +771,9 @@ pub unsafe extern "C" fn nt_create_key(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_open_key — opens an existing registry key.
 pub unsafe extern "C" fn nt_open_key(
     key_handle: *mut HANDLE,
@@ -836,6 +859,9 @@ pub unsafe extern "C" fn nt_open_key(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_set_value_key — sets a value on an open key.
 ///
 /// SECURITY: Validates data_size against MAX_VALUE_DATA_SIZE before copying.
@@ -935,6 +961,9 @@ pub unsafe extern "C" fn nt_set_value_key(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_query_value_key — queries a value's type and size.
 pub unsafe extern "C" fn nt_query_value_key(
     key_handle: HANDLE,
@@ -1064,6 +1093,9 @@ pub unsafe extern "C" fn nt_query_value_key(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Copies a UTF-16LE value name into a user buffer at `dst`.
 unsafe fn copy_utf16_name(dst: *mut u8, name: &[u16]) {
     for (index, unit) in name.iter().enumerate() {
@@ -1100,6 +1132,9 @@ fn find_value(key: *mut RegistryKey, name: &[u16]) -> Option<(ValueType, &[u8])>
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_delete_key — deletes a key opened with DELETE access.
 ///
 /// Honours NtDeleteKey semantics where the in-memory tree allows them:
@@ -1161,7 +1196,7 @@ pub unsafe extern "C" fn nt_delete_key(key_handle: HANDLE) -> NTSTATUS {
 
     // Remove the key from its parent's child list, compacting the slots.
     {
-        let count = (*parent).child_count as usize;
+        let count = (*parent).child_count;
         let mut found: Option<usize> = None;
         for i in 0..count {
             if (*parent).children[i] == Some(key) {
@@ -1208,6 +1243,9 @@ pub unsafe extern "C" fn nt_delete_key(key_handle: HANDLE) -> NTSTATUS {
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_delete_value_key — deletes a named value from a key.
 pub unsafe extern "C" fn nt_delete_value_key(
     key_handle: HANDLE,
@@ -1388,6 +1426,9 @@ fn write_result_length(result_length: *mut u32, required: usize) -> bool {
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_query_key — query information about a registry key.
 pub unsafe extern "C" fn nt_query_key(
     key_handle: HANDLE,
@@ -1497,6 +1538,9 @@ pub unsafe extern "C" fn nt_query_key(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_enumerate_key — enumerate subkeys of a registry key.
 pub unsafe extern "C" fn nt_enumerate_key(
     key_handle: HANDLE,
@@ -1623,6 +1667,9 @@ pub unsafe extern "C" fn nt_enumerate_key(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_enumerate_value_key — enumerate values of a registry key.
 pub unsafe extern "C" fn nt_enumerate_value_key(
     key_handle: HANDLE,
@@ -1786,6 +1833,9 @@ pub unsafe extern "C" fn nt_enumerate_value_key(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_reg_close_key — close a registry key handle.
 pub unsafe extern "C" fn nt_reg_close_key(key_handle: HANDLE) -> NTSTATUS {
     use crate::libs::ntdll::status::STATUS_INVALID_HANDLE;
@@ -1810,6 +1860,9 @@ pub unsafe extern "C" fn nt_reg_close_key(key_handle: HANDLE) -> NTSTATUS {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_flush_key — flush pending changes for a key.
 ///
 /// The kernel registry cache in this build is written through on every
@@ -1824,6 +1877,9 @@ pub unsafe extern "C" fn nt_flush_key(key_handle: HANDLE) -> NTSTATUS {
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_notify_change_key — register (or wait for) key change notifications.
 ///
 /// Synchronous requests report success. Asynchronous requests register the
@@ -1867,61 +1923,63 @@ pub unsafe extern "C" fn nt_notify_change_key(
 
 /// Initialize default registry keys (SYSTEM, SOFTWARE, HARDWARE, SAM, SECURITY).
 pub fn init_default_keys() {
-    let root = REGISTRY_ROOT.lock();
-    if let Some(root_key) = *root {
-        // create SYSTEM hive key.
-        let sys_path = [
-            b'S' as u16,
-            b'Y' as u16,
-            b'S' as u16,
-            b'T' as u16,
-            b'E' as u16,
-            b'M' as u16,
-        ];
-        let _ = create_subkey(root_key, &sys_path);
+    unsafe {
+        let root = REGISTRY_ROOT.lock();
+        if let Some(root_key) = *root {
+            // create SYSTEM hive key.
+            let sys_path = [
+                b'S' as u16,
+                b'Y' as u16,
+                b'S' as u16,
+                b'T' as u16,
+                b'E' as u16,
+                b'M' as u16,
+            ];
+            let _ = create_subkey(root_key, &sys_path);
 
-        // create SOFTWARE hive key with a version value.
-        let soft_path = [
-            b'S' as u16,
-            b'O' as u16,
-            b'F' as u16,
-            b'T' as u16,
-            b'W' as u16,
-            b'A' as u16,
-            b'R' as u16,
-            b'E' as u16,
-        ];
-        let _ = create_subkey(root_key, &soft_path);
+            // create SOFTWARE hive key with a version value.
+            let soft_path = [
+                b'S' as u16,
+                b'O' as u16,
+                b'F' as u16,
+                b'T' as u16,
+                b'W' as u16,
+                b'A' as u16,
+                b'R' as u16,
+                b'E' as u16,
+            ];
+            let _ = create_subkey(root_key, &soft_path);
 
-        // create HARDWARE hive key.
-        let hw_path = [
-            b'H' as u16,
-            b'A' as u16,
-            b'R' as u16,
-            b'D' as u16,
-            b'W' as u16,
-            b'A' as u16,
-            b'R' as u16,
-            b'E' as u16,
-        ];
-        let _ = create_subkey(root_key, &hw_path);
+            // create HARDWARE hive key.
+            let hw_path = [
+                b'H' as u16,
+                b'A' as u16,
+                b'R' as u16,
+                b'D' as u16,
+                b'W' as u16,
+                b'A' as u16,
+                b'R' as u16,
+                b'E' as u16,
+            ];
+            let _ = create_subkey(root_key, &hw_path);
 
-        // create SAM hive key.
-        let sam_path = [b'S' as u16, b'A' as u16, b'M' as u16];
-        let _ = create_subkey(root_key, &sam_path);
+            // create SAM hive key.
+            let sam_path = [b'S' as u16, b'A' as u16, b'M' as u16];
+            let _ = create_subkey(root_key, &sam_path);
 
-        // create SECURITY hive key.
-        let sec_path = [
-            b'S' as u16,
-            b'E' as u16,
-            b'C' as u16,
-            b'U' as u16,
-            b'R' as u16,
-            b'I' as u16,
-            b'T' as u16,
-            b'Y' as u16,
-        ];
-        let _ = create_subkey(root_key, &sec_path);
+            // create SECURITY hive key.
+            let sec_path = [
+                b'S' as u16,
+                b'E' as u16,
+                b'C' as u16,
+                b'U' as u16,
+                b'R' as u16,
+                b'I' as u16,
+                b'T' as u16,
+                b'Y' as u16,
+            ];
+            let _ = create_subkey(root_key, &sec_path);
+        }
     }
 }
 

@@ -8,6 +8,9 @@
 
 use crate::crypto::csprng;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_gen_random` — fill `buffer` with `length` random bytes.
 /// Returns TRUE on success, FALSE on failure.
 #[no_mangle]
@@ -15,6 +18,9 @@ pub unsafe extern "C" fn rtl_gen_random(buffer: *mut u8, length: u32) -> i32 {
     csprng::rtl_gen_random(buffer, length)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `SystemFunction036` — the advapi32 alias for rtl_gen_random.
 #[no_mangle]
 pub unsafe extern "C" fn SystemFunction036(buffer: *mut u8, length: u32) -> i32 {

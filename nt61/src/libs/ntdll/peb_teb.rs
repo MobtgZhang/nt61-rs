@@ -109,6 +109,9 @@ pub struct Teb {
     pub _pad5: [PVOID; 8],
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_get_current_peb` — return the PEB pointer of the current
 /// process. In a real kernel this reads the `gs` segment. The
 /// bootstrap returns NULL.
@@ -116,15 +119,24 @@ pub unsafe extern "C" fn rtl_get_current_peb() -> *mut peb {
     core::ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_get_thread_error_mode` / `rtl_set_thread_error_mode` — return 0
 /// (default error mode).
 pub unsafe extern "C" fn rtl_get_thread_error_mode() -> u32 {
     0
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_set_thread_error_mode(_mode: u32, _old_mode: *mut u32) -> i32 {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `peb_get_version` — return the OS version. We report
 /// `6.1.7601` (Windows 7 SP1 build 7601).
 pub unsafe extern "C" fn peb_get_version(major: *mut u32, minor: *mut u32, build: *mut u32) -> u32 {
@@ -140,6 +152,9 @@ pub unsafe extern "C" fn peb_get_version(major: *mut u32, minor: *mut u32, build
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_exit_user_thread` — exit the current thread. Maps to
 /// `NT_TERMINATE_THREAD` with the supplied status.
 pub unsafe extern "C" fn rtl_exit_user_thread(exit_status: u32) -> ! {

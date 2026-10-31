@@ -50,7 +50,6 @@ pub const EIO: CInt = 5;
 pub const HUGE_VAL: f64 = f64::INFINITY;
 
 /// FILE structure for stream operations
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct FILE {
@@ -79,6 +78,12 @@ impl FILE {
             eof: false,
             error: false,
         }
+    }
+}
+
+impl Default for FILE {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -115,6 +120,12 @@ impl tm {
             tm_yday: 0,
             tm_isdst: -1,
         }
+    }
+}
+
+impl Default for tm {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

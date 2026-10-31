@@ -745,7 +745,10 @@ fn test_wow64_process_identification_and_query() {
         crate::ps::wow64_process::get_peb32_address(&process),
         PEB32_VIRTUAL_ADDRESS
     );
-    assert_eq!(crate::ps::wow64_process::get_wow64_last_error(&process), 0x57);
+    assert_eq!(
+        crate::ps::wow64_process::get_wow64_last_error(&process),
+        0x57
+    );
     assert_eq!(
         crate::ps::wow64_process::query_wow64_information(
             &process,
@@ -760,7 +763,9 @@ fn test_wow64_process_identification_and_query() {
         ),
         process.session_id as u32
     );
-    assert!(crate::ps::wow64_process::registry_redirection_enabled(&process));
+    assert!(crate::ps::wow64_process::registry_redirection_enabled(
+        &process
+    ));
 }
 
 #[test]
@@ -770,12 +775,8 @@ fn test_wow64_thread_setup() {
     thread.client_id.set(0x0000_0123, 0x0000_0456);
 
     let stack_top = TEB32_BASE_ADDRESS;
-    let teb32 = crate::ps::wow64_thread::initialize_wow64_thread(
-        &mut thread,
-        &process,
-        stack_top,
-    )
-    .expect("TEB32 allocation");
+    let teb32 = crate::ps::wow64_thread::initialize_wow64_thread(&mut thread, &process, stack_top)
+        .expect("TEB32 allocation");
 
     assert_eq!(thread.get_wow64_teb32(), teb32);
     unsafe {
@@ -789,10 +790,7 @@ fn test_wow64_thread_setup() {
         );
         assert_eq!((*teb32).client_id.unique_process, 0x123);
         assert_eq!((*teb32).client_id.unique_thread, 0x456);
-        assert_eq!(
-            (*teb32).process_environment_block,
-            PEB32_VIRTUAL_ADDRESS
-        );
+        assert_eq!((*teb32).process_environment_block, PEB32_VIRTUAL_ADDRESS);
     }
 }
 

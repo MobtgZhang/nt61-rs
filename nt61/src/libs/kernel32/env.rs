@@ -108,6 +108,9 @@ const COMMAND_LINE: &[u16] = &[
     0,
 ];
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_environment_variable_w`.
 pub unsafe extern "C" fn get_environment_variable_w(
     name: *const u16,
@@ -144,6 +147,9 @@ pub unsafe extern "C" fn get_environment_variable_w(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `set_environment_variable_w`.
 pub unsafe extern "C" fn set_environment_variable_w(name: *const u16, value: *const u16) -> BOOL {
     if name.is_null() {
@@ -187,6 +193,9 @@ pub unsafe extern "C" fn set_environment_variable_w(name: *const u16, value: *co
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_current_directory_w`.
 pub unsafe extern "C" fn get_current_directory_w(buffer_length: DWORD, buffer: *mut u16) -> DWORD {
     let len = (DEFAULT_DIR.len() as DWORD) - 1; // exclude NUL
@@ -199,31 +208,46 @@ pub unsafe extern "C" fn get_current_directory_w(buffer_length: DWORD, buffer: *
     len
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `set_current_directory_w` — accept the call and ignore the
 /// directory (the bootstrap has no real current directory).
 pub unsafe extern "C" fn set_current_directory_w(_path: *const u16) -> BOOL {
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_command_line_w` — return the static command line.
 pub unsafe extern "C" fn get_command_line_w() -> *const u16 {
     COMMAND_LINE.as_ptr()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_system_directory_w` / `get_windows_directory_w`.
 pub unsafe extern "C" fn get_system_directory_w(buffer: *mut u16, buffer_size: DWORD) -> DWORD {
     if buffer.is_null() || buffer_size < 40 {
         return 40;
     }
-    let p = &DEFAULT_DIR[..];
+    let p = DEFAULT_DIR;
     ptr::copy_nonoverlapping(p.as_ptr(), buffer, p.len());
     p.len() as DWORD
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_windows_directory_w(buffer: *mut u16, buffer_size: DWORD) -> DWORD {
     get_system_directory_w(buffer, buffer_size)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `expand_environment_strings_w` — substitute `%FOO%` with the
 /// matching environment variable. We only do exact matches
 /// and a single pass.
@@ -252,7 +276,7 @@ pub unsafe extern "C" fn expand_environment_strings_w(
         }
         sl[expanded.len()] = 0;
         ptr::copy_nonoverlapping(sl.as_ptr(), destination, bytes.min(sl.len()));
-        if (bytes as usize) < sl.len() {
+        if bytes < sl.len() {
             *destination.add(bytes - 1) = 0;
         }
     }

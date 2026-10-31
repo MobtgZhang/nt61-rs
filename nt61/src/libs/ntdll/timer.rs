@@ -50,6 +50,9 @@ impl TimerState {
 const MAX_TIMERS: usize = 64;
 static TIMER_STATES: Spinlock<[Option<TimerState>; MAX_TIMERS]> = Spinlock::new([None; MAX_TIMERS]);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_create_timer(
     timer_handle: *mut HANDLE,
     desired_access: u32,
@@ -88,6 +91,9 @@ pub unsafe extern "C" fn nt_create_timer(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_open_timer(
     timer_handle: *mut HANDLE,
     desired_access: u32,
@@ -105,6 +111,9 @@ pub unsafe extern "C" fn nt_open_timer(
 pub type TimerApcRoutine =
     unsafe extern "C" fn(timer_context: PVOID, timer_low_value: u32, timer_high_value: i32);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_set_timer(
     timer_handle: HANDLE,
     due_time: *const LargeInteger,
@@ -150,6 +159,9 @@ pub unsafe extern "C" fn nt_set_timer(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_cancel_timer(timer_handle: HANDLE, current_state: *mut u8) -> NTSTATUS {
     if timer_handle.is_null() {
         return STATUS_INVALID_HANDLE;
@@ -203,6 +215,9 @@ pub struct TimerBasicInformation {
     pub timer_state: u8,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_query_timer(
     timer_handle: HANDLE,
     timer_information_class: u32,

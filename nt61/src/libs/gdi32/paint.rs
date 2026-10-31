@@ -82,37 +82,42 @@ fn dc_rop(dc: HDC) -> u32 {
 /// `(x, y, w, h)` on the surface backing `dc`. Returns
 /// 1 on success, 0 on failure.
 pub extern "C" fn pat_blt(dc: HDC, x: i32, y: i32, w: i32, h: i32, rop: u32) -> BOOL {
-    if w == 0 || h == 0 {
-        return 1;
-    }
-    let surf = primary_surface();
-    if surf.is_null() {
-        return 0;
-    }
-    let rop_eff = if rop == 0 { dc_rop(dc) } else { rop };
-    let colour = match rop_eff {
-        rop::BLACKNESS => 0x0000_0000,
-        rop::WHITENESS => 0x00FF_FFFF,
-        rop::DSTINVERT => {
-            // Invert the destination in place.
-            for yi in 0..h {
-                for xi in 0..w {
-                    let px = read_pixel(surf, x + xi, y + yi);
-                    write_pixel(
-                        surf,
-                        x + xi,
-                        y + yi,
-                        crate::libs::win32k::apply_rop(px, 0, rop::DSTINVERT),
-                    );
-                }
-            }
+    unsafe {
+        if w == 0 || h == 0 {
             return 1;
         }
-        _ => 0x00FF_FFFF, // SRCCOPY / PATCOPY default to white.
-    };
-    crate::libs::win32k::surface::eng_fill_rectangle(surf, x, y, x + w, y + h, colour) as BOOL
+        let surf = primary_surface();
+        if surf.is_null() {
+            return 0;
+        }
+        let rop_eff = if rop == 0 { dc_rop(dc) } else { rop };
+        let colour = match rop_eff {
+            rop::BLACKNESS => 0x0000_0000,
+            rop::WHITENESS => 0x00FF_FFFF,
+            rop::DSTINVERT => {
+                // Invert the destination in place.
+                for yi in 0..h {
+                    for xi in 0..w {
+                        let px = read_pixel(surf, x + xi, y + yi);
+                        write_pixel(
+                            surf,
+                            x + xi,
+                            y + yi,
+                            crate::libs::win32k::apply_rop(px, 0, rop::DSTINVERT),
+                        );
+                    }
+                }
+                return 1;
+            }
+            _ => 0x00FF_FFFF, // SRCCOPY / PATCOPY default to white.
+        };
+        crate::libs::win32k::surface::eng_fill_rectangle(surf, x, y, x + w, y + h, colour) as BOOL
+    }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `fill_rect` — fill the rectangle with the brush
 /// referenced by `_brush`. If the brush is a real
 /// gdi32 brush we recover its colour from the table;
@@ -155,6 +160,9 @@ pub unsafe extern "C" fn fill_rect(dc: HDC, rect: *const Rect, brush: HBRUSH) ->
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `frame_rect` — draw a 1-pixel border around `rect`
 /// with the brush colour.
 pub unsafe extern "C" fn frame_rect(dc: HDC, rect: *const Rect, brush: HBRUSH) -> i32 {
@@ -218,6 +226,9 @@ pub unsafe extern "C" fn frame_rect(dc: HDC, rect: *const Rect, brush: HBRUSH) -
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `invalidate_rect` — mark a region as needing
 /// repainting. Forwarded to the win32k paint scheduler.
 pub unsafe extern "C" fn invalidate_rect(hwnd: HWND, rect: *const Rect, erase: BOOL) -> BOOL {
@@ -232,6 +243,9 @@ pub unsafe extern "C" fn invalidate_rect(hwnd: HWND, rect: *const Rect, erase: B
     crate::libs::win32k::paint::invalidate_rect(hwnd as u64, win_rect, erase != 0) as BOOL
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `invalidate_rgn` — same as `invalidate_rect` but
 /// for a region handle. The region table in win32k
 /// does not currently distinguish shapes, so we map
@@ -241,6 +255,9 @@ pub unsafe extern "C" fn invalidate_rgn(hwnd: HWND, rgn: HRGN, erase: BOOL) -> B
     crate::libs::win32k::paint::invalidate_rect(hwnd as u64, None, erase != 0) as BOOL
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `validate_rect` — mark a region as valid.
 pub unsafe extern "C" fn validate_rect(hwnd: HWND, rect: *const Rect) -> BOOL {
     let win_rect: Option<crate::libs::win32k::Rect> = if rect.is_null() {
@@ -251,6 +268,9 @@ pub unsafe extern "C" fn validate_rect(hwnd: HWND, rect: *const Rect) -> BOOL {
     crate::libs::win32k::paint::validate_rect(hwnd as u64, win_rect) as BOOL
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `update_window` — request immediate repaint. We
 /// forward to `win32k::paint::update_window`; the
 /// scheduler decides whether to actually walk the

@@ -14,6 +14,9 @@ use crate::libs::ntdll::types::PVOID;
 
 pub type ScHandle = HANDLE;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn ChangeServiceConfig2W(
     h_service: ScHandle,
@@ -53,6 +56,9 @@ pub unsafe extern "C" fn ChangeServiceConfig2W(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn QueryServiceConfig2W(
     h_service: ScHandle,
@@ -119,6 +125,9 @@ pub unsafe extern "C" fn QueryServiceConfig2W(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn QueryServiceStatusEx(
     h_service: ScHandle,
@@ -164,6 +173,9 @@ pub unsafe extern "C" fn QueryServiceStatusEx(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn ControlServiceEx(
     h_service: ScHandle,

@@ -67,6 +67,9 @@ pub fn find_dll(name: &str) -> Option<LdrEntry> {
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `ldr_load_dll` — load a DLL into the process. `dll_path` is
 /// optional (NULL means use the default search order);
 /// `DllFileName` is the file name (e.g. `kernel32.dll`).
@@ -152,6 +155,9 @@ pub unsafe extern "C" fn ldr_load_dll(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `ldr_get_dll_handle` — find an already-loaded DLL by name.
 pub unsafe extern "C" fn ldr_get_dll_handle(
     _dll_characteristics: u32,
@@ -176,6 +182,9 @@ pub unsafe extern "C" fn ldr_get_dll_handle(
     STATUS_NOT_FOUND
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `ldr_get_procedure_address` — find an exported function by
 /// name or ordinal.
 pub unsafe extern "C" fn ldr_get_procedure_address(
@@ -212,6 +221,9 @@ pub unsafe extern "C" fn ldr_get_procedure_address(
     STATUS_NOT_FOUND
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `ldr_enumerate_loaded_modules` — invoke `Callback` for every
 /// loaded DLL. We use a thread-safe iterator over the LDR list.
 pub unsafe extern "C" fn ldr_enumerate_loaded_modules(
@@ -230,6 +242,9 @@ pub unsafe extern "C" fn ldr_enumerate_loaded_modules(
     STATUS_NOT_IMPLEMENTED
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `ldr_unload_dll` — release a DLL. The bootstrap never frees
 /// user DLLs; we just remove the entry from the LDR list.
 pub unsafe extern "C" fn ldr_unload_dll(dll_handle: HANDLE) -> NTSTATUS {
@@ -246,6 +261,9 @@ pub unsafe extern "C" fn ldr_unload_dll(dll_handle: HANDLE) -> NTSTATUS {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `ldr_get_dll_directory` / `ldr_set_dll_directory` — we always
 /// return `C:\Windows\System32`.
 pub unsafe extern "C" fn ldr_get_dll_directory(buffer: PVOID, buffer_length: u32) -> u32 {
@@ -278,6 +296,9 @@ pub unsafe extern "C" fn ldr_get_dll_directory(buffer: PVOID, buffer_length: u32
     22 // length in bytes
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn ldr_set_dll_directory(_path: *mut UnicodeString) -> NTSTATUS {
     STATUS_SUCCESS
 }
@@ -302,10 +323,10 @@ fn ascii_eq(a: &str, b: &str) -> bool {
     for i in 0..ab.len() {
         let mut ca = ab[i];
         let mut cb = bb[i];
-        if ca >= b'a' && ca <= b'z' {
+        if ca.is_ascii_lowercase() {
             ca -= 0x20;
         }
-        if cb >= b'a' && cb <= b'z' {
+        if cb.is_ascii_lowercase() {
             cb -= 0x20;
         }
         if ca != cb {

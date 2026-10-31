@@ -11,6 +11,9 @@ use super::types::{
 };
 use crate::libs::ntdll::file::nt_close;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `close_handle`.
 pub unsafe extern "C" fn close_handle(handle: HANDLE) -> BOOL {
     if handle == HANDLE_CURRENT_PROCESS || handle == HANDLE_CURRENT_THREAD {
@@ -23,6 +26,9 @@ pub unsafe extern "C" fn close_handle(handle: HANDLE) -> BOOL {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `duplicate_handle` — the bootstrap always fails this
 /// because we do not own a real handle table.
 pub unsafe extern "C" fn duplicate_handle(
@@ -40,6 +46,9 @@ pub unsafe extern "C" fn duplicate_handle(
     FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `is_valid_handle` — true if the handle is non-null and
 /// not a pseudo-handle.
 pub unsafe extern "C" fn is_valid_handle(handle: HANDLE) -> BOOL {
@@ -52,6 +61,9 @@ pub unsafe extern "C" fn is_valid_handle(handle: HANDLE) -> BOOL {
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_handle_information` / `set_handle_information` — accept
 /// the call and return TRUE.
 pub unsafe extern "C" fn get_handle_information(_handle: HANDLE, flags: *mut DWORD) -> BOOL {
@@ -61,6 +73,9 @@ pub unsafe extern "C" fn get_handle_information(_handle: HANDLE, flags: *mut DWO
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn set_handle_information(
     _handle: HANDLE,
     _mask: DWORD,

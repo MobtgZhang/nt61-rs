@@ -56,6 +56,9 @@ static DIALOG_TABLE: Spinlock<[DialogState; MAX_DIALOGS]> =
 
 pub type DLGPROC = Option<unsafe extern "C" fn(HWND, u32, usize, isize) -> isize>;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn dialog_box_param_w(
     h_instance: HINSTANCE,
     lp_template_name: *const u16,
@@ -112,6 +115,9 @@ pub unsafe extern "C" fn dialog_box_param_w(
     result
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn dialog_box_indirect_param_w(
     h_instance: HINSTANCE,
     h_dialog_template: *const DLGTEMPLATE,
@@ -129,6 +135,9 @@ pub unsafe extern "C" fn dialog_box_indirect_param_w(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn create_dialog_param_w(
     h_instance: HINSTANCE,
     lp_template_name: *const u16,
@@ -175,6 +184,9 @@ pub unsafe extern "C" fn create_dialog_param_w(
     hwnd
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn create_dialog_indirect_param_w(
     h_instance: HINSTANCE,
     lp_template: *const DLGTEMPLATE,
@@ -190,6 +202,9 @@ pub unsafe extern "C" fn create_dialog_indirect_param_w(
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn end_dialog(h_dlg: HWND, n_result: isize) -> i32 {
     if h_dlg.is_null() {
         return 0;
@@ -207,6 +222,9 @@ pub unsafe extern "C" fn end_dialog(h_dlg: HWND, n_result: isize) -> i32 {
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_dlg_item(h_dlg: HWND, n_id_dlg_item: i32) -> HWND {
     if h_dlg.is_null() {
         return ptr::null_mut();
@@ -216,6 +234,9 @@ pub unsafe extern "C" fn get_dlg_item(h_dlg: HWND, n_id_dlg_item: i32) -> HWND {
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_dlg_item_int(
     h_dlg: HWND,
     n_id_dlg_item: i32,
@@ -235,6 +256,9 @@ pub unsafe extern "C" fn get_dlg_item_int(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn set_dlg_item_int(
     h_dlg: HWND,
     n_id_dlg_item: i32,
@@ -249,6 +273,9 @@ pub unsafe extern "C" fn set_dlg_item_int(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_dlg_item_text_w(
     h_dlg: HWND,
     n_id_dlg_item: i32,
@@ -265,6 +292,9 @@ pub unsafe extern "C" fn get_dlg_item_text_w(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn set_dlg_item_text_w(
     h_dlg: HWND,
     n_id_dlg_item: i32,
@@ -278,6 +308,9 @@ pub unsafe extern "C" fn set_dlg_item_text_w(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn check_dlg_button(h_dlg: HWND, n_id_button: i32, u_check: u32) -> i32 {
     if h_dlg.is_null() {
         return 0;
@@ -287,6 +320,9 @@ pub unsafe extern "C" fn check_dlg_button(h_dlg: HWND, n_id_button: i32, u_check
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn is_dlg_button_checked(h_dlg: HWND, n_id_button: i32) -> u32 {
     if h_dlg.is_null() {
         return 0;
@@ -374,6 +410,9 @@ impl MessageBoxParams {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// MessageBoxW — there is no windowing surface yet, so the box
 /// is rendered into the boot log with its full decoded
 /// parameter set and dismissed with IDOK, the default result of

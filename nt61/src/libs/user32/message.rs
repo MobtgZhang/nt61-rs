@@ -35,6 +35,12 @@ impl MSG {
     }
 }
 
+impl Default for MSG {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct POINT {
@@ -93,10 +99,10 @@ impl MessageQueue {
             if !h_wnd.is_null() && msg.hwnd != h_wnd {
                 continue;
             }
-            if filter_min != 0 || filter_max != 0 {
-                if msg.message < filter_min || msg.message > filter_max {
-                    continue;
-                }
+            if (filter_min != 0 || filter_max != 0)
+                && (msg.message < filter_min || msg.message > filter_max)
+            {
+                continue;
             }
             if remove {
                 let tail = (self.head + self.len) % MAX_MESSAGES;
@@ -137,6 +143,9 @@ fn current_thread_slot() -> usize {
     get_current_thread_id() % MAX_THREADS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_message_w(
     lp_msg: *mut MSG,
     h_wnd: HWND,
@@ -171,6 +180,9 @@ pub unsafe extern "C" fn get_message_w(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_message_a(
     lp_msg: *mut MSG,
     h_wnd: HWND,
@@ -184,6 +196,9 @@ pub const PM_NOREMOVE: u32 = 0x0000;
 pub const PM_REMOVE: u32 = 0x0001;
 pub const PM_NOYIELD: u32 = 0x0002;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn peek_message_w(
     lp_msg: *mut MSG,
     h_wnd: HWND,
@@ -212,6 +227,9 @@ pub unsafe extern "C" fn peek_message_w(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn peek_message_a(
     lp_msg: *mut MSG,
     h_wnd: HWND,
@@ -228,6 +246,9 @@ pub unsafe extern "C" fn peek_message_a(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn post_message_w(
     h_wnd: HWND,
     msg: u32,
@@ -251,6 +272,9 @@ pub unsafe extern "C" fn post_message_w(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn post_message_a(
     h_wnd: HWND,
     msg: u32,
@@ -260,6 +284,9 @@ pub unsafe extern "C" fn post_message_a(
     post_message_w(h_wnd, msg, w_param, l_param)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn send_message_w(
     h_wnd: HWND,
     msg: u32,
@@ -271,6 +298,9 @@ pub unsafe extern "C" fn send_message_w(
     super::window::call_window_procedure(h_wnd, msg, w_param, l_param)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn send_message_a(
     h_wnd: HWND,
     msg: u32,
@@ -280,6 +310,9 @@ pub unsafe extern "C" fn send_message_a(
     send_message_w(h_wnd, msg, w_param, l_param)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn dispatch_message_w(lp_msg: *const MSG) -> isize {
     if lp_msg.is_null() {
         return 0;
@@ -289,10 +322,16 @@ pub unsafe extern "C" fn dispatch_message_w(lp_msg: *const MSG) -> isize {
     super::window::call_window_procedure(msg.hwnd, msg.message, msg.wparam, msg.lparam)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn dispatch_message_a(lp_msg: *const MSG) -> isize {
     dispatch_message_w(lp_msg)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn translate_message(lp_msg: *const MSG) -> i32 {
     if lp_msg.is_null() {
         return 0;
@@ -315,10 +354,16 @@ pub unsafe extern "C" fn translate_message(lp_msg: *const MSG) -> i32 {
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn post_quit_message(n_exit_code: i32) {
     post_message_w(ptr::null_mut(), 0x0012, n_exit_code as usize, 0);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wait_message() -> i32 {
     loop {
         {

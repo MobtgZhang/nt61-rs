@@ -48,8 +48,7 @@ impl Default for WSAData {
 }
 
 /// Per-thread last-error code. Winsock maintains its own
-/// `wsaget_last_error` separate from `get_last_error`.
-
+/// `wsaget_last_error` separate from `get_last_error`.///
 /// wsastartup: caller must request 0x0202 (or 0x0002). Returns
 /// 0 on success, nonzero SOCKET_ERROR otherwise.
 pub fn wsastartup(version: u16, wsadata: &mut WSAData) -> i32 {

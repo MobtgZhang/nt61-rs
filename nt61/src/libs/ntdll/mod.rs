@@ -29,7 +29,7 @@
 //!   * `debug`  — dbg_print / dbg_print_ex
 //!   * `rtl_acl`, `rtl_path` — smaller RTL utilities
 //
-//! References (for layout / signatures only):
+//!     References (for layout / signatures only):
 //!   * Microsoft Windows 7 SDK ntddk.h / ntdef.h
 //!   * ReactOS 0.3.x ntdll headers
 //!   * Wine 1.7.x ntdll.spec

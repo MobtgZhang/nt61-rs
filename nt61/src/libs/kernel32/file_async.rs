@@ -33,6 +33,12 @@ impl OVERLAPPED {
     }
 }
 
+impl Default for OVERLAPPED {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 const IO_STATUS_PENDING: usize = 0x00000103;
 const IO_STATUS_SUCCESS: usize = 0x00000000;
 const IO_STATUS_ERROR: usize = 0xFFFFFFFF;
@@ -60,10 +66,19 @@ impl AsyncIoState {
     }
 }
 
+impl Default for AsyncIoState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 const MAX_ASYNC_OPS: usize = 64;
 static ASYNC_IO_TABLE: Spinlock<[Option<AsyncIoState>; MAX_ASYNC_OPS]> =
     Spinlock::new([None; MAX_ASYNC_OPS]);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn read_file(
     h_file: HANDLE,
     buffer: *mut u8,
@@ -147,6 +162,9 @@ pub unsafe extern "C" fn read_file(
     FALSE // Asynchronous operations return FALSE with ERROR_IO_PENDING
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn write_file(
     h_file: HANDLE,
     buffer: *const u8,
@@ -230,6 +248,9 @@ pub unsafe extern "C" fn write_file(
     FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_overlapped_result(
     h_file: HANDLE,
     overlapped: *mut OVERLAPPED,
@@ -243,11 +264,9 @@ pub unsafe extern "C" fn get_overlapped_result(
 
     let ovl = &mut *overlapped;
 
-    if wait != 0 {
-        while ovl.internal == IO_STATUS_PENDING {
-            for _ in 0..1000 {
-                core::hint::spin_loop();
-            }
+    if wait != 0 && ovl.internal == IO_STATUS_PENDING {
+        for _ in 0..1000 {
+            core::hint::spin_loop();
         }
     }
 
@@ -267,6 +286,9 @@ pub unsafe extern "C" fn get_overlapped_result(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn has_overlapped_io_completed(overlapped: *const OVERLAPPED) -> BOOL {
     if overlapped.is_null() {
         return FALSE;
@@ -280,6 +302,9 @@ pub unsafe extern "C" fn has_overlapped_io_completed(overlapped: *const OVERLAPP
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn cancel_io(h_file: HANDLE) -> BOOL {
     if h_file.is_null() {
         set_last_error(6); // ERROR_INVALID_HANDLE
@@ -309,6 +334,9 @@ pub unsafe extern "C" fn cancel_io(h_file: HANDLE) -> BOOL {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn cancel_io_ex(h_file: HANDLE, overlapped: *mut OVERLAPPED) -> BOOL {
     if h_file.is_null() {
         set_last_error(6);

@@ -63,21 +63,33 @@ static mut STDIN_STREAM: FILE = FILE::new();
 static mut STDOUT_STREAM: FILE = FILE::new();
 pub static mut STDERR_STREAM: FILE = FILE::new();
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn stdin() -> *mut FILE {
     STDIN_STREAM.handle = 0;
     core::ptr::addr_of_mut!(STDIN_STREAM)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn stdout() -> *mut FILE {
     STDOUT_STREAM.handle = 1;
     core::ptr::addr_of_mut!(STDOUT_STREAM)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn stderr() -> *mut FILE {
     STDERR_STREAM.handle = 2;
     core::ptr::addr_of_mut!(STDERR_STREAM)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn init_file_pool() {
     if !FILE_POOL_INIT.load(Ordering::Relaxed) {
         FILE_POOL_INIT.store(true, Ordering::Relaxed);
@@ -91,6 +103,9 @@ const O_APPEND: u32 = 0x0008;
 const O_CREAT: u32 = 0x0010;
 const O_TRUNC: u32 = 0x0020;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn parse_mode(mode: *const CChar) -> u32 {
     let mut flags = 0u32;
     let mut i = 0;
@@ -108,11 +123,15 @@ unsafe fn parse_mode(mode: *const CChar) -> u32 {
         i += 1;
     }
 
-    if *mode.add(i) == b'b' as CChar {}
+    let _ = *mode.add(i);
+    b'b' as CChar;
 
     flags
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fopen(filename: *const CChar, mode: *const CChar) -> *mut FILE {
     if filename.is_null() || mode.is_null() {
@@ -147,6 +166,9 @@ pub unsafe extern "C" fn fopen(filename: *const CChar, mode: *const CChar) -> *m
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fclose(stream: *mut FILE) -> CInt {
     if stream.is_null() {
@@ -169,6 +191,9 @@ pub unsafe extern "C" fn fclose(stream: *mut FILE) -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fread(
     ptr: *mut c_void,
@@ -199,6 +224,9 @@ pub unsafe extern "C" fn fread(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fwrite(
     ptr: *const c_void,
@@ -235,6 +263,9 @@ pub unsafe extern "C" fn fwrite(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fseek(stream: *mut FILE, offset: CLong, whence: CInt) -> CInt {
     if stream.is_null() {
@@ -269,6 +300,9 @@ pub unsafe extern "C" fn fseek(stream: *mut FILE, offset: CLong, whence: CInt) -
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn ftell(stream: *mut FILE) -> CLong {
     if stream.is_null() {
@@ -277,6 +311,9 @@ pub unsafe extern "C" fn ftell(stream: *mut FILE) -> CLong {
     (*stream).position as CLong
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn rewind(stream: *mut FILE) {
     if !stream.is_null() {
@@ -285,6 +322,9 @@ pub unsafe extern "C" fn rewind(stream: *mut FILE) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn feof(stream: *mut FILE) -> CInt {
     if stream.is_null() {
@@ -297,6 +337,9 @@ pub unsafe extern "C" fn feof(stream: *mut FILE) -> CInt {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn ferror(stream: *mut FILE) -> CInt {
     if stream.is_null() {
@@ -309,6 +352,9 @@ pub unsafe extern "C" fn ferror(stream: *mut FILE) -> CInt {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn clearerr(stream: *mut FILE) {
     if !stream.is_null() {
@@ -317,11 +363,17 @@ pub unsafe extern "C" fn clearerr(stream: *mut FILE) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fflush(_stream: *mut FILE) -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fgetc(stream: *mut FILE) -> CInt {
     if stream.is_null() {
@@ -335,6 +387,9 @@ pub unsafe extern "C" fn fgetc(stream: *mut FILE) -> CInt {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fputc(c: CInt, stream: *mut FILE) -> CInt {
     if stream.is_null() {
@@ -348,6 +403,9 @@ pub unsafe extern "C" fn fputc(c: CInt, stream: *mut FILE) -> CInt {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fgets(s: *mut CChar, n: CInt, stream: *mut FILE) -> *mut CChar {
     if s.is_null() || stream.is_null() || n <= 0 {
@@ -373,6 +431,9 @@ pub unsafe extern "C" fn fgets(s: *mut CChar, n: CInt, stream: *mut FILE) -> *mu
     s
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fputs(s: *const CChar, stream: *mut FILE) -> CInt {
     if s.is_null() || stream.is_null() {
@@ -386,26 +447,41 @@ pub unsafe extern "C" fn fputs(s: *const CChar, stream: *mut FILE) -> CInt {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn getc(stream: *mut FILE) -> CInt {
     fgetc(stream)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn putc(c: CInt, stream: *mut FILE) -> CInt {
     fputc(c, stream)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn getchar() -> CInt {
     fgetc(stdin())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn putchar(c: CInt) -> CInt {
     fputc(c, stdout())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn puts(s: *const CChar) -> CInt {
     if s.is_null() {
@@ -420,6 +496,9 @@ pub unsafe extern "C" fn puts(s: *const CChar) -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn ungetc(c: CInt, stream: *mut FILE) -> CInt {
     if stream.is_null() || c == EOF {
@@ -437,6 +516,9 @@ pub unsafe extern "C" fn ungetc(c: CInt, stream: *mut FILE) -> CInt {
 
 // Common printf formatting. This intentionally supports the subset used by
 // MSVCRT programs rather than guessing the ABI of arbitrary conversion types.
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn format_va_list(format: *const CChar, mut args: VaList<'_>) -> Vec<u8> {
     const FORMAT_LIMIT: usize = 1024 * 1024;
     let mut output = Vec::new();
@@ -541,7 +623,7 @@ unsafe fn format_va_list(format: *const CChar, mut args: VaList<'_>) -> Vec<u8> 
                 let pointer = args.next_arg::<usize>();
                 output.extend_from_slice(b"0x");
                 for shift in (0..usize::BITS).step_by(4).rev() {
-                    let digit = ((pointer >> shift) & 0xF) as usize;
+                    let digit = (pointer >> shift) & 0xF;
                     output.push(b"0123456789abcdef"[digit]);
                 }
             }
@@ -640,6 +722,9 @@ fn copy_formatted(target: *mut CChar, size: usize, output: &[u8]) -> CInt {
     output.len() as CInt
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn sprintf(s: *mut CChar, format: *const CChar, _args: ...) -> CInt {
     if s.is_null() || format.is_null() {
@@ -649,6 +734,9 @@ pub unsafe extern "C" fn sprintf(s: *mut CChar, format: *const CChar, _args: ...
     copy_formatted(s, usize::MAX, &output)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn snprintf(
     s: *mut CChar,
@@ -663,6 +751,9 @@ pub unsafe extern "C" fn snprintf(
     copy_formatted(s, n, &output)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vsprintf(s: *mut CChar, format: *const CChar, ap: VaList<'_>) -> CInt {
     if s.is_null() || format.is_null() {
@@ -672,6 +763,9 @@ pub unsafe extern "C" fn vsprintf(s: *mut CChar, format: *const CChar, ap: VaLis
     copy_formatted(s, usize::MAX, &output)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vsnprintf(
     s: *mut CChar,
@@ -686,6 +780,9 @@ pub unsafe extern "C" fn vsnprintf(
     copy_formatted(s, n, &output)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn printf(format: *const CChar, _args: ...) -> CInt {
     if format.is_null() {
@@ -696,6 +793,9 @@ pub unsafe extern "C" fn printf(format: *const CChar, _args: ...) -> CInt {
     output.len() as CInt
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fprintf(stream: *mut FILE, format: *const CChar, _args: ...) -> CInt {
     if stream.is_null() || format.is_null() {
@@ -712,6 +812,9 @@ pub unsafe extern "C" fn fprintf(stream: *mut FILE, format: *const CChar, _args:
     written as CInt
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vprintf(format: *const CChar, ap: VaList<'_>) -> CInt {
     if format.is_null() {
@@ -722,6 +825,9 @@ pub unsafe extern "C" fn vprintf(format: *const CChar, ap: VaList<'_>) -> CInt {
     output.len() as CInt
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vfprintf(stream: *mut FILE, format: *const CChar, ap: VaList<'_>) -> CInt {
     if stream.is_null() || format.is_null() {
@@ -738,36 +844,57 @@ pub unsafe extern "C" fn vfprintf(stream: *mut FILE, format: *const CChar, ap: V
     written as CInt
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn sscanf(_s: *const CChar, _format: *const CChar, _args: ...) -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn scanf(_format: *const CChar, _args: ...) -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn fscanf(_stream: *mut FILE, _format: *const CChar, _args: ...) -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vsscanf(_s: *const CChar, _format: *const CChar, _ap: ...) -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vscanf(_format: *const CChar, _ap: ...) -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn vfscanf(_stream: *mut FILE, _format: *const CChar, _ap: ...) -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn remove(filename: *const CChar) -> CInt {
     if filename.is_null() {
@@ -779,6 +906,9 @@ pub unsafe extern "C" fn remove(filename: *const CChar) -> CInt {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn rename(old: *const CChar, new: *const CChar) -> CInt {
     if old.is_null() || new.is_null() {
@@ -790,6 +920,9 @@ pub unsafe extern "C" fn rename(old: *const CChar, new: *const CChar) -> CInt {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn tmpfile() -> *mut FILE {
     // Windows NT 6.1 places temp files in the system temp directory
@@ -797,10 +930,13 @@ pub unsafe extern "C" fn tmpfile() -> *mut FILE {
     let temp_name = b"C:\\Windows\\Temp\\tmpXXXXXX\0";
     fopen(
         temp_name.as_ptr() as *const CChar,
-        b"w+b\0".as_ptr() as *const CChar,
+        c"w+b".as_ptr() as *const CChar,
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn tmpnam(s: *mut CChar) -> *mut CChar {
     static TMP_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -814,7 +950,7 @@ pub unsafe extern "C" fn tmpnam(s: *mut CChar) -> *mut CChar {
     for i in 0..template.len() {
         // Replace the six zero bytes at positions 20..=25 with the
         // counter digits.
-        if i >= 21 && i <= 26 && (i - 21) < suffix_bytes.len() {
+        if (21..=26).contains(&i) && (i - 21) < suffix_bytes.len() {
             *s.add(i) = suffix_bytes[i - 21] as CChar;
         } else {
             *s.add(i) = template[i] as CChar;

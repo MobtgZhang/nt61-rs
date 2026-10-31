@@ -7,9 +7,8 @@ pub fn read_rtc_timestamp() -> i64 {
     if let Some(t) = crate::hal::common::cmos::query_real_time_clock() {
         // Days from 1970-01-01 to the CMOS civil date, then to seconds.
         let days = days_from_civil(t.year as i64, t.month as i64, t.day as i64);
-        let secs =
-            days * 86_400 + (t.hour as i64) * 3_600 + (t.minute as i64) * 60 + t.second() as i64;
-        secs
+
+        days * 86_400 + (t.hour as i64) * 3_600 + (t.minute as i64) * 60 + t.second() as i64
     } else {
         // Fall back to the monotonic counter scaled by a known
         // frequency; the caller treats this as "time since boot"

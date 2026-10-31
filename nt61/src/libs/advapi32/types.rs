@@ -298,5 +298,5 @@ pub fn nt_status_to_win32(status: i32) -> DWORD {
 
 pub fn is_predefined_key(key: HKEY) -> bool {
     let addr = key as usize;
-    addr >= 0x80000000 && addr <= 0x80000006
+    (0x80000000..=0x80000006).contains(&addr)
 }

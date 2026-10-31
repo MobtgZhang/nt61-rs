@@ -6,8 +6,8 @@
 //!   - Graphics rendering via GDI handles
 //!   - Window management and message processing
 //
-//! This is the bridge between the user-mode Win32 API (kernel32, gdi32, user32)
-//! and the kernel graphics subsystem.
+//!     This is the bridge between the user-mode Win32 API (kernel32, gdi32, user32)
+//!     and the kernel graphics subsystem.
 //
 //! ## Architecture
 //
@@ -200,6 +200,12 @@ impl DCState {
     }
 }
 
+impl Default for DCState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Bitmap info header (BITMAPINFOHEADER)
 #[repr(C)]
 pub struct BitmapInfoHeader {
@@ -348,6 +354,12 @@ impl WindowClass {
             cursor: 0,
             icon: 0,
         }
+    }
+}
+
+impl Default for WindowClass {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -598,10 +610,12 @@ pub fn allocate_surface(width: i32, height: i32, format: u32) -> Option<EngSurfa
 
 /// Free a surface
 pub fn free_surface(surface: &EngSurface) {
-    let _ = (&surface,);
+    unsafe {
+        let _ = (&surface,);
 
-    if !surface.bits.is_null() {
-        let _ = crate::mm::pool::free(surface.bits);
+        if !surface.bits.is_null() {
+            let _ = crate::mm::pool::free(surface.bits);
+        }
     }
 }
 
@@ -840,6 +854,12 @@ impl GraphicsEngine {
         Self {
             version: WIN32K_VERSION,
         }
+    }
+}
+
+impl Default for GraphicsEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1592,11 +1612,10 @@ pub fn draw_ellipse(surface: &EngSurface, cx: i32, cy: i32, rx: i32, ry: i32, co
     // Simplified circle algorithm using Bresenham's method
     // For true ellipse, we'll approximate with symmetric circles
     let mut x = 0i32;
-    let mut y = ry as i32;
-    let mut d1 = (ry as i32) * (ry as i32) - (rx as i32) * (rx as i32) * (ry as i32)
-        + ((rx as i32) * (rx as i32) / 4);
+    let mut y = ry;
+    let mut d1 = ry * ry - rx * rx * ry + (rx * rx / 4);
 
-    while (ry as i32) * (ry as i32) * x <= (rx as i32) * (rx as i32) * y {
+    while ry * ry * x <= rx * rx * y {
         // Draw symmetric points
         set_pixel_on_surface(surface, cx + x, cy + y, color);
         set_pixel_on_surface(surface, cx - x, cy + y, color);
@@ -1605,16 +1624,15 @@ pub fn draw_ellipse(surface: &EngSurface, cx: i32, cy: i32, rx: i32, ry: i32, co
 
         x += 1;
         if d1 < 0 {
-            d1 += (ry as i32) * (ry as i32) * (2 * x + 1);
+            d1 += ry * ry * (2 * x + 1);
         } else {
             y -= 1;
-            d1 += (ry as i32) * (ry as i32) * (2 * x + 1) - 2 * (rx as i32) * (rx as i32) * y;
+            d1 += ry * ry * (2 * x + 1) - 2 * rx * rx * y;
         }
     }
 
-    let mut d2 = ((ry as i32) * (ry as i32)) * ((x - 1) * (x - 1))
-        + ((rx as i32) * (rx as i32)) * ((y - 1) * (y - 1))
-        - ((rx as i32) * (rx as i32)) * ((ry as i32) * (ry as i32));
+    let mut d2 =
+        (ry * ry) * ((x - 1) * (x - 1)) + (rx * rx) * ((y - 1) * (y - 1)) - (rx * rx) * (ry * ry);
 
     while y >= 0 {
         set_pixel_on_surface(surface, cx + x, cy + y, color);
@@ -1624,10 +1642,10 @@ pub fn draw_ellipse(surface: &EngSurface, cx: i32, cy: i32, rx: i32, ry: i32, co
 
         y -= 1;
         if d2 > 0 {
-            d2 += (rx as i32) * (rx as i32) - 2 * (rx as i32) * (rx as i32) * y;
+            d2 += rx * rx - 2 * rx * rx * y;
         } else {
             x += 1;
-            d2 += (ry as i32) * (ry as i32) * (2 * x - 1) - 2 * (rx as i32) * (rx as i32) * y;
+            d2 += ry * ry * (2 * x - 1) - 2 * rx * rx * y;
         }
     }
 }
@@ -2053,6 +2071,12 @@ impl MenuItem {
     }
 }
 
+impl Default for MenuItem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Menu structure (simplified)
 #[derive(Clone, Debug)]
 pub struct Menu {
@@ -2176,6 +2200,12 @@ impl DlgTemplate {
     }
 }
 
+impl Default for DlgTemplate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Dialog structure
 #[derive(Clone, Debug)]
 pub struct Dialog {
@@ -2197,6 +2227,12 @@ impl Dialog {
             data: Vec::new(),
             result: 0,
         }
+    }
+}
+
+impl Default for Dialog {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -2276,7 +2312,7 @@ pub fn allocate_hook_handle() -> u64 {
 pub fn install_hook(hook_type: i32, hook_proc: u64, thread_id: u32) -> Option<u64> {
     let _ = (&hook_type, &hook_proc, &thread_id);
 
-    if hook_type < WH_MIN || hook_type > WH_MAX {
+    if !(WH_MIN..=WH_MAX).contains(&hook_type) {
         return None;
     }
 
@@ -2344,7 +2380,7 @@ pub fn remove_hook(handle: u64) -> bool {
 pub fn call_hook_chain(hook_type: i32, code: i32, wparam: u64, lparam: i64) -> i64 {
     let _ = (&hook_type, &code, &wparam, &lparam);
 
-    if hook_type < WH_MIN || hook_type > WH_MAX {
+    if !(WH_MIN..=WH_MAX).contains(&hook_type) {
         return 0;
     }
 
@@ -2436,10 +2472,7 @@ pub fn create_timer(hwnd: u64, n_id_event: u32, u_elapse: u32, timer_proc: u64) 
     // Add to window's timer list
     if hwnd != 0 {
         let mut window_timers = WINDOW_TIMERS.write();
-        window_timers
-            .entry(hwnd)
-            .or_insert_with(Vec::new)
-            .push(timer_id);
+        window_timers.entry(hwnd).or_default().push(timer_id);
     }
 
     // kprintln!("[win32k] Created timer id={}, hwnd={:#x}, interval={}ms", timer_id, hwnd, u_elapse);
@@ -2482,11 +2515,9 @@ pub fn get_timer(timer_id: u32) -> Option<UserTimer> {
 
     let handles = TIMER_HANDLES.read();
     let _ = &handles;
-    for timer in handles.iter() {
-        if let Some(ref t) = timer {
-            if t.n_id == timer_id {
-                return Some(t.clone());
-            }
+    for t in handles.iter().flatten() {
+        if t.n_id == timer_id {
+            return Some(t.clone());
         }
     }
     None

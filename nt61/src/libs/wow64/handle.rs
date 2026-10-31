@@ -111,6 +111,9 @@ pub unsafe fn resolve_to_eprocess(process: &Eprocess, handle: u32) -> Option<*mu
     Some(raw as *mut Eprocess)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Resolve a HANDLE32 to a raw ETHREAD pointer.
 pub unsafe fn resolve_to_ethread(process: &Eprocess, handle: u32) -> Option<*mut Ethread> {
     if handle == 0 {

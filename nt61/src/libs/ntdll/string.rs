@@ -19,6 +19,9 @@ pub type BOOLEAN = u8;
 pub const TRUE: u8 = 1;
 pub const FALSE: u8 = 0;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_init_unicode_string` — initialize an existing
 /// `UnicodeString` to point at a static UTF-16 buffer.
 /// Returns STATUS_SUCCESS. Equivalent to NT's
@@ -51,6 +54,9 @@ pub unsafe extern "C" fn rtl_init_unicode_string(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_compare_unicode_string` — case-(in)sensitive compare.
 pub unsafe extern "C" fn rtl_compare_unicode_string(
     string1: *const UnicodeString,
@@ -86,6 +92,9 @@ pub unsafe extern "C" fn rtl_compare_unicode_string(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_compare_unicode_strings` — compare two `PWSTR` of known
 /// length.
 pub unsafe extern "C" fn rtl_compare_unicode_strings(
@@ -120,6 +129,9 @@ pub unsafe extern "C" fn rtl_compare_unicode_strings(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_copy_unicode_string` — copy `source` into `dest`. Fails
 /// with `STATUS_BUFFER_TOO_SMALL` if `dest->maximum_length` is
 /// too small.
@@ -169,6 +181,9 @@ pub unsafe extern "C" fn rtl_copy_unicode_string(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_append_unicode_string_to_string` — append `source` to
 /// `destination`. Returns STATUS_BUFFER_TOO_SMALL if
 /// `destination->maximum_length` is too small.
@@ -195,6 +210,9 @@ pub unsafe extern "C" fn rtl_append_unicode_string_to_string(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_append_unicode_to_string` — append a null-terminated
 /// UTF-16 `source` to `destination`.
 pub unsafe extern "C" fn rtl_append_unicode_to_string(
@@ -219,6 +237,9 @@ pub unsafe extern "C" fn rtl_append_unicode_to_string(
     rtl_append_unicode_string_to_string(destination, &temp)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_upcase_unicode_string` — convert `Source` to upper case,
 /// store in `Destination`. `Destination` must be preallocated
 /// with `Source->length + sizeof(WCHAR)` bytes.
@@ -243,6 +264,9 @@ pub unsafe extern "C" fn rtl_upcase_unicode_string(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_downcase_unicode_string` — lower case counterpart of the
 /// above.
 pub unsafe extern "C" fn rtl_downcase_unicode_string(
@@ -266,11 +290,17 @@ pub unsafe extern "C" fn rtl_downcase_unicode_string(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_upcase_unicode_char` — single-character upper case.
 pub unsafe extern "C" fn rtl_upcase_unicode_char(source_character: u16) -> u16 {
     upcase(source_character)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_equal_unicode_string` — returns TRUE (1) if the strings
 /// are equal.
 pub unsafe extern "C" fn rtl_equal_unicode_string(
@@ -285,6 +315,9 @@ pub unsafe extern "C" fn rtl_equal_unicode_string(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_unicode_string_to_ansi_string` — convert UTF-16 → UTF-8.
 /// If `AllocateDestinationString` is TRUE, the function
 /// allocates a fresh buffer (via `RtlAllocateStringRoutine`)
@@ -323,6 +356,9 @@ pub unsafe extern "C" fn rtl_unicode_string_to_ansi_string(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_ansi_string_to_unicode_string` — UTF-8 → UTF-16, with the
 /// same allocation semantics as `rtl_unicode_string_to_ansi_string`.
 pub unsafe extern "C" fn rtl_ansi_string_to_unicode_string(
@@ -356,6 +392,9 @@ pub unsafe extern "C" fn rtl_ansi_string_to_unicode_string(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_free_ansi_string` / `rtl_free_unicode_string` — release the
 /// buffer previously allocated by `Rtl*StringTo*String`.
 pub unsafe extern "C" fn rtl_free_ansi_string(ansi_string: *mut AnsiString) {
@@ -371,6 +410,9 @@ pub unsafe extern "C" fn rtl_free_ansi_string(ansi_string: *mut AnsiString) {
     s.maximum_length = 0;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_free_unicode_string(unicode_string: *mut UnicodeString) {
     if unicode_string.is_null() {
         return;
@@ -394,6 +436,9 @@ pub type RtlFreeStringRoutineType = unsafe extern "C" fn(buffer: *mut c_void);
 static mut ALLOC_ROUTINE: RtlAllocateStringRoutineType = rtl_allocate_string_default;
 static mut FREE_ROUTINE: RtlFreeStringRoutineType = rtl_free_string_default;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_set_string_routine(
     allocate: Option<RtlAllocateStringRoutineType>,
     free: Option<RtlFreeStringRoutineType>,
@@ -415,9 +460,15 @@ unsafe extern "C" fn rtl_free_string_default(buffer: *mut c_void) {
     let _ = super::heap::rtl_free_heap(core::ptr::null_mut(), 0, buffer);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub(crate) unsafe fn alloc_string(length: u32) -> *mut c_void {
     ALLOC_ROUTINE(length)
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub(crate) unsafe fn free_string(buffer: *mut c_void) {
     FREE_ROUTINE(buffer);
 }

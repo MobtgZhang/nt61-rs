@@ -13,6 +13,9 @@ use super::types::{ObjectAttributes, RtlCriticalSection, HANDLE, NTSTATUS};
 use core::ptr;
 use core::sync::atomic::{AtomicI32, Ordering};
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_initialize_critical_section(
     critical_section: *mut RtlCriticalSection,
 ) -> NTSTATUS {
@@ -29,6 +32,9 @@ pub unsafe extern "C" fn rtl_initialize_critical_section(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_initialize_critical_section_and_spin_count(
     critical_section: *mut RtlCriticalSection,
     spin_count: u32,
@@ -40,6 +46,9 @@ pub unsafe extern "C" fn rtl_initialize_critical_section_and_spin_count(
     status
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_enter_critical_section(
     critical_section: *mut RtlCriticalSection,
 ) -> NTSTATUS {
@@ -79,6 +88,9 @@ pub unsafe extern "C" fn rtl_enter_critical_section(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_try_enter_critical_section(
     critical_section: *mut RtlCriticalSection,
 ) -> u32 {
@@ -108,6 +120,9 @@ pub unsafe extern "C" fn rtl_try_enter_critical_section(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_leave_critical_section(
     critical_section: *mut RtlCriticalSection,
 ) -> NTSTATUS {
@@ -134,6 +149,9 @@ pub unsafe extern "C" fn rtl_leave_critical_section(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_delete_critical_section(
     critical_section: *mut RtlCriticalSection,
 ) -> NTSTATUS {
@@ -153,6 +171,9 @@ pub unsafe extern "C" fn rtl_delete_critical_section(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_set_critical_section_spin_count(
     critical_section: *mut RtlCriticalSection,
     spin_count: u32,

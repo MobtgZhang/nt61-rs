@@ -93,6 +93,9 @@ fn text_colors(dc: HDC) -> (u32, u32) {
     (fg, bg)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `text_out_w` — write a wide string at `(x, y)` using
 /// the system 8x16 font. Returns 1 on success.
 pub unsafe extern "C" fn text_out_w(dc: HDC, x: i32, y: i32, text: LPCWSTR, len: i32) -> BOOL {
@@ -109,7 +112,7 @@ pub unsafe extern "C" fn text_out_w(dc: HDC, x: i32, y: i32, text: LPCWSTR, len:
         let ch16 = core::ptr::read_unaligned(text.offset(i));
         // The bootstrap bitmap font has glyphs for
         // printable 7-bit ASCII (0x20..=0x7E).
-        if ch16 >= 0x20 && ch16 <= 0x7E {
+        if (0x20..=0x7E).contains(&ch16) {
             let ch = (ch16 & 0xFF) as u8;
             crate::libs::win32k::text::draw_char_8x8(surf, cursor_x, y, ch, fg, bg);
             cursor_x += glyph_width(ch);
@@ -124,6 +127,9 @@ pub unsafe extern "C" fn text_out_w(dc: HDC, x: i32, y: i32, text: LPCWSTR, len:
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `text_out_a` — ANSI flavour; convert to wide and
 /// delegate. We only accept 7-bit ASCII so the
 /// conversion is trivial.
@@ -148,6 +154,9 @@ pub unsafe extern "C" fn text_out_a(dc: HDC, x: i32, y: i32, text: *const i8, le
     text_out_w(dc, x, y, buf.as_ptr(), n as i32)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_text_extent_point32_w` — return the size in
 /// logical units of the given wide string when rendered
 /// with the system font.
@@ -164,7 +173,7 @@ pub unsafe extern "C" fn get_text_extent_point32_w(
     if !text.is_null() && len > 0 {
         for i in 0..len as isize {
             let ch16 = core::ptr::read_unaligned(text.offset(i));
-            if ch16 >= 0x20 && ch16 <= 0x7E {
+            if (0x20..=0x7E).contains(&ch16) {
                 cx += glyph_width((ch16 & 0xFF) as u8);
             } else {
                 cx += SYSTEM_FONT_AVG_WIDTH;
@@ -178,6 +187,9 @@ pub unsafe extern "C" fn get_text_extent_point32_w(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_text_extent_point32_a` — ANSI flavour.
 pub unsafe extern "C" fn get_text_extent_point32_a(
     dc: HDC,
@@ -200,6 +212,9 @@ pub unsafe extern "C" fn get_text_extent_point32_a(
     get_text_extent_point32_w(dc, buf.as_ptr(), n as i32, size)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_text_metrics_w` — fill a default metrics block
 /// for the system font. The values are picked to match
 /// the Windows 7 8×16 raster font.
@@ -231,6 +246,9 @@ pub unsafe extern "C" fn get_text_metrics_w(_dc: HDC, m: *mut TextMetricW) -> BO
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `draw_text_w` — draw the wide string at the top-left
 /// of `rect`. `flags` controls alignment, word breaking
 /// and clip behaviour. With `DT_CALCRECT` the function
@@ -263,6 +281,9 @@ pub unsafe extern "C" fn draw_text_w(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `draw_text_a` — ANSI flavour; convert and delegate.
 pub unsafe extern "C" fn draw_text_a(
     dc: HDC,

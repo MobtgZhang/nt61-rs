@@ -6,11 +6,11 @@
 //!   - System DLLs: 0x7C000000 to 0x7D000000
 //!   - KUSER_SHARED_DATA: 0x7FFE0000 (reserved page, never allocated)
 //
-//! The Wow64 VAS allocator manages memory allocation in the lower 4GB
-//! of the address space, mapping 32-bit allocations to actual physical
-//! pages and maintaining the per-process view.
+//!     The Wow64 VAS allocator manages memory allocation in the lower 4GB
+//!     of the address space, mapping 32-bit allocations to actual physical
+//!     pages and maintaining the per-process view.
 //
-//! References:
+//!     References:
 //!   * geoffchappell.com - WoW64 system service dispatching
 //!   * ReactOS 0.3.x - wow64 memory management
 
@@ -124,7 +124,7 @@ pub static WOW64_VAS: Spinlock<Wow64VasState> = Spinlock::new(Wow64VasState::new
 /// Check if an address is in the valid Wow64 user range.
 #[inline]
 pub fn is_valid_user_address(addr: u32) -> bool {
-    addr >= WOW64_USER_SPACE_START && addr <= WOW64_USER_SPACE_END
+    (WOW64_USER_SPACE_START..=WOW64_USER_SPACE_END).contains(&addr)
 }
 
 /// Check if a range is valid for Wow64 user mode.
@@ -148,7 +148,7 @@ pub fn is_valid_user_range(addr: u32, size: u32) -> bool {
 /// Check if address is in the system DLL region.
 #[inline]
 pub fn is_in_system_dll_region(addr: u32) -> bool {
-    addr >= WOW64_SYSTEM_DLL_BASE && addr < WOW64_SYSTEM_DLL_BASE + WOW64_SYSTEM_DLL_SIZE
+    (WOW64_SYSTEM_DLL_BASE..WOW64_SYSTEM_DLL_BASE + WOW64_SYSTEM_DLL_SIZE).contains(&addr)
 }
 
 /// Align address up to page boundary.

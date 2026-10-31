@@ -7,6 +7,9 @@ use super::status::{STATUS_INVALID_PARAMETER, STATUS_SUCCESS};
 use super::string::BOOLEAN;
 use super::types::UnicodeString;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_prefix_unicode_string(
     string1: *const UnicodeString,
     string2: *const UnicodeString,
@@ -46,6 +49,9 @@ pub unsafe extern "C" fn rtl_prefix_unicode_string(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_suffix_unicode_string(
     string1: *const UnicodeString,
     string2: *const UnicodeString,
@@ -87,6 +93,9 @@ pub unsafe extern "C" fn rtl_suffix_unicode_string(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_find_char_in_unicode_string(
     flags: u32,
     string_to_search: *const UnicodeString,
@@ -136,6 +145,9 @@ pub unsafe extern "C" fn rtl_find_char_in_unicode_string(
     STATUS_NOT_FOUND
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_is_text_unicode(
     buffer: *const u8,
     size: u32,
@@ -194,6 +206,9 @@ pub struct Guid {
     pub data4: [u8; 8],
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_guidfrom_string(
     guid_string: *const UnicodeString,
     guid: *mut Guid,
@@ -209,6 +224,9 @@ pub unsafe extern "C" fn rtl_guidfrom_string(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_string_from_guid(
     guid: *const Guid,
     guid_string: *mut UnicodeString,
@@ -226,17 +244,20 @@ pub unsafe extern "C" fn rtl_string_from_guid(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_char_to_integer(string: *const i8, base: u32, value: *mut u32) -> i32 {
     if string.is_null() || value.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
 
     let ch = *string as u8;
-    let digit = if ch >= b'0' && ch <= b'9' {
+    let digit = if ch.is_ascii_digit() {
         ch - b'0'
-    } else if ch >= b'A' && ch <= b'Z' {
+    } else if ch.is_ascii_uppercase() {
         ch - b'A' + 10
-    } else if ch >= b'a' && ch <= b'z' {
+    } else if ch.is_ascii_lowercase() {
         ch - b'a' + 10
     } else {
         0
@@ -252,18 +273,24 @@ pub unsafe extern "C" fn rtl_char_to_integer(string: *const i8, base: u32, value
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_upper_char(character: i8) -> i8 {
     let ch = character as u8;
-    if ch >= b'a' && ch <= b'z' {
+    if ch.is_ascii_lowercase() {
         (ch - 0x20) as i8
     } else {
         character
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_lower_char(character: i8) -> i8 {
     let ch = character as u8;
-    if ch >= b'A' && ch <= b'Z' {
+    if ch.is_ascii_uppercase() {
         (ch + 0x20) as i8
     } else {
         character

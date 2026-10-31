@@ -1295,6 +1295,9 @@ const _: () = assert!(
 );
 
 impl Teb32 {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Get the current TEB32 pointer.
     /// Native WoW64 code reads `fs:[0x18]`; kernel-side thunk code resolves
     /// the same TEB through the current ETHREAD's WoW64 extension.
@@ -1510,7 +1513,7 @@ pub fn long_to64(v: i32) -> i64 {
 
 /// Check if a 32-bit address is in the valid Wow64 user range.
 pub fn is_valid_wow64_user_address(addr: ULONG32) -> bool {
-    addr >= WOW64_USER_SPACE_START && addr <= WOW64_USER_SPACE_END
+    (WOW64_USER_SPACE_START..=WOW64_USER_SPACE_END).contains(&addr)
 }
 
 /// Check if a 32-bit address range is valid.
@@ -1531,6 +1534,9 @@ pub fn is_valid_wow64_range(addr: ULONG32, size: ULONG32) -> bool {
 // Context Conversion Helpers
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Convert a 64-bit context pointer to a 32-bit context.
 /// This copies the relevant fields from the 64-bit KthreadContext into
 /// a newly created CONTEXT32 structure.
@@ -1562,6 +1568,9 @@ pub unsafe fn context64_to_context32(
     ctx32.context_flags = Context32::CONTEXT_FULL;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Convert a 32-bit context to a 64-bit context.
 /// This copies the 32-bit register values into the 64-bit KthreadContext.
 pub unsafe fn context32_to_context64(

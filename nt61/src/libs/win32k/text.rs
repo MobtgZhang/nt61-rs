@@ -268,8 +268,11 @@ fn set_pixel(surface: *mut GdiSurface, x: i32, y: i32, color: u32) -> bool {
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get pixel from surface
-pub fn get_pixel(surface: *mut GdiSurface, x: i32, y: i32) -> u32 {
+pub unsafe fn get_pixel(surface: *mut GdiSurface, x: i32, y: i32) -> u32 {
     if surface.is_null() {
         return 0;
     }
@@ -309,7 +312,7 @@ pub fn draw_char_8x8(
     // Calculate font data index (ASCII 0x20-0x7A maps to indices 0-90)
     // Uppercase: 0x41-0x5A -> 0x41 - 0x20 = 65
     // Lowercase: 0x61-0x7A -> 0x61 - 0x20 = 97
-    let char_idx = if ch >= 0x20 && ch <= 0x7A {
+    let char_idx = if (0x20..=0x7A).contains(&ch) {
         (ch - 0x20) as usize
     } else {
         0 // Space for others
@@ -354,7 +357,7 @@ pub fn draw_char_16x16(
         return;
     }
 
-    let char_idx = if ch >= 0x41 && ch <= 0x46 {
+    let char_idx = if (0x41..=0x46).contains(&ch) {
         (ch - 0x41) as usize
     } else {
         0
@@ -392,7 +395,7 @@ pub fn draw_char_16x16(
 /// Get character width for 8x8 font
 pub fn get_char_width_8x8(ch: u8) -> i32 {
     // Index: ASCII 0x20 maps to index 0, 0x7A maps to index 90
-    let idx = if ch >= 0x20 && ch <= 0x7A {
+    let idx = if (0x20..=0x7A).contains(&ch) {
         (ch - 0x20) as usize
     } else {
         0 // Default for invalid characters
@@ -410,7 +413,7 @@ pub fn get_char_width_8x8(ch: u8) -> i32 {
 pub fn calc_text_extent(text: &[u8], font_height: i32) -> (i32, i32) {
     let mut width = 0;
     for &ch in text {
-        width += if ch >= 0x20 && ch <= 0x7E {
+        width += if (0x20..=0x7E).contains(&ch) {
             get_char_width_8x8(ch)
         } else {
             8
@@ -454,7 +457,7 @@ pub fn gre_text_out(dc: &mut DcObject, x: i32, y: i32, text: &[u8]) -> bool {
     let _ = &font_height;
 
     for &ch in text {
-        if ch >= 0x20 && ch <= 0x7E {
+        if (0x20..=0x7E).contains(&ch) {
             draw_char_8x8(surface, cursor_x, y, ch, fg_color, bg_color);
             cursor_x += get_char_width_8x8(ch);
         }
@@ -522,7 +525,7 @@ pub fn gre_ext_text_out(
     }
 
     for (i, &ch) in ascii_text.iter().enumerate() {
-        if ch >= 0x20 && ch <= 0x7E {
+        if (0x20..=0x7E).contains(&ch) {
             draw_char_8x8(surface, cursor_x, y, ch, fg_color, bg_color);
 
             let char_width = dx

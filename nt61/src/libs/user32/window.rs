@@ -216,6 +216,9 @@ fn window_create_param(handle: u64) -> LPARAM {
     param
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Deliver a message to the procedure behind `hwnd`; proc-less
 /// classes fall through to DefWindowProcW.
 pub unsafe fn call_window_procedure(
@@ -230,6 +233,9 @@ pub unsafe fn call_window_procedure(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// DefWindowProcW — default handling for messages no class
 /// procedure claimed. The default procedure acknowledges
 /// WM_NCCREATE so window creation is not mistaken for an abort.
@@ -246,6 +252,9 @@ pub unsafe extern "C" fn def_window_proc_w(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// CreateWindowExW — resolve the class, allocate the WINDOW
 /// object and run WM_NCCREATE / WM_CREATE. WM_CREATE returning -1
 /// aborts creation and returns NULL.
@@ -332,6 +341,9 @@ pub unsafe extern "C" fn create_window_ex_w(
     hwnd
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// DestroyWindow — run WM_DESTROY / WM_NCDESTROY and free the
 /// WINDOW object. The foreground handle is cleared when the
 /// destroyed window owned it.
@@ -355,6 +367,9 @@ pub unsafe extern "C" fn destroy_window(hwnd: HWND) -> BOOL {
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// ShowWindow — toggle visibility per the SW_* command and
 /// deliver WM_SHOWWINDOW. Returns whether the window was
 /// previously visible.
@@ -379,6 +394,9 @@ pub unsafe extern "C" fn show_window(hwnd: HWND, cmd: i32) -> BOOL {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// UpdateWindow — deliver WM_PAINT for a live window.
 pub unsafe extern "C" fn update_window(hwnd: HWND) -> BOOL {
     if hwnd.is_null() || !window_exists(hwnd as u64) {
@@ -388,6 +406,9 @@ pub unsafe extern "C" fn update_window(hwnd: HWND) -> BOOL {
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// GetWindowTextW — copy the window text into the caller buffer,
 /// NUL-terminated, and return the number of characters copied.
 pub unsafe extern "C" fn get_window_text_w(hwnd: HWND, buffer: LPWSTR, max_count: i32) -> i32 {
@@ -406,6 +427,9 @@ pub unsafe extern "C" fn get_window_text_w(hwnd: HWND, buffer: LPWSTR, max_count
     copy_len as i32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// GetWindowRectW — screen-coordinate rectangle of the window.
 pub unsafe extern "C" fn get_window_rect_w(hwnd: HWND, rect: *mut RectW) -> BOOL {
     if hwnd.is_null() || rect.is_null() {
@@ -432,6 +456,9 @@ pub unsafe extern "C" fn get_window_rect_w(hwnd: HWND, rect: *mut RectW) -> BOOL
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// GetWindowLongPtrW — read a window word by GWL_* index.
 pub unsafe extern "C" fn get_window_long_ptr_w(hwnd: HWND, index: i32) -> LongPtr {
     if hwnd.is_null() {
@@ -440,7 +467,7 @@ pub unsafe extern "C" fn get_window_long_ptr_w(hwnd: HWND, index: i32) -> LongPt
     let mut result: LongPtr = 0;
     let found = with_window_mut(hwnd as u64, |window| {
         result = match index {
-            gwl::GWL_WNDPROC => window.wnd_proc.map_or(0, |proc| proc as LongPtr),
+            gwl::GWL_WNDPROC => window.wnd_proc.map_or(0, |proc| proc as isize),
             gwl::GWL_HINSTANCE => window.instance as LongPtr,
             gwl::GWL_HWNDPARENT => window.parent as LongPtr,
             gwl::GWL_STYLE => window.style as LongPtr,
@@ -455,6 +482,9 @@ pub unsafe extern "C" fn get_window_long_ptr_w(hwnd: HWND, index: i32) -> LongPt
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// GetParentW — parent handle captured at creation.
 pub unsafe extern "C" fn get_parent_w(hwnd: HWND) -> HWND {
     let mut parent: HWND = core::ptr::null_mut();
@@ -462,6 +492,9 @@ pub unsafe extern "C" fn get_parent_w(hwnd: HWND) -> HWND {
     parent
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// GetMenuW — menu handle captured at creation.
 pub unsafe extern "C" fn get_menu_w(hwnd: HWND) -> HMENU {
     let mut menu: HMENU = core::ptr::null_mut();
@@ -469,12 +502,18 @@ pub unsafe extern "C" fn get_menu_w(hwnd: HWND) -> HMENU {
     menu
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// GetForegroundWindow — the last window handed to
 /// SetForegroundWindow (NULL until one is set).
 pub unsafe extern "C" fn get_foreground_window() -> HWND {
     *FOREGROUND_WINDOW.lock() as HWND
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// SetForegroundWindow — record the foreground handle.
 pub unsafe extern "C" fn set_foreground_window(hwnd: HWND) -> BOOL {
     *FOREGROUND_WINDOW.lock() = hwnd as u64;

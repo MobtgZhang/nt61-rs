@@ -64,19 +64,10 @@ pub const INVALID_SOCKET: usize = !0;
 pub const SOCKET_ERROR: i32 = -1;
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct sockaddr {
     pub sa_family: u16,
     pub sa_data: [u8; 14],
-}
-
-impl Default for sockaddr {
-    fn default() -> Self {
-        Self {
-            sa_family: 0,
-            sa_data: [0; 14],
-        }
-    }
 }
 
 #[repr(C)]
@@ -188,6 +179,12 @@ impl fd_set {
                 break;
             }
         }
+    }
+}
+
+impl Default for fd_set {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

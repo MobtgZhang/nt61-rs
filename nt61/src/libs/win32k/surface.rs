@@ -11,7 +11,7 @@
 //! - Memory surfaces (bitmaps)
 //! - Printer surfaces
 //
-//! Reference: ReactOS win32ss/gdi/eng
+//!   Reference: ReactOS win32ss/gdi/eng
 
 extern crate alloc;
 
@@ -195,8 +195,10 @@ impl GdiSurface {
 
 impl Drop for GdiSurface {
     fn drop(&mut self) {
-        if !self.bits.is_null() && self.flags & SURFACE_FLAG_ALLOCATED != 0 {
-            let _ = crate::mm::pool::free(self.bits);
+        unsafe {
+            if !self.bits.is_null() && self.flags & SURFACE_FLAG_ALLOCATED != 0 {
+                let _ = crate::mm::pool::free(self.bits);
+            }
         }
     }
 }
@@ -219,10 +221,7 @@ impl SurfaceTable {
 
     /// create and register a new surface
     pub fn create(&mut self, width: i32, height: i32, format: u32) -> Option<*mut GdiSurface> {
-        let surface = match GdiSurface::new(width, height, format) {
-            Some(s) => s,
-            None => return None,
-        };
+        let surface = GdiSurface::new(width, height, format)?;
         let _ = &surface;
 
         let boxed = Box::new(surface);
@@ -272,6 +271,12 @@ impl SurfaceTable {
             }
         }
         false
+    }
+}
+
+impl Default for SurfaceTable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -405,8 +410,11 @@ pub fn eng_unlock_surface(surface: *mut GdiSurface) {
 // Surface Operations
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Copy from source surface to destination
-pub fn eng_copy_bits(
+pub unsafe fn eng_copy_bits(
     dst: *mut GdiSurface,
     src: *mut GdiSurface,
     dst_x: i32,
@@ -452,8 +460,11 @@ pub fn eng_copy_bits(
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Fill a rectangle on a surface
-pub fn eng_fill_rectangle(
+pub unsafe fn eng_fill_rectangle(
     surface: *mut GdiSurface,
     left: i32,
     top: i32,
@@ -516,8 +527,18 @@ pub fn eng_fill_rectangle(
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Draw a line on a surface using Bresenham's algorithm
-pub fn eng_line(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: i32, color: u32) -> bool {
+pub unsafe fn eng_line(
+    surface: *mut GdiSurface,
+    x1: i32,
+    y1: i32,
+    x2: i32,
+    y2: i32,
+    color: u32,
+) -> bool {
     if surface.is_null() {
         return false;
     }
@@ -549,14 +570,17 @@ pub fn eng_line(surface: *mut GdiSurface, x1: i32, y1: i32, x2: i32, y2: i32, co
 
     loop {
         // Draw pixel (only for 32bpp)
-        if surf.format == PIXEL_FORMAT_32BPP || surf.format == PIXEL_FORMAT_32BPP_ARGB {
-            if x >= 0 && x < surf.width && y >= 0 && y < surf.height {
-                let offset = (y * surf.pitch + x * 4) as isize;
-                let _ = &offset;
-                let _ = &offset;
-                unsafe {
-                    core::ptr::write_unaligned(surf.bits.offset(offset) as *mut u32, color);
-                }
+        if (surf.format == PIXEL_FORMAT_32BPP || surf.format == PIXEL_FORMAT_32BPP_ARGB)
+            && x >= 0
+            && x < surf.width
+            && y >= 0
+            && y < surf.height
+        {
+            let offset = (y * surf.pitch + x * 4) as isize;
+            let _ = &offset;
+            let _ = &offset;
+            unsafe {
+                core::ptr::write_unaligned(surf.bits.offset(offset) as *mut u32, color);
             }
         }
 
@@ -606,8 +630,11 @@ pub fn drv_disable_driver() {
 // Surface Information
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get surface info
-pub fn get_surface_info(surface: *mut GdiSurface) -> Option<(i32, i32, u32)> {
+pub unsafe fn get_surface_info(surface: *mut GdiSurface) -> Option<(i32, i32, u32)> {
     if surface.is_null() {
         return None;
     }
@@ -619,8 +646,11 @@ pub fn get_surface_info(surface: *mut GdiSurface) -> Option<(i32, i32, u32)> {
     Some((surf.width, surf.height, surf.format))
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if surface has alpha channel
-pub fn has_alpha(surface: *mut GdiSurface) -> bool {
+pub unsafe fn has_alpha(surface: *mut GdiSurface) -> bool {
     if surface.is_null() {
         return false;
     }
@@ -636,8 +666,11 @@ pub fn has_alpha(surface: *mut GdiSurface) -> bool {
 // Debug
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Dump surface info
-pub fn dump_surface_info(surface: *mut GdiSurface) {
+pub unsafe fn dump_surface_info(surface: *mut GdiSurface) {
     if surface.is_null() {
         // kprintln!("[win32k] Surface: NULL");
         return;

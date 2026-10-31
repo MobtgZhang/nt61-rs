@@ -26,12 +26,7 @@ impl BindingRegistry {
             return None;
         }
 
-        for i in 0..MAX_BINDINGS {
-            if self.bindings[i].is_none() {
-                return Some(i);
-            }
-        }
-        None
+        (0..MAX_BINDINGS).find(|&i| self.bindings[i].is_none())
     }
 
     fn add_binding(&mut self, binding: *mut RpcBindingInternal) -> Option<usize> {
@@ -66,6 +61,9 @@ impl BindingRegistry {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn wstrcmp(s1: *const u16, s2: *const u16) -> bool {
     let mut i = 0;
     loop {
@@ -81,6 +79,9 @@ pub unsafe fn wstrcmp(s1: *const u16, s2: *const u16) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn wstrcpy(dst: *mut u16, src: *const u16, max_len: usize) -> usize {
     let mut len = 0;
     while len < max_len - 1 {
@@ -95,6 +96,9 @@ pub unsafe fn wstrcpy(dst: *mut u16, src: *const u16, max_len: usize) -> usize {
     len
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn wstrlen(s: *const u16) -> usize {
     let mut len = 0;
     while *s.add(len) != 0 {
@@ -103,6 +107,9 @@ unsafe fn wstrlen(s: *const u16) -> usize {
     len
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcStringBindingComposeW(
     obj_uuid: *const u16,
@@ -207,6 +214,9 @@ pub unsafe extern "C" fn RpcStringBindingComposeW(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingFromStringBindingW(
     string_binding: *const u16,
@@ -346,6 +356,9 @@ pub unsafe extern "C" fn RpcBindingFromStringBindingW(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingToStringBindingW(
     binding: RpcBindingHandle,
@@ -373,6 +386,9 @@ pub unsafe extern "C" fn RpcBindingToStringBindingW(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingFree(binding: *mut RpcBindingHandle) -> RpcStatus {
     if binding.is_null() || (*binding).is_null() {
@@ -396,6 +412,9 @@ pub unsafe extern "C" fn RpcBindingFree(binding: *mut RpcBindingHandle) -> RpcSt
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingCopy(
     source_binding: RpcBindingHandle,
@@ -419,6 +438,9 @@ pub unsafe extern "C" fn RpcBindingCopy(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingReset(binding: RpcBindingHandle) -> RpcStatus {
     if binding.is_null() {
@@ -438,6 +460,9 @@ pub unsafe extern "C" fn RpcBindingReset(binding: RpcBindingHandle) -> RpcStatus
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingSetObject(
     binding: RpcBindingHandle,
@@ -464,6 +489,9 @@ pub unsafe extern "C" fn RpcBindingSetObject(
     RPC_S_OK
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RpcBindingInqObject(
     binding: RpcBindingHandle,

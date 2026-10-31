@@ -40,6 +40,9 @@ pub static mut TZNAME: [*const CChar; 2] = [
     TZNAME_DST.as_ptr() as *const CChar,
 ];
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _get_timezone(tz: *mut CLong) -> ErrnoT {
     if tz.is_null() {
@@ -49,6 +52,9 @@ pub unsafe extern "C" fn _get_timezone(tz: *mut CLong) -> ErrnoT {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _get_daylight(dl: *mut CInt) -> ErrnoT {
     if dl.is_null() {
@@ -58,36 +64,57 @@ pub unsafe extern "C" fn _get_daylight(dl: *mut CInt) -> ErrnoT {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _set_timezone(tz: CLong) {
     TIMEZONE_GLOBAL.store(tz as i64, Ordering::Relaxed);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _set_daylight(dl: CInt) {
     DAYLIGHT_GLOBAL.store(dl, Ordering::Relaxed);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn clock() -> ClockT {
     CLOCK_TICKS.fetch_add(1, Ordering::Relaxed) as ClockT
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn get_tm_buffer() -> *mut tm {
     let mut buffers = TIME_BUFFERS.lock();
     &mut buffers.tm_buffer as *mut tm
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn get_tm_buffer2() -> *mut tm {
     let mut buffers = TIME_BUFFERS.lock();
     &mut buffers.tm_buffer2 as *mut tm
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn get_asctime_buffer() -> *mut CChar {
     let mut buffers = TIME_BUFFERS.lock();
     buffers.asctime_buffer.as_mut_ptr()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn localtime(timer: *const TimeT) -> *mut tm {
     if timer.is_null() {
@@ -96,6 +123,9 @@ pub unsafe extern "C" fn localtime(timer: *const TimeT) -> *mut tm {
     localtime_r(timer, get_tm_buffer())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn gmtime(timer: *const TimeT) -> *mut tm {
     if timer.is_null() {
@@ -104,6 +134,9 @@ pub unsafe extern "C" fn gmtime(timer: *const TimeT) -> *mut tm {
     gmtime_r(timer, get_tm_buffer())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn localtime_r(timer: *const TimeT, result: *mut tm) -> *mut tm {
     if timer.is_null() || result.is_null() {
@@ -118,6 +151,9 @@ pub unsafe extern "C" fn localtime_r(timer: *const TimeT, result: *mut tm) -> *m
     result
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn gmtime_r(timer: *const TimeT, result: *mut tm) -> *mut tm {
     if timer.is_null() || result.is_null() {
@@ -128,6 +164,9 @@ pub unsafe extern "C" fn gmtime_r(timer: *const TimeT, result: *mut tm) -> *mut 
     result
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn time_to_tm(t: TimeT, result: *mut tm) {
     const SECONDS_PER_MINUTE: i64 = 60;
     const SECONDS_PER_HOUR: i64 = 3600;
@@ -180,6 +219,9 @@ fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn asctime(timeptr: *const tm) -> *mut CChar {
     if timeptr.is_null() {
@@ -188,6 +230,9 @@ pub unsafe extern "C" fn asctime(timeptr: *const tm) -> *mut CChar {
     asctime_r(timeptr, get_asctime_buffer())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn asctime_r(timeptr: *const tm, buf: *mut CChar) -> *mut CChar {
     if timeptr.is_null() || buf.is_null() {
@@ -225,6 +270,9 @@ pub unsafe extern "C" fn asctime_r(timeptr: *const tm, buf: *mut CChar) -> *mut 
     buf
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn time(timer: *mut TimeT) -> TimeT {
     let uptime_ms = crate::hal::common::pit::get_system_time_ms();

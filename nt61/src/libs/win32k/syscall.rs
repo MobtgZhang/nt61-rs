@@ -53,47 +53,74 @@ mod win32k_helpers {
 // Argument Extraction Helpers
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Read a validated argument slot from the architecture-neutral frame.
 #[inline(always)]
 pub unsafe fn get_arg0(frame: &SyscallFrame) -> u64 {
     frame.args[0]
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline(always)]
 pub unsafe fn get_arg1(frame: &SyscallFrame) -> u64 {
     frame.args[1]
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline(always)]
 pub unsafe fn get_arg2(frame: &SyscallFrame) -> u64 {
     frame.args[2]
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline(always)]
 pub unsafe fn get_arg3(frame: &SyscallFrame) -> u64 {
     frame.args[3]
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline(always)]
 pub unsafe fn get_arg4(frame: &SyscallFrame) -> u64 {
     frame.args[4]
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline(always)]
 pub unsafe fn get_arg5(frame: &SyscallFrame) -> u64 {
     frame.args[5]
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline(always)]
 pub unsafe fn get_arg6(frame: &SyscallFrame) -> u64 {
     frame.args[6]
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline(always)]
 pub unsafe fn get_arg7(frame: &SyscallFrame) -> u64 {
     frame.args[7]
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Read a stack argument by its Windows syscall index (arg4 is index 0).
 #[inline(always)]
 pub unsafe fn get_stack_arg(frame: &SyscallFrame, index: usize) -> u64 {
@@ -106,6 +133,9 @@ pub unsafe fn get_stack_arg(frame: &SyscallFrame, index: usize) -> u64 {
 
 /// Copy a NUL-terminated UTF-16 string out of user memory.
 //
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// The scan is bounded by `max_chars` and every character is read from a
 /// probed range, so an unterminated user string can no longer walk into
 /// kernel memory. Returns the number of characters copied.
@@ -117,7 +147,7 @@ pub unsafe fn capture_user_unicode_string(
 ) -> Result<usize, i32> {
     let len = crate::arch::common::user_memory::probe_for_read_unicode_string(address, max_chars)?;
     if len > dst.len() {
-        return Err(crate::libs::ntdll::status::STATUS_INVALID_PARAMETER as i32);
+        return Err(crate::libs::ntdll::status::STATUS_INVALID_PARAMETER);
     }
     for i in 0..len {
         crate::mm::user_copy::read_user(address + i as u64 * 2, &mut dst[i])?;
@@ -155,7 +185,7 @@ pub extern "C" fn nt_gdi_bit_blt(frame: &SyscallFrame) -> u64 {
     //         hdc_dest, x, y, hdc_src, src_x, src_y, rop);
 
     // Get destination DC
-    if let Some(mut dst_dc) = crate::libs::win32k::dc::get_dc(hdc_dest) {
+    if let Some(dst_dc) = crate::libs::win32k::dc::get_dc(hdc_dest) {
         // Get source DC (optional for some operations)
         let src_dc_opt = if hdc_src != 0 {
             crate::libs::win32k::dc::get_dc(hdc_src)
@@ -165,12 +195,12 @@ pub extern "C" fn nt_gdi_bit_blt(frame: &SyscallFrame) -> u64 {
 
         // Call the actual GDI bit_blt function
         let success = crate::libs::win32k::gdi_ops::gre_bit_blt(
-            &mut dst_dc,
+            dst_dc,
             x,
             y,
             width,
             height,
-            src_dc_opt.as_ref().map(|v| &**v),
+            src_dc_opt.as_deref(),
             src_x,
             src_y,
             rop,
@@ -304,11 +334,11 @@ pub extern "C" fn nt_gdi_combine_rgn(frame: &SyscallFrame) -> u64 {
     // RGN_DIFF (4), RGN_COPY (5). Without persistent region objects we
     // return the source region handle for RGN_COPY and 1 (SIMPLEREGION)
     // for the boolean combinations.
-    let result = match i_mode {
+
+    match i_mode {
         5 => hrgn_src1, // RGN_COPY
         _ => 1,         // SIMPLEREGION for AND/OR/XOR/DIFF
-    };
-    result
+    }
 }
 
 /// NT_GDI_GET_DCOBJECT - Get DC object handle
@@ -449,42 +479,45 @@ pub extern "C" fn nt_gdi_get_dc_dword(frame: &SyscallFrame) -> u64 {
 
 /// NT_GDI_LINE_TO - Draw line to position
 pub extern "C" fn nt_gdi_line_to(frame: &SyscallFrame) -> u64 {
-    let hdc = unsafe { get_arg0(frame) };
-    let _ = &hdc;
-    let x = unsafe { get_arg1(frame) as i32 };
-    let _ = &x;
-    let y = unsafe { get_arg2(frame) as i32 };
-    let _ = &y;
+    unsafe {
+        let hdc = unsafe { get_arg0(frame) };
+        let _ = &hdc;
+        let x = unsafe { get_arg1(frame) as i32 };
+        let _ = &x;
+        let y = unsafe { get_arg2(frame) as i32 };
+        let _ = &y;
 
-    // kprintln!("[win32k] NT_GDI_LINE_TO: hdc=0x{:x} ({},{})", hdc, x, y);
+        // kprintln!("[win32k] NT_GDI_LINE_TO: hdc=0x{:x} ({},{})", hdc, x, y);
 
-    // Get DC and draw line using MoveToEx + LineTo pattern
-    if let Some(dc) = crate::libs::win32k::dc::get_dc(hdc) {
-        // Get current pen position (DC maintains a current position)
-        // For now, just draw the line
-        let pen_color = if dc.pen != 0 {
-            crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
-        } else {
-            0
-        };
+        // Get DC and draw line using MoveToEx + LineTo pattern
+        if let Some(dc) = crate::libs::win32k::dc::get_dc(hdc) {
+            // Get current pen position (DC maintains a current position)
+            // For now, just draw the line
+            let pen_color = if dc.pen != 0 {
+                crate::libs::win32k::objects::gdi_get_pen_color(dc.pen)
+            } else {
+                0
+            };
 
-        // Use the DC's surface
-        let surface = if dc.surface != 0 {
-            dc.surface as *mut crate::libs::win32k::surface::GdiSurface
-        } else {
-            crate::libs::win32k::surface::get_primary_surface()
-        };
+            // Use the DC's surface
+            let surface = if dc.surface != 0 {
+                dc.surface as *mut crate::libs::win32k::surface::GdiSurface
+            } else {
+                crate::libs::win32k::surface::get_primary_surface()
+            };
 
-        if !surface.is_null() {
-            // Simple line drawing - use Bresenham's algorithm
-            // For a proper implementation, we'd track the previous position
-            // and draw from there to (x, y)
-            let success = crate::libs::win32k::gdi_ops::draw_line(surface, 0, 0, x, y, pen_color);
-            let _ = &success;
-            return if success { 1 } else { 0 };
+            if !surface.is_null() {
+                // Simple line drawing - use Bresenham's algorithm
+                // For a proper implementation, we'd track the previous position
+                // and draw from there to (x, y)
+                let success =
+                    crate::libs::win32k::gdi_ops::draw_line(surface, 0, 0, x, y, pen_color);
+                let _ = &success;
+                return if success { 1 } else { 0 };
+            }
         }
+        0
     }
-    0
 }
 
 /// NT_GDI_GET_APP_CLIP_BOX - Get application clip box
@@ -938,7 +971,7 @@ pub extern "C" fn nt_gdi_modify_world_transform(frame: &SyscallFrame) -> u64 {
     // kprintln!("[win32k] NT_GDI_MODIFY_WORLD_TRANSFORM: hdc=0x{:x}, xform=0x{:x}, mode=0x{:x}", hdc, xform, mode);
 
     let mode = mode as u32;
-    if mode < 1 || mode > 4 {
+    if !(1..=4).contains(&mode) {
         return 0;
     }
     if xform != 0 {
@@ -1475,10 +1508,10 @@ pub extern "C" fn nt_user_create_window_ex(frame: &SyscallFrame) -> u64 {
 
     // read window title from user memory
     let mut title_buf = [0u16; 256];
-    if window_name_ptr != 0 {
-        if unsafe { capture_user_unicode_string(window_name_ptr, 255, &mut title_buf) }.is_err() {
-            return 0;
-        }
+    if window_name_ptr != 0
+        && unsafe { capture_user_unicode_string(window_name_ptr, 255, &mut title_buf) }.is_err()
+    {
+        return 0;
     }
 
     // create the window using the window manager
@@ -1496,16 +1529,7 @@ pub extern "C" fn nt_user_create_window_ex(frame: &SyscallFrame) -> u64 {
         menu as u32,
     );
 
-    match hwnd {
-        Some(h) => {
-            // kprintln!("[win32k] NT_USER_CREATE_WINDOW_EX: created hwnd=0x{:016x}", h);
-            h
-        }
-        None => {
-            // kprintln!("[win32k] NT_USER_CREATE_WINDOW_EX: failed to create window");
-            0
-        }
-    }
+    hwnd.unwrap_or_default()
 }
 
 /// NT_USER_DESTROY_WINDOW - Destroy window
@@ -1725,10 +1749,7 @@ pub extern "C" fn nt_user_set_focus(frame: &SyscallFrame) -> u64 {
     let _ = &result;
 
     // Return previous focus handle (0 if none)
-    match result {
-        Some(old) => old,
-        None => 0,
-    }
+    result.unwrap_or_default()
 }
 
 /// NT_USER_GET_FOREGROUND_WINDOW - Get foreground window
@@ -1750,10 +1771,7 @@ pub extern "C" fn nt_user_set_foreground_window(frame: &SyscallFrame) -> u64 {
     let result = crate::libs::win32k::window::set_foreground_window_internal(hwnd);
     let _ = &result;
 
-    match result {
-        Some(old) => old,
-        None => 0,
-    }
+    result.unwrap_or_default()
 }
 
 /// NT_USER_GET_KEYBOARD_STATE - Get keyboard state
@@ -3071,10 +3089,7 @@ pub extern "C" fn nt_user_set_windows_hook_ex(frame: &SyscallFrame) -> u64 {
     //     );
 
     // Install the hook using the hook system
-    match win32k_helpers::install_hook(id_hook, lpfn, thread_id) {
-        Some(handle) => handle,
-        None => 0,
-    }
+    win32k_helpers::install_hook(id_hook, lpfn, thread_id).unwrap_or_default()
 }
 
 /// NT_USER_EXCLUDE_UPDATE_RGN - Exclude update region
@@ -3802,10 +3817,7 @@ pub extern "C" fn nt_user_set_windows_hook_aw(frame: &SyscallFrame) -> u64 {
     //     );
 
     // Install the hook (similar to SetWindowsHookEx)
-    match win32k_helpers::install_hook(id_hook, lpfn, 0) {
-        Some(handle) => handle,
-        None => 0,
-    }
+    win32k_helpers::install_hook(id_hook, lpfn, 0).unwrap_or_default()
 }
 
 /// NT_USER_SET_MENU_DEFAULT_ITEM - Set menu default item

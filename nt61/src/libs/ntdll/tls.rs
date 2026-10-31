@@ -51,6 +51,9 @@ fn current_thread_id() -> usize {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn tls_alloc() -> u32 {
     let mut state = TLS_LOCK.lock();
 
@@ -73,6 +76,9 @@ pub unsafe extern "C" fn tls_alloc() -> u32 {
     0xFFFF_FFFF // TLS_OUT_OF_INDEXES
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_allocate_thread_local_storage_index(index: *mut u32) -> NTSTATUS {
     if index.is_null() {
         return STATUS_INVALID_PARAMETER;
@@ -85,6 +91,9 @@ pub unsafe extern "C" fn rtl_allocate_thread_local_storage_index(index: *mut u32
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn tls_free(index: u32) -> u32 {
     if index as usize >= TLS_TOTAL_SLOTS {
         return 0;
@@ -100,6 +109,9 @@ pub unsafe extern "C" fn tls_free(index: u32) -> u32 {
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_free_thread_local_storage_index(index: u32) -> NTSTATUS {
     if tls_free(index) != 0 {
         STATUS_SUCCESS
@@ -108,6 +120,9 @@ pub unsafe extern "C" fn rtl_free_thread_local_storage_index(index: u32) -> NTST
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn tls_get_value(index: u32) -> PVOID {
     if index as usize >= TLS_TOTAL_SLOTS {
         return ptr::null_mut();
@@ -127,6 +142,9 @@ pub unsafe extern "C" fn tls_get_value(index: u32) -> PVOID {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn tls_set_value(index: u32, value: PVOID) -> u32 {
     if index as usize >= TLS_TOTAL_SLOTS {
         return 0;
@@ -158,10 +176,16 @@ pub unsafe extern "C" fn tls_set_value(index: u32, value: PVOID) -> u32 {
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_fls_alloc(_callback: PVOID, index: *mut u32) -> NTSTATUS {
     rtl_allocate_thread_local_storage_index(index)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_fls_free(index: u32) -> NTSTATUS {
     rtl_free_thread_local_storage_index(index)
 }

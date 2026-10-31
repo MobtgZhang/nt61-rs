@@ -21,8 +21,9 @@ pub struct FormatSpec {
     specifier: char,
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Default)]
 pub enum LengthModifier {
+    #[default]
     None,
     Char,       // hh
     Short,      // h
@@ -34,12 +35,9 @@ pub enum LengthModifier {
     LongDouble, // L
 }
 
-impl Default for LengthModifier {
-    fn default() -> Self {
-        LengthModifier::None
-    }
-}
-
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn parse_format_spec(format: *const CChar, pos: &mut usize) -> Option<FormatSpec> {
     let _start = *pos;
 
@@ -363,6 +361,9 @@ pub fn format_uint_with_spec(
     pos
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn format_string_with_spec(s: *const CChar, spec: &FormatSpec, buf: &mut [u8]) -> usize {
     if s.is_null() {
         let null_str = b"(null)";

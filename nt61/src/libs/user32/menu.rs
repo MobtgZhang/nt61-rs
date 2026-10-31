@@ -75,6 +75,9 @@ impl Menu {
 const MAX_MENUS: usize = 256;
 static MENU_TABLE: Spinlock<[Option<Menu>; MAX_MENUS]> = Spinlock::new([None; MAX_MENUS]);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn create_menu() -> HMENU {
     let mut table = MENU_TABLE.lock();
 
@@ -90,6 +93,9 @@ pub unsafe extern "C" fn create_menu() -> HMENU {
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn create_popup_menu() -> HMENU {
     let mut table = MENU_TABLE.lock();
 
@@ -105,6 +111,9 @@ pub unsafe extern "C" fn create_popup_menu() -> HMENU {
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn destroy_menu(h_menu: HMENU) -> i32 {
     if h_menu.is_null() {
         return 0;
@@ -120,6 +129,9 @@ pub unsafe extern "C" fn destroy_menu(h_menu: HMENU) -> i32 {
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn append_menu_w(
     h_menu: HMENU,
     u_flags: u32,
@@ -161,6 +173,9 @@ pub unsafe extern "C" fn append_menu_w(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn insert_menu_w(
     h_menu: HMENU,
     u_position: u32,
@@ -220,6 +235,9 @@ pub unsafe extern "C" fn insert_menu_w(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn delete_menu(h_menu: HMENU, u_position: u32, u_flags: u32) -> i32 {
     if h_menu.is_null() {
         return 0;
@@ -255,6 +273,9 @@ pub unsafe extern "C" fn delete_menu(h_menu: HMENU, u_position: u32, u_flags: u3
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_menu_item_info_w(
     h_menu: HMENU,
     u_item: u32,
@@ -269,6 +290,9 @@ pub unsafe extern "C" fn get_menu_item_info_w(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn set_menu_item_info_w(
     h_menu: HMENU,
     u_item: u32,
@@ -283,6 +307,9 @@ pub unsafe extern "C" fn set_menu_item_info_w(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn track_popup_menu(
     h_menu: HMENU,
     u_flags: u32,

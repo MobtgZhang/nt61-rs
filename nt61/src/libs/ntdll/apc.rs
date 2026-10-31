@@ -38,6 +38,15 @@ impl ApcEntry {
     }
 }
 
+impl Default for ApcEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn dummy_apc_routine(_context: PVOID) {}
 
 const MAX_APCS_PER_THREAD: usize = 32;
@@ -78,6 +87,9 @@ const MAX_THREADS: usize = 256;
 static APC_QUEUES: Spinlock<[ThreadApcQueue; MAX_THREADS]> =
     Spinlock::new([ThreadApcQueue::new(); MAX_THREADS]);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_queue_apc_thread(
     thread_handle: HANDLE,
     apc_routine: ApcRoutine,
@@ -138,6 +150,9 @@ pub fn has_pending_apcs() -> bool {
     queues[queue_idx].count > 0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_test_alert() -> NTSTATUS {
     if has_pending_apcs() {
         deliver_pending_apcs();
@@ -147,6 +162,9 @@ pub unsafe extern "C" fn nt_test_alert() -> NTSTATUS {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_alert_thread(thread_handle: HANDLE) -> NTSTATUS {
     if thread_handle.is_null() {
         return STATUS_INVALID_HANDLE;
@@ -162,6 +180,9 @@ pub unsafe extern "C" fn nt_alert_thread(thread_handle: HANDLE) -> NTSTATUS {
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_alert_resume_thread(
     thread_handle: HANDLE,
     previous_suspend_count: *mut u32,

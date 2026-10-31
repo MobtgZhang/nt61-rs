@@ -11,7 +11,7 @@
 //!   * wow64_read_virtual_memory32
 //!   * wow64_write_virtual_memory32
 //
-//! References:
+//!     References:
 //!   * geoffchappell.com — wow64 memory management
 
 use crate::libs::wow64::types::*;
@@ -106,6 +106,9 @@ pub unsafe extern "C" fn wow64_allocate_virtual_memory32(
 // wow64_free_virtual_memory32
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Free virtual memory in a 32-bit process.
 ///
 /// # Arguments
@@ -158,6 +161,9 @@ pub unsafe extern "C" fn wow64_free_virtual_memory32(
 // wow64_protect_virtual_memory32
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Change the protection on a region of memory.
 ///
 /// # Arguments
@@ -211,6 +217,9 @@ pub unsafe extern "C" fn wow64_protect_virtual_memory32(
 // wow64_query_virtual_memory32
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Query information about a region of virtual memory.
 ///
 /// # Arguments
@@ -290,6 +299,9 @@ pub unsafe extern "C" fn wow64_query_virtual_memory32(
 // wow64_read_virtual_memory32
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read memory from another process.
 ///
 /// # Arguments
@@ -343,6 +355,9 @@ pub unsafe extern "C" fn wow64_read_virtual_memory32(
 // wow64_write_virtual_memory32
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write memory to another process.
 ///
 /// # Arguments
@@ -398,20 +413,20 @@ pub unsafe extern "C" fn wow64_write_virtual_memory32(
 
 /// Validate a memory protection value.
 fn is_valid_protection(protect: ULONG32) -> bool {
-    match protect {
+    matches!(
+        protect,
         memory_protect::PAGE_NOACCESS
-        | memory_protect::PAGE_READONLY
-        | memory_protect::PAGE_READWRITE
-        | memory_protect::PAGE_WRITECOPY
-        | memory_protect::PAGE_EXECUTE
-        | memory_protect::PAGE_EXECUTE_READ
-        | memory_protect::PAGE_EXECUTE_READWRITE
-        | memory_protect::PAGE_EXECUTE_WRITECOPY
-        | memory_protect::PAGE_GUARD
-        | memory_protect::PAGE_NOCACHE
-        | memory_protect::PAGE_WRITECOMBINE => true,
-        _ => false,
-    }
+            | memory_protect::PAGE_READONLY
+            | memory_protect::PAGE_READWRITE
+            | memory_protect::PAGE_WRITECOPY
+            | memory_protect::PAGE_EXECUTE
+            | memory_protect::PAGE_EXECUTE_READ
+            | memory_protect::PAGE_EXECUTE_READWRITE
+            | memory_protect::PAGE_EXECUTE_WRITECOPY
+            | memory_protect::PAGE_GUARD
+            | memory_protect::PAGE_NOCACHE
+            | memory_protect::PAGE_WRITECOMBINE
+    )
 }
 
 // =============================================================================
@@ -428,6 +443,9 @@ pub fn init() {
 // Public Entry Points (for thunk.rs forwarding)
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_allocate_virtual_memory` — wrapper for wow64_allocate_virtual_memory32.
 pub unsafe extern "C" fn wow64_allocate_virtual_memory(
     process_handle: u32,
@@ -453,6 +471,9 @@ pub unsafe extern "C" fn wow64_allocate_virtual_memory(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_free_virtual_memory` — wrapper for wow64_free_virtual_memory32.
 pub unsafe extern "C" fn wow64_free_virtual_memory(
     process_handle: u32,
@@ -471,6 +492,9 @@ pub unsafe extern "C" fn wow64_free_virtual_memory(
     wow64_free_virtual_memory32(process_handle, base_address, region_size, free_type)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_read_virtual_memory` — wrapper for wow64_read_virtual_memory32.
 pub unsafe extern "C" fn wow64_read_virtual_memory(
     process_handle: u32,
@@ -495,6 +519,9 @@ pub unsafe extern "C" fn wow64_read_virtual_memory(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_write_virtual_memory` — wrapper for wow64_write_virtual_memory32.
 pub unsafe extern "C" fn wow64_write_virtual_memory(
     process_handle: u32,

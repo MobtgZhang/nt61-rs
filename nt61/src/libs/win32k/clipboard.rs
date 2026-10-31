@@ -45,6 +45,12 @@ impl ClipboardDataInner {
     }
 }
 
+impl Default for ClipboardDataInner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Clipboard state (protected by a spinlock)
 pub struct ClipboardState {
     /// Whether clipboard is currently open
@@ -68,6 +74,12 @@ impl ClipboardState {
             data: Spinlock::new(ClipboardDataInner::new()),
             has_data: AtomicBool::new(false),
         }
+    }
+}
+
+impl Default for ClipboardState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

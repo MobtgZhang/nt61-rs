@@ -67,6 +67,9 @@ static SIGNAL_HANDLERS: Lazy<Mutex<SignalHandlers>> = Lazy::new(|| {
     })
 });
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn atexit(func: extern "C" fn()) -> CInt {
     let mut handlers = ATEXIT_HANDLERS.lock();
@@ -79,9 +82,12 @@ pub unsafe extern "C" fn atexit(func: extern "C" fn()) -> CInt {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn signal(sig: CInt, handler: SignalHandler) -> SignalHandler {
-    if sig < 0 || sig >= 32 {
+    if !(0..32).contains(&sig) {
         return default_signal_handler;
     }
 
@@ -91,6 +97,9 @@ pub unsafe extern "C" fn signal(sig: CInt, handler: SignalHandler) -> SignalHand
     old_handler
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn get_program_name_safe() -> *mut CChar {
     let mut storage = PROGRAM_NAME.lock();
 
@@ -103,6 +112,9 @@ pub unsafe fn get_program_name_safe() -> *mut CChar {
     storage.ptr
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn get_cmdline_safe() -> *mut CChar {
     let mut storage = CMDLINE.lock();
 

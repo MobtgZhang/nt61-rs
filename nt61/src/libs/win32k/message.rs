@@ -443,7 +443,7 @@ impl MessageQueue {
 
     /// Get and clear paint rectangles.
     pub fn get_paint_rects(&mut self) -> Vec<crate::libs::win32k::window::Rect> {
-        let rects: Vec<_> = self.paint_rects.drain(..).collect();
+        let rects: Vec<_> = core::mem::take(&mut self.paint_rects);
         rects
     }
 
@@ -452,6 +452,12 @@ impl MessageQueue {
         self.messages.clear();
         self.paint_rects.clear();
         self.current_msg = None;
+    }
+}
+
+impl Default for MessageQueue {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

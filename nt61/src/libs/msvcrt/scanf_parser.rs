@@ -12,8 +12,9 @@ pub struct ScanfSpec {
     pub specifier: char,
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Default)]
 pub enum LengthModifier {
+    #[default]
     None,
     Char,       // hh
     Short,      // h
@@ -25,12 +26,9 @@ pub enum LengthModifier {
     LongDouble, // L
 }
 
-impl Default for LengthModifier {
-    fn default() -> Self {
-        LengthModifier::None
-    }
-}
-
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn skip_whitespace(input: *const CChar, pos: &mut usize) {
     while *input.add(*pos) != 0 {
         let ch = *input.add(*pos) as u8;
@@ -41,6 +39,9 @@ pub unsafe fn skip_whitespace(input: *const CChar, pos: &mut usize) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn parse_scanf_spec(format: *const CChar, pos: &mut usize) -> Option<ScanfSpec> {
     if *format.add(*pos) != b'%' as CChar {
         return None;
@@ -116,6 +117,9 @@ pub unsafe fn parse_scanf_spec(format: *const CChar, pos: &mut usize) -> Option<
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn scan_integer(
     input: *const CChar,
     pos: &mut usize,
@@ -184,6 +188,9 @@ pub unsafe fn scan_integer(
     Some(result)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn scan_unsigned(
     input: *const CChar,
     pos: &mut usize,
@@ -238,6 +245,9 @@ pub unsafe fn scan_unsigned(
     Some(value)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn scan_float(
     input: *const CChar,
     pos: &mut usize,
@@ -281,7 +291,7 @@ pub unsafe fn scan_float(
 
     while *input.add(*pos) != 0 && (*pos - start) < max_width {
         let ch = *input.add(*pos) as u8;
-        if ch >= b'0' && ch <= b'9' {
+        if ch.is_ascii_digit() {
             value = value * 10.0 + (ch - b'0') as f64;
             has_digits = true;
             *pos += 1;
@@ -295,7 +305,7 @@ pub unsafe fn scan_float(
         let mut fraction = 0.1;
         while *input.add(*pos) != 0 && (*pos - start) < max_width {
             let ch = *input.add(*pos) as u8;
-            if ch >= b'0' && ch <= b'9' {
+            if ch.is_ascii_digit() {
                 value += (ch - b'0') as f64 * fraction;
                 fraction *= 0.1;
                 has_digits = true;
@@ -325,7 +335,7 @@ pub unsafe fn scan_float(
         let mut exponent = 0i32;
         while *input.add(*pos) != 0 && (*pos - start) < max_width {
             let ch = *input.add(*pos) as u8;
-            if ch >= b'0' && ch <= b'9' {
+            if ch.is_ascii_digit() {
                 exponent = exponent * 10 + (ch - b'0') as i32;
                 *pos += 1;
             } else {
@@ -352,6 +362,9 @@ pub unsafe fn scan_float(
     Some(if negative { -value } else { value })
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn scan_string(
     input: *const CChar,
     pos: &mut usize,
@@ -381,6 +394,9 @@ pub unsafe fn scan_string(
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn scan_char(
     input: *const CChar,
     pos: &mut usize,

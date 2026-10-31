@@ -56,7 +56,7 @@ const PAGE_SIZE: u64 = 0x1000;
 
 /// Align size up to page boundary
 fn align_to_page(size: usize) -> usize {
-    ((size + 0xFFF) & !0xFFF) as usize
+    (size + 0xFFF) & !0xFFF
 }
 
 /// Find an allocation entry by base address.
@@ -69,11 +69,10 @@ pub fn find_allocation(base_address: u64) -> Option<usize> {
 /// Returns the removed entry if found.
 fn remove_allocation(base_address: u64) -> Option<MemEntry> {
     let mut table = MEMORY_TABLE.lock();
-    if let Some(pos) = table.iter().position(|e| e.base_address == base_address) {
-        Some(table.remove(pos))
-    } else {
-        None
-    }
+    table
+        .iter()
+        .position(|e| e.base_address == base_address)
+        .map(|pos| table.remove(pos))
 }
 
 /// Add an allocation entry.
@@ -101,6 +100,9 @@ fn is_valid_protect(protect: u32) -> bool {
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_allocate_virtual_memory`.
 ///
 /// Allocates virtual memory in the specified process address space.
@@ -203,6 +205,9 @@ pub unsafe extern "C" fn nt_allocate_virtual_memory(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn nt_allocate_virtual_memory_kernel(
     process_handle: HANDLE,
     base_address: &mut PVOID,
@@ -228,6 +233,9 @@ pub unsafe fn nt_allocate_virtual_memory_kernel(
     status
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_free_virtual_memory`.
 ///
 /// Frees virtual memory that was allocated with nt_allocate_virtual_memory.
@@ -275,10 +283,8 @@ pub unsafe extern "C" fn nt_free_virtual_memory(
             if write_user_object(base_address as u64, &core::ptr::null_mut::<PVOID>()).is_err() {
                 return STATUS_ACCESS_VIOLATION;
             }
-            if !region_size.is_null() {
-                if write_user_object(region_size as u64, &0usize).is_err() {
-                    return STATUS_ACCESS_VIOLATION;
-                }
+            if !region_size.is_null() && write_user_object(region_size as u64, &0usize).is_err() {
+                return STATUS_ACCESS_VIOLATION;
             }
             return STATUS_SUCCESS;
         }
@@ -291,15 +297,18 @@ pub unsafe extern "C" fn nt_free_virtual_memory(
     if write_user_object(base_address as u64, &core::ptr::null_mut::<PVOID>()).is_err() {
         return STATUS_ACCESS_VIOLATION;
     }
-    if !region_size.is_null() {
-        if write_user_object(region_size as u64, &(entry.region_size as SizeT)).is_err() {
-            return STATUS_ACCESS_VIOLATION;
-        }
+    if !region_size.is_null()
+        && write_user_object(region_size as u64, &(entry.region_size as SizeT)).is_err()
+    {
+        return STATUS_ACCESS_VIOLATION;
     }
 
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn nt_free_virtual_memory_kernel(
     process_handle: HANDLE,
     base_address: &mut PVOID,
@@ -316,6 +325,9 @@ pub unsafe fn nt_free_virtual_memory_kernel(
     status
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_protect_virtual_memory` — change page protection.
 ///
 /// This function changes the protection on a region of pages.
@@ -375,10 +387,9 @@ pub unsafe extern "C" fn nt_protect_virtual_memory(
         }
 
         // Return old protection if requested
-        if !old_protect.is_null() {
-            if write_user_object(old_protect as u64, &entry.protect).is_err() {
-                return STATUS_ACCESS_VIOLATION;
-            }
+        if !old_protect.is_null() && write_user_object(old_protect as u64, &entry.protect).is_err()
+        {
+            return STATUS_ACCESS_VIOLATION;
         }
 
         // Update protection
@@ -386,16 +397,19 @@ pub unsafe extern "C" fn nt_protect_virtual_memory(
     } else {
         // Allocation not tracked, but still allow protection changes
         // for early boot scenarios
-        if !old_protect.is_null() {
-            if write_user_object(old_protect as u64, &page::PAGE_READWRITE).is_err() {
-                return STATUS_ACCESS_VIOLATION;
-            }
+        if !old_protect.is_null()
+            && write_user_object(old_protect as u64, &page::PAGE_READWRITE).is_err()
+        {
+            return STATUS_ACCESS_VIOLATION;
         }
     }
 
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn nt_protect_virtual_memory_kernel(
     process_handle: HANDLE,
     base_address: &mut PVOID,
@@ -431,6 +445,9 @@ pub struct MemoryBasicInformation {
     pub _pad2: u32,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_query_virtual_memory` — returns information about a region of pages.
 pub unsafe extern "C" fn nt_query_virtual_memory(
     process_handle: HANDLE,
@@ -468,10 +485,10 @@ pub unsafe extern "C" fn nt_query_virtual_memory(
     );
     if status != STATUS_SUCCESS {
         if let Some(required_size) = required_size {
-            if !return_length.is_null() {
-                if write_user_object(return_length as u64, &required_size).is_err() {
-                    return STATUS_ACCESS_VIOLATION;
-                }
+            if !return_length.is_null()
+                && write_user_object(return_length as u64, &required_size).is_err()
+            {
+                return STATUS_ACCESS_VIOLATION;
             }
         }
         return status;
@@ -485,10 +502,10 @@ pub unsafe extern "C" fn nt_query_virtual_memory(
     {
         return STATUS_ACCESS_VIOLATION;
     }
-    if !return_length.is_null() {
-        if write_user_object(return_length as u64, &required_size.unwrap()).is_err() {
-            return STATUS_ACCESS_VIOLATION;
-        }
+    if !return_length.is_null()
+        && write_user_object(return_length as u64, &required_size.unwrap()).is_err()
+    {
+        return STATUS_ACCESS_VIOLATION;
     }
     status
 }
@@ -562,6 +579,9 @@ fn mbi_as_bytes(mbi: &MemoryBasicInformation) -> &[u8] {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_read_virtual_memory` / `nt_write_virtual_memory` — read/write
 /// when called on a non-self target, and copy via a kernel staging
 /// buffer for the cross-process case.
@@ -585,6 +605,9 @@ pub unsafe extern "C" fn nt_read_virtual_memory(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_write_virtual_memory(
     process_handle: HANDLE,
     base_address: PVOID,
@@ -605,6 +628,9 @@ pub unsafe extern "C" fn nt_write_virtual_memory(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Shared implementation for  and
 /// . Resolves the process handle to a PID,
 /// switches CR3 to the target address space (if cross-process), does
@@ -630,7 +656,7 @@ unsafe fn rw_virtual_memory_impl(
         match lookup_handle(process_handle) {
             Some(e) if e.kind == HandleKind::Process => {
                 match crate::ps::process::get_by_pid(e.target) {
-                    Some(proc) => Some((*proc).pml4_phys),
+                    Some(proc) => Some(proc.pml4_phys),
                     None => return STATUS_INVALID_HANDLE,
                 }
             }
@@ -690,14 +716,15 @@ unsafe fn rw_virtual_memory_impl(
         STATUS_SUCCESS
     };
 
-    if !bytes_transferred.is_null() {
-        if write_user_object(bytes_transferred as u64, &size).is_err() {
-            return STATUS_ACCESS_VIOLATION;
-        }
+    if !bytes_transferred.is_null() && write_user_object(bytes_transferred as u64, &size).is_err() {
+        return STATUS_ACCESS_VIOLATION;
     }
     result
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn nt_query_virtual_memory_kernel(
     process_handle: HANDLE,
     base_address: PVOID,
@@ -723,6 +750,9 @@ pub unsafe fn nt_query_virtual_memory_kernel(
     status
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn nt_read_virtual_memory_kernel(
     process_handle: HANDLE,
     base_address: PVOID,
@@ -741,6 +771,9 @@ pub unsafe fn nt_read_virtual_memory_kernel(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn nt_write_virtual_memory_kernel(
     process_handle: HANDLE,
     base_address: PVOID,

@@ -14,10 +14,10 @@
 //!   * `sechost`  — Service Host process
 //!   * `server`   — system server EXEs (smss/csrss/...)
 //
-//! On this kernel the user-mode side is never actually
-//! executed; `winload` simply loads the DLLs to verify the
-//! export tables and call `DllMain` so the boot log shows
-//! the entry points are reachable.
+//!     On this kernel the user-mode side is never actually
+//!     executed; `winload` simply loads the DLLs to verify the
+//!     export tables and call `DllMain` so the boot log shows
+//!     the entry points are reachable.
 
 // Stub-only DLLs carry every public symbol the Windows version
 // of the DLL exposes, even though the bootstrap never actually

@@ -1,6 +1,7 @@
 //! Buffered I/O Implementation
 //!
 //! Provides efficient buffered I/O with configurable buffer sizes
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use super::types::*;
 use core::ptr;
@@ -68,7 +69,7 @@ impl FileBuffer {
         to_read
     }
 
-    pub fn write(&mut self, src: &[u8]) -> Result<usize, ()> {
+    pub fn write(&mut self, src: &[u8]) -> Result<usize, NTSTATUS> {
         let space = self.space();
         let to_write = src.len().min(space);
 
@@ -118,9 +119,12 @@ impl FileBuffer {
     }
 }
 
-pub unsafe fn flush_write_buffer(file: *mut FILE) -> Result<(), ()> {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn flush_write_buffer(file: *mut FILE) -> Result<(), NTSTATUS> {
     if file.is_null() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let _f = &mut *file;
@@ -130,9 +134,12 @@ pub unsafe fn flush_write_buffer(file: *mut FILE) -> Result<(), ()> {
     Ok(())
 }
 
-pub unsafe fn fill_read_buffer(file: *mut FILE) -> Result<usize, ()> {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn fill_read_buffer(file: *mut FILE) -> Result<usize, NTSTATUS> {
     if file.is_null() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     let _f = &mut *file;
@@ -140,6 +147,9 @@ pub unsafe fn fill_read_buffer(file: *mut FILE) -> Result<usize, ()> {
     Ok(0)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn buffered_fread(
     ptr: *mut c_void,
     size: SizeT,
@@ -168,6 +178,9 @@ pub unsafe fn buffered_fread(
     bytes_read / size
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn buffered_fwrite(
     ptr: *const c_void,
     size: SizeT,
@@ -201,6 +214,9 @@ pub unsafe fn buffered_fwrite(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn setvbuf(
     stream: *mut FILE,
@@ -219,6 +235,9 @@ pub unsafe extern "C" fn setvbuf(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn setbuf(stream: *mut FILE, buf: *mut CChar) {
     if buf.is_null() {
@@ -228,32 +247,47 @@ pub unsafe extern "C" fn setbuf(stream: *mut FILE, buf: *mut CChar) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn setlinebuf(stream: *mut FILE) {
     setvbuf(stream, ptr::null_mut(), _IOLBF, 0);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn fflush_all() {}
 
-pub unsafe fn read_ahead(file: *mut FILE, _hint_bytes: usize) -> Result<(), ()> {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn read_ahead(file: *mut FILE, _hint_bytes: usize) -> Result<(), NTSTATUS> {
     if file.is_null() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     Ok(())
 }
 
-pub unsafe fn write_behind(file: *mut FILE) -> Result<(), ()> {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn write_behind(file: *mut FILE) -> Result<(), NTSTATUS> {
     if file.is_null() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     Ok(())
 }
 
-pub unsafe fn set_direct_io(file: *mut FILE, _enable: bool) -> Result<(), ()> {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn set_direct_io(file: *mut FILE, _enable: bool) -> Result<(), NTSTATUS> {
     if file.is_null() {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
 
     Ok(())
@@ -266,12 +300,15 @@ pub struct MappedFile {
 }
 
 impl MappedFile {
-    pub unsafe fn new(file: *mut FILE, _writable: bool) -> Result<Self, ()> {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+    pub unsafe fn new(file: *mut FILE, _writable: bool) -> Result<Self, NTSTATUS> {
         if file.is_null() {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
 
-        Err(())
+        Err(STATUS_UNSUCCESSFUL)
     }
 
     pub fn as_slice(&self) -> &[u8] {

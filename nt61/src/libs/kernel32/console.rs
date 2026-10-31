@@ -21,6 +21,9 @@ static MOCK_STDIN: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 static MOCK_STDOUT: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 static MOCK_STDERR: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_std_handle`.
 pub unsafe extern "C" fn get_std_handle(n_std_handle: DWORD) -> HANDLE {
     match n_std_handle {
@@ -34,6 +37,9 @@ pub unsafe extern "C" fn get_std_handle(n_std_handle: DWORD) -> HANDLE {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `set_std_handle`.
 pub unsafe extern "C" fn set_std_handle(n_std_handle: DWORD, h: HANDLE) -> BOOL {
     let p = h as *mut u8;
@@ -84,6 +90,9 @@ pub struct ConsoleScreenBufferInfo {
     pub maximum_window_size: Coord,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn get_console_screen_buffer_info(
     _console: HANDLE,
     info: *mut ConsoleScreenBufferInfo,
@@ -106,12 +115,18 @@ pub unsafe extern "C" fn get_console_screen_buffer_info(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `set_console_text_attribute`.
 pub unsafe extern "C" fn set_console_text_attribute(_console: HANDLE, attributes: u16) -> BOOL {
     CONSOLE_ATTR.store(attributes as u32, Ordering::Relaxed);
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `write_console_w`.
 pub unsafe extern "C" fn write_console_w(
     _console: HANDLE,
@@ -139,6 +154,9 @@ pub unsafe extern "C" fn write_console_w(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `read_console_w` — read from a fake input buffer. The
 /// bootstrap never has real input; we return zero bytes.
 pub unsafe extern "C" fn read_console_w(

@@ -12,6 +12,9 @@ use super::types::{PsecurityDescriptor, BYTE, LUID, SID_NAME_USE};
 use super::types::{PsidNameUse, DWORD, LONG, PSID};
 use crate::libs::ntdll::types::{BOOLEAN, HANDLE, PCWSTR, PVOID, PWSTR, ULONG};
 use core::ptr::null_mut;
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn LookupAccountSidW(
     _lp_system_name: PCWSTR,
@@ -63,6 +66,9 @@ pub unsafe extern "C" fn LookupAccountSidW(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn LookupAccountNameW(
     _lp_system_name: PCWSTR,
@@ -114,6 +120,9 @@ pub unsafe extern "C" fn LookupAccountNameW(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn InitializeSecurityDescriptor(
     p_security_descriptor: PsecurityDescriptor,
@@ -135,6 +144,9 @@ pub unsafe extern "C" fn InitializeSecurityDescriptor(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn OpenProcessToken(
     process_handle: HANDLE,
@@ -158,6 +170,9 @@ pub unsafe extern "C" fn OpenProcessToken(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn OpenThreadToken(
     thread_handle: HANDLE,
@@ -183,6 +198,9 @@ pub unsafe extern "C" fn OpenThreadToken(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn SetTokenInformation(
     token_handle: HANDLE,
@@ -196,7 +214,7 @@ pub unsafe extern "C" fn SetTokenInformation(
 
     let status = crate::libs::ntdll::security::nt_set_information_token(
         token_handle,
-        token_information_class as u32,
+        token_information_class,
         token_information,
         token_information_length,
     );
@@ -208,6 +226,9 @@ pub unsafe extern "C" fn SetTokenInformation(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn AdjustTokenPrivileges(
     token_handle: HANDLE,
@@ -224,6 +245,9 @@ pub unsafe extern "C" fn AdjustTokenPrivileges(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn DuplicateToken(
     existing_token_handle: HANDLE,
@@ -238,7 +262,7 @@ pub unsafe extern "C" fn DuplicateToken(
         existing_token_handle,
         0, // desired_access (0 = same as original)
         0, // EffectiveOnly
-        impersonation_level as u32,
+        impersonation_level,
         &mut *duplicate_token_handle,
     );
 
@@ -249,6 +273,9 @@ pub unsafe extern "C" fn DuplicateToken(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn DuplicateTokenEx(
     h_existing_token: HANDLE,
@@ -266,7 +293,7 @@ pub unsafe extern "C" fn DuplicateTokenEx(
         h_existing_token,
         dw_desired_access,
         0, // EffectiveOnly
-        token_type as u32,
+        token_type,
         &mut *ph_new_token,
     );
 
@@ -277,6 +304,9 @@ pub unsafe extern "C" fn DuplicateTokenEx(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn LookupPrivilegeValueW(
     _lp_system_name: PCWSTR,
@@ -295,6 +325,9 @@ pub unsafe extern "C" fn LookupPrivilegeValueW(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn LookupPrivilegeNameW(
     _lp_system_name: PCWSTR,
@@ -323,6 +356,9 @@ pub unsafe extern "C" fn LookupPrivilegeNameW(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn PrivilegeCheck(
     client_token: HANDLE,
@@ -338,6 +374,9 @@ pub unsafe extern "C" fn PrivilegeCheck(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn AccessCheck(
     p_security_descriptor: PsecurityDescriptor,
@@ -361,6 +400,9 @@ pub unsafe extern "C" fn AccessCheck(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// ImpersonateLoggedOnUser — Impersonate a logged-on user
 #[no_mangle]
 pub unsafe extern "C" fn ImpersonateLoggedOnUser(h_token: HANDLE) -> LONG {
@@ -383,6 +425,9 @@ pub unsafe extern "C" fn ImpersonateLoggedOnUser(h_token: HANDLE) -> LONG {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn RevertToSelf() -> LONG {
     let null_token: HANDLE = null_mut();

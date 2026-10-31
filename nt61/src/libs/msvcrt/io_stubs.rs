@@ -3,6 +3,7 @@
 //! This module provides stub implementations for I/O operations that would
 //! normally integrate with the kernel's I/O subsystem. These are placeholder
 //! implementations that return errors or provide minimal functionality.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use crate::libs::msvcrt::types::*;
 
@@ -12,26 +13,26 @@ pub fn open_file(_filename: *const CChar, _flags: u32) -> usize {
 
 pub fn close_file(_handle: usize) {}
 
-pub fn read_file(_handle: usize, _buffer: &mut [u8]) -> Result<usize, ()> {
-    Err(()) // Not implemented
+pub fn read_file(_handle: usize, _buffer: &mut [u8]) -> Result<usize, NTSTATUS> {
+    Err(STATUS_UNSUCCESSFUL) // Not implemented
 }
 
-pub fn write_file(_handle: usize, _buffer: &[u8]) -> Result<usize, ()> {
-    Err(()) // Not implemented
+pub fn write_file(_handle: usize, _buffer: &[u8]) -> Result<usize, NTSTATUS> {
+    Err(STATUS_UNSUCCESSFUL) // Not implemented
 }
 
-pub fn get_file_size(_handle: usize) -> Result<usize, ()> {
-    Err(()) // Not implemented
+pub fn get_file_size(_handle: usize) -> Result<usize, NTSTATUS> {
+    Err(STATUS_UNSUCCESSFUL) // Not implemented
 }
 
-pub fn seek_file(_handle: usize, _position: usize) -> Result<(), ()> {
-    Err(()) // Not implemented
+pub fn seek_file(_handle: usize, _position: usize) -> Result<(), NTSTATUS> {
+    Err(STATUS_UNSUCCESSFUL) // Not implemented
 }
 
-pub fn delete_file(_filename: *const CChar) -> Result<(), ()> {
-    Err(()) // Not implemented
+pub fn delete_file(_filename: *const CChar) -> Result<(), NTSTATUS> {
+    Err(STATUS_UNSUCCESSFUL) // Not implemented
 }
 
-pub fn rename_file(_old: *const CChar, _new: *const CChar) -> Result<(), ()> {
-    Err(()) // Not implemented
+pub fn rename_file(_old: *const CChar, _new: *const CChar) -> Result<(), NTSTATUS> {
+    Err(STATUS_UNSUCCESSFUL) // Not implemented
 }

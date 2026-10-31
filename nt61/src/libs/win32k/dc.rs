@@ -337,6 +337,12 @@ impl DcObject {
     }
 }
 
+impl Default for DcObject {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // =============================================================================
 // DC handle Table
 // =============================================================================
@@ -424,6 +430,12 @@ impl DcHandleTable {
             }
         }
         false
+    }
+}
+
+impl Default for DcHandleTable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -14,7 +14,7 @@
 // (create_window_ex_w, get_message_w, MSG, WNDCLASSEXW, ...).
 // These names ARE the user32 ABI; we must not rename them.
 //
-//! Module layout:
+//!     Module layout:
 //!   * `window`   — window / message-pump APIs
 //!   * `class`    — window class registration
 //!   * `input`    — keyboard / mouse / system metrics
@@ -67,7 +67,7 @@ pub fn alloc_window_handle() -> u64 {
 
 /// Look up a window handle; returns true if it exists.
 pub fn has_window_handle(h: u64) -> bool {
-    WINDOW_TABLE.lock().iter().any(|x| *x == h)
+    WINDOW_TABLE.lock().contains(&h)
 }
 
 pub mod smoke;

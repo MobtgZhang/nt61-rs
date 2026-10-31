@@ -38,7 +38,7 @@ pub fn test_create_destroy_window() -> bool {
             ptr::null_mut(),
             core::ptr::null_mut(),
         );
-        if h == ptr::null_mut() {
+        if h.is_null() {
             return false;
         }
         if !has_window_handle(h as u64) {
@@ -151,7 +151,7 @@ pub fn test_post_quit() -> bool {
 pub fn test_foreground_window() -> bool {
     let r = unsafe { window::get_foreground_window() };
     let s = unsafe { window::set_foreground_window(ptr::null_mut()) };
-    r == ptr::null_mut() && s != 0
+    r.is_null() && s != 0
 }
 
 pub fn test_window_alloc_unique() -> bool {

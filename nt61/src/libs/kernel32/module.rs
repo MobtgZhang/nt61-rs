@@ -14,6 +14,9 @@ use crate::libs::ntdll::types::UnicodeString;
 use alloc::string::String;
 use core::ptr;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn wide_to_string(p: *const u16) -> Option<String> {
     if p.is_null() {
         return None;
@@ -62,6 +65,9 @@ fn map_status(s: i32) -> u32 {
     code
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_module_handle_w`.
 pub unsafe extern "C" fn get_module_handle_w(module_name: LPCWSTR) -> HMODULE {
     if module_name.is_null() {
@@ -85,6 +91,9 @@ pub unsafe extern "C" fn get_module_handle_w(module_name: LPCWSTR) -> HMODULE {
     h as HMODULE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_proc_address`.
 ///
 /// Returns a raw `FARPROC`. When the symbol cannot be resolved we
@@ -103,6 +112,9 @@ pub unsafe extern "C" fn get_proc_address(
     module: HMODULE,
     proc_name: LPCSTR,
 ) -> super::types::FARPROC {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Sentinel: the only thing callers should do with this pointer
     /// is treat it as "not found". It is never called in our
     /// statically-linked runtime (cmd.exe only invokes symbols we
@@ -133,6 +145,9 @@ pub unsafe extern "C" fn get_proc_address(
     core::mem::transmute(p)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `load_library_w`.
 pub unsafe extern "C" fn load_library_w(file_name: LPCWSTR) -> HMODULE {
     if file_name.is_null() {
@@ -156,6 +171,9 @@ pub unsafe extern "C" fn load_library_w(file_name: LPCWSTR) -> HMODULE {
     h as HMODULE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `free_library` — unloads the module. The bootstrap does
 /// not really unload anything; we just remove the LDR entry.
 pub unsafe extern "C" fn free_library(module: HMODULE) -> BOOL {
@@ -168,6 +186,9 @@ pub unsafe extern "C" fn free_library(module: HMODULE) -> BOOL {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_module_file_name_w`.
 pub unsafe extern "C" fn get_module_file_name_w(
     module: HMODULE,
@@ -213,6 +234,9 @@ pub unsafe extern "C" fn get_module_file_name_w(
     copy as DWORD
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `enum_process_modules` — we only have one loaded module
 /// (the calling process image).
 pub unsafe extern "C" fn enum_process_modules(

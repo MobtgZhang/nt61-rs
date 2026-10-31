@@ -12,6 +12,9 @@ use super::types::{IoStatusBlock, HANDLE, PVOID, ULONG};
 use crate::mm::user_copy;
 use core::ptr;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_device_io_control_file(file, event, apc, apc_ctx, iosb,
 /// ioctl, input, input_len, output, output_len)`
 pub unsafe extern "C" fn nt_device_io_control_file(
@@ -53,19 +56,21 @@ pub unsafe extern "C" fn nt_device_io_control_file(
     // ranges up front; SMAP/SMEP is not yet enforced, so this is
     // the only thing standing between an attacker and a kernel
     // crash / kernel write through a user pointer.
-    if input_buffer != ptr::null_mut() && input_length > 0 {
-        if user_copy::probe_user_read(input_buffer as u64, input_length as usize).is_err() {
-            (*io_status_block).status = STATUS_ACCESS_VIOLATION_VALUE;
-            (*io_status_block).information = 0;
-            return STATUS_ACCESS_VIOLATION_VALUE;
-        }
+    if !input_buffer.is_null()
+        && input_length > 0
+        && user_copy::probe_user_read(input_buffer as u64, input_length as usize).is_err()
+    {
+        (*io_status_block).status = STATUS_ACCESS_VIOLATION_VALUE;
+        (*io_status_block).information = 0;
+        return STATUS_ACCESS_VIOLATION_VALUE;
     }
-    if output_buffer != ptr::null_mut() && output_length > 0 {
-        if user_copy::probe_user_write(output_buffer as u64, output_length as usize).is_err() {
-            (*io_status_block).status = STATUS_ACCESS_VIOLATION_VALUE;
-            (*io_status_block).information = 0;
-            return STATUS_ACCESS_VIOLATION_VALUE;
-        }
+    if !output_buffer.is_null()
+        && output_length > 0
+        && user_copy::probe_user_write(output_buffer as u64, output_length as usize).is_err()
+    {
+        (*io_status_block).status = STATUS_ACCESS_VIOLATION_VALUE;
+        (*io_status_block).information = 0;
+        return STATUS_ACCESS_VIOLATION_VALUE;
     }
 
     let input_slice: &[u8] = if input_buffer.is_null() || input_length == 0 {

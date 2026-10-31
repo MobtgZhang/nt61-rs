@@ -50,7 +50,6 @@ impl SyscallContext {
     }
 
     /// read the next 32-bit argument as u32.
-
     pub fn next_u32(&mut self) -> u32 {
         if self.current_arg >= self.arg_count {
             return 0;
@@ -126,11 +125,16 @@ pub fn validate_wow64_pointer(ptr32: ULONG32) -> bool {
         return true; // NULL is valid
     }
     // Check that pointer is within 32-bit user space
-    ptr32 >= WOW64_USER_SPACE_START && ptr32 <= WOW64_MAX_USER_ADDRESS
+    (WOW64_USER_SPACE_START..=WOW64_MAX_USER_ADDRESS).contains(&ptr32)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Convert a 32-bit UnicodeString to 64-bit.
-pub fn convert_unicode_string_32_to_64(str32: *const UnicodeString32) -> Option<(u16, u16, u64)> {
+pub unsafe fn convert_unicode_string_32_to_64(
+    str32: *const UnicodeString32,
+) -> Option<(u16, u16, u64)> {
     if str32.is_null() {
         return None;
     }
@@ -622,7 +626,7 @@ pub fn dispatch_nt_write_file(ctx: &mut SyscallContext) -> ULONG32 {
 
 /// Check if a 32-bit pointer is properly aligned for the given size.
 pub fn is_aligned_32(ptr: ULONG32, alignment: u32) -> bool {
-    ptr % alignment == 0
+    ptr.is_multiple_of(alignment)
 }
 
 /// Align a 32-bit value up to the given alignment.

@@ -14,6 +14,9 @@ use crate::libs::kernel32::types::{DWORD, HANDLE, LPWSTR};
 use crate::libs::ntdll::types::{PVOID, ULONG};
 use core::ptr;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn SetNamedSecurityInfoW(
     p_object_name: LPWSTR,
@@ -56,8 +59,12 @@ pub unsafe extern "C" fn SetNamedSecurityInfoW(
     if (security_info & GROUP_SECURITY_INFORMATION) != 0 && psid_group.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
-    if (security_info & DACL_SECURITY_INFORMATION) != 0 && p_dacl.is_null() {}
-    if (security_info & SACL_SECURITY_INFORMATION) != 0 && p_sacl.is_null() {}
+    if (security_info & DACL_SECURITY_INFORMATION) != 0 {
+        p_dacl.is_null();
+    }
+    if (security_info & SACL_SECURITY_INFORMATION) != 0 {
+        p_sacl.is_null();
+    }
 
     match object_type {
         SE_FILE_OBJECT => ERROR_SUCCESS,
@@ -67,6 +74,9 @@ pub unsafe extern "C" fn SetNamedSecurityInfoW(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn GetNamedSecurityInfoW(
     p_object_name: LPWSTR,
@@ -125,6 +135,9 @@ pub unsafe extern "C" fn GetNamedSecurityInfoW(
     ERROR_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn SetSecurityInfo(
     handle: HANDLE,
@@ -146,6 +159,9 @@ pub unsafe extern "C" fn SetSecurityInfo(
     ERROR_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn GetSecurityInfo(
     handle: HANDLE,
@@ -182,6 +198,9 @@ pub unsafe extern "C" fn GetSecurityInfo(
     ERROR_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn BuildSecurityDescriptorW(
     _p_owner: *mut TRUSTEE_W,

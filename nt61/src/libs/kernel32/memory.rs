@@ -35,6 +35,9 @@ pub mod vmem {
     pub const PAGE_NOCACHE: u32 = 0x0200;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `virtual_alloc`.
 pub unsafe extern "C" fn virtual_alloc(
     address: LPVOID,
@@ -63,6 +66,9 @@ pub unsafe extern "C" fn virtual_alloc(
     address
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `virtual_free`.
 pub unsafe extern "C" fn virtual_free(address: LPVOID, size: usize, free_type: DWORD) -> BOOL {
     let mut base = address as *mut u8;
@@ -81,6 +87,9 @@ pub unsafe extern "C" fn virtual_free(address: LPVOID, size: usize, free_type: D
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `virtual_protect`.
 pub unsafe extern "C" fn virtual_protect(
     address: LPVOID,
@@ -120,6 +129,9 @@ pub struct MemoryBasicInformation {
     pub _pad2: u32,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `virtual_query`.
 pub unsafe extern "C" fn virtual_query(
     address: LPCVOID,
@@ -156,6 +168,9 @@ pub mod heap_flags {
     pub const HEAP_REALLOC_IN_PLACE_ONLY: u32 = 0x0000_0010;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `heap_create`.
 pub unsafe extern "C" fn heap_create(
     options: DWORD,
@@ -172,6 +187,9 @@ pub unsafe extern "C" fn heap_create(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `heap_destroy`.
 pub unsafe extern "C" fn heap_destroy(heap: HANDLE) -> BOOL {
     let result = ntdll_heap::rtl_destroy_heap(heap);
@@ -182,16 +200,25 @@ pub unsafe extern "C" fn heap_destroy(heap: HANDLE) -> BOOL {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_process_heap`.
 pub unsafe extern "C" fn get_process_heap() -> HANDLE {
     ntdll_heap::rtl_get_process_heap()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `heap_alloc`.
 pub unsafe extern "C" fn heap_alloc(heap: HANDLE, flags: DWORD, bytes: usize) -> LPVOID {
     ntdll_heap::rtl_allocate_heap(heap, flags, bytes)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `heap_re_alloc`.
 pub unsafe extern "C" fn heap_re_alloc(
     heap: HANDLE,
@@ -202,6 +229,9 @@ pub unsafe extern "C" fn heap_re_alloc(
     ntdll_heap::rtl_re_allocate_heap(heap, flags, memory, bytes)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `heap_free`.
 pub unsafe extern "C" fn heap_free(heap: HANDLE, flags: DWORD, memory: LPVOID) -> BOOL {
     if ntdll_heap::rtl_free_heap(heap, flags, memory) == 1 {
@@ -211,11 +241,17 @@ pub unsafe extern "C" fn heap_free(heap: HANDLE, flags: DWORD, memory: LPVOID) -
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `heap_size`.
 pub unsafe extern "C" fn heap_size(heap: HANDLE, flags: DWORD, memory: LPVOID) -> usize {
     ntdll_heap::rtl_size_heap(heap, flags, memory)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `global_alloc` — wraps `heap_alloc` of the process heap.
 /// flags we honour:
 ///   0x0040 = GMEM_ZEROINIT
@@ -233,6 +269,9 @@ pub unsafe extern "C" fn global_alloc(flags: DWORD, bytes: usize) -> HANDLE {
     p
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `global_free`.
 pub unsafe extern "C" fn global_free(memory: HANDLE) -> HANDLE {
     if heap_free(get_process_heap(), 0, memory) != 0 {
@@ -242,10 +281,16 @@ pub unsafe extern "C" fn global_free(memory: HANDLE) -> HANDLE {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `local_alloc` — same as global_alloc in modern Windows.
 pub unsafe extern "C" fn local_alloc(flags: DWORD, bytes: usize) -> HANDLE {
     global_alloc(flags, bytes)
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn local_free(memory: HANDLE) -> HANDLE {
     global_free(memory)
 }

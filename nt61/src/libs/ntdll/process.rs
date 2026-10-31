@@ -30,6 +30,9 @@ pub fn nt_current_process() -> HANDLE {
     (-1isize) as HANDLE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_create_process` — create a new process. We route to
 /// `ps::process::create_user_process`.
 pub unsafe extern "C" fn nt_create_process(
@@ -63,9 +66,9 @@ pub unsafe extern "C" fn nt_create_process(
                     if units > 0 && !name.buffer.is_null() {
                         let mut wide_bytes = alloc::vec![0u8; units * 2];
                         if copy_from_user(&mut wide_bytes, name.buffer as u64).is_ok() {
-                            for pair in wide_bytes.chunks_exact(2) {
+                            for pair in wide_bytes.as_chunks::<2>().0 {
                                 let unit = u16::from_le_bytes([pair[0], pair[1]]);
-                                if let Some(byte) = u8::try_from(unit & 0xFF).ok() {
+                                if let Ok(byte) = u8::try_from(unit & 0xFF) {
                                     image_path.push(byte);
                                 }
                             }
@@ -108,8 +111,8 @@ pub unsafe extern "C" fn nt_create_process(
         Some(process) => {
             if inherit_object_table != 0 {
                 if let Some(parent) = parent_pid.and_then(ps::get_by_pid) {
-                    let parent_table = (*parent).object_table;
-                    let child_table = (*process).object_table;
+                    let parent_table = parent.object_table;
+                    let child_table = process.object_table;
                     if !parent_table.is_null() && !child_table.is_null() {
                         unsafe {
                             (*child_table).slots.copy_from_slice(&(*parent_table).slots);
@@ -135,6 +138,9 @@ pub unsafe extern "C" fn nt_create_process(
         None => STATUS_NO_MEMORY,
     }
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_create_process_ex(
     process_handle: *mut HANDLE,
     desired_access: u32,
@@ -160,6 +166,9 @@ pub unsafe extern "C" fn nt_create_process_ex(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_open_process` — open by `CLIENT_ID`.
 pub unsafe extern "C" fn nt_open_process(
     process_handle: *mut HANDLE,
@@ -189,6 +198,9 @@ pub unsafe extern "C" fn nt_open_process(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_terminate_process` — set the EPROCESS exit status and mark
 /// the current thread as Terminated so the next syscall return
 /// (or the next preempt) will be the last one.
@@ -213,6 +225,9 @@ pub unsafe extern "C" fn nt_terminate_process(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_query_information_process`.
 pub unsafe extern "C" fn nt_query_information_process(
     process_handle: HANDLE,
@@ -296,6 +311,9 @@ fn write_return_length(return_length: *mut u32, length: usize) -> Result<(), i32
     copy_to_user(return_length as u64, &(length as u32).to_le_bytes())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_set_information_process` — implements `ProcessBreakOnTermination`
 /// (class 14). Other classes return `STATUS_INVALID_INFO_CLASS` per the
 /// Windows 7 behaviour for unrecognised info classes.

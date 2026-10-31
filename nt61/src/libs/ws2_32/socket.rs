@@ -190,7 +190,10 @@ pub fn listen(s: usize, backlog: i32) -> i32 {
     }
 }
 
-pub fn accept(s: usize, addr: *mut sockaddr, addrlen: *mut i32) -> usize {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn accept(s: usize, addr: *mut sockaddr, addrlen: *mut i32) -> usize {
     let kernel_id = match get_kernel_socket_id(s) {
         Some(id) => id,
         None => {
@@ -273,7 +276,10 @@ pub fn connect(s: usize, name: *const sockaddr, namelen: i32) -> i32 {
     }
 }
 
-pub fn send(s: usize, buf: *const u8, len: i32, _flags: i32) -> i32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn send(s: usize, buf: *const u8, len: i32, _flags: i32) -> i32 {
     if buf.is_null() || len < 0 {
         set_last_error(WSAEFAULT);
         return SOCKET_ERROR;
@@ -305,7 +311,10 @@ pub fn send(s: usize, buf: *const u8, len: i32, _flags: i32) -> i32 {
     }
 }
 
-pub fn recv(s: usize, buf: *mut u8, len: i32, _flags: i32) -> i32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn recv(s: usize, buf: *mut u8, len: i32, _flags: i32) -> i32 {
     if buf.is_null() || len < 0 {
         set_last_error(WSAEFAULT);
         return SOCKET_ERROR;
@@ -337,7 +346,10 @@ pub fn recv(s: usize, buf: *mut u8, len: i32, _flags: i32) -> i32 {
     }
 }
 
-pub fn sendto(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn sendto(
     s: usize,
     buf: *const u8,
     len: i32,
@@ -345,20 +357,25 @@ pub fn sendto(
     to: *const sockaddr,
     tolen: i32,
 ) -> i32 {
-    // For connected sockets or when to is NULL, just use send()
-    if to.is_null() {
-        return send(s, buf, len, flags);
-    }
+    unsafe {
+        // For connected sockets or when to is NULL, just use send()
+        if to.is_null() {
+            return send(s, buf, len, flags);
+        }
 
-    if buf.is_null() || len < 0 || tolen < core::mem::size_of::<sockaddr_in>() as i32 {
-        set_last_error(WSAEFAULT);
-        return SOCKET_ERROR;
-    }
+        if buf.is_null() || len < 0 || tolen < core::mem::size_of::<sockaddr_in>() as i32 {
+            set_last_error(WSAEFAULT);
+            return SOCKET_ERROR;
+        }
 
-    send(s, buf, len, flags)
+        send(s, buf, len, flags)
+    }
 }
 
-pub fn recvfrom(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn recvfrom(
     s: usize,
     buf: *mut u8,
     len: i32,
@@ -488,7 +505,16 @@ pub fn setsockopt(s: usize, level: i32, optname: i32, optval: *const u8, optlen:
     }
 }
 
-pub fn getsockopt(s: usize, level: i32, optname: i32, optval: *mut u8, optlen: *mut i32) -> i32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn getsockopt(
+    s: usize,
+    level: i32,
+    optname: i32,
+    optval: *mut u8,
+    optlen: *mut i32,
+) -> i32 {
     let _kernel_id = match get_kernel_socket_id(s) {
         Some(id) => id,
         None => {
@@ -536,7 +562,10 @@ pub fn getsockopt(s: usize, level: i32, optname: i32, optval: *mut u8, optlen: *
     }
 }
 
-pub fn ioctlsocket(s: usize, cmd: i32, argp: *mut u32) -> i32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn ioctlsocket(s: usize, cmd: i32, argp: *mut u32) -> i32 {
     let _kernel_id = match get_kernel_socket_id(s) {
         Some(id) => id,
         None => {
@@ -571,7 +600,10 @@ pub fn ioctlsocket(s: usize, cmd: i32, argp: *mut u32) -> i32 {
     }
 }
 
-pub fn select(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn select(
     _nfds: i32,
     readfds: *mut fd_set,
     writefds: *mut fd_set,
@@ -601,9 +633,7 @@ pub fn select(
         }
 
         read_set.fd_count = ready_count as u32;
-        for i in 0..ready_count {
-            read_set.fd_array[i] = ready_sockets[i];
-        }
+        read_set.fd_array[..ready_count].copy_from_slice(&ready_sockets[..ready_count]);
         total += ready_count;
     }
 
@@ -625,9 +655,7 @@ pub fn select(
         }
 
         write_set.fd_count = ready_count as u32;
-        for i in 0..ready_count {
-            write_set.fd_array[i] = ready_sockets[i];
-        }
+        write_set.fd_array[..ready_count].copy_from_slice(&ready_sockets[..ready_count]);
         total += ready_count;
     }
 

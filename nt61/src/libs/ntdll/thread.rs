@@ -87,6 +87,9 @@ pub const CONTEXT_DEBUG_REGISTERS: u32 = 0x00010010;
 pub const CONTEXT_XSTATE: u32 = 0x00010040;
 pub const CONTEXT_FULL: u32 = 0x00010007;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_create_thread` — create a thread inside an existing
 /// process.
 /// nt_current_thread — pseudo-handle for the calling thread.
@@ -99,6 +102,9 @@ pub unsafe extern "C" fn nt_current_thread() -> HANDLE {
     0xFFFF_FFFF_FFFF_FFFEu64 as HANDLE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_create_thread(
     thread_handle: *mut HANDLE,
     desired_access: u32,
@@ -128,7 +134,7 @@ pub unsafe extern "C" fn nt_create_thread(
         } else {
             // Get process ID from ETHREAD's client_id
             let cid = unsafe { (*current_ethread).client_id };
-            cid.unique_process as u64
+            cid.unique_process
         }
     } else {
         // Look up process from handle
@@ -167,7 +173,7 @@ pub unsafe extern "C" fn nt_create_thread(
         0x200000
     };
     let user_stack_top: u64 = 0x7FFF_FFFE_0000u64; // Default user stack base (2GB boundary)
-    let aligned_stack = user_stack_top - actual_stack_size & !0xF; // 16-byte aligned
+    let aligned_stack = (user_stack_top - actual_stack_size) & !0xF; // 16-byte aligned
 
     thread_ptr.kthread.context.user_rsp = aligned_stack;
 
@@ -201,6 +207,9 @@ pub unsafe extern "C" fn nt_create_thread(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_open_thread` — open a thread by `CLIENT_ID`.
 pub unsafe extern "C" fn nt_open_thread(
     thread_handle: *mut HANDLE,
@@ -254,6 +263,9 @@ pub unsafe extern "C" fn nt_open_thread(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_terminate_thread` — terminate the specified thread.
 /// If thread_handle is NULL, terminates the current thread.
 pub unsafe extern "C" fn nt_terminate_thread(thread_handle: HANDLE, exit_status: u32) -> NTSTATUS {
@@ -289,6 +301,9 @@ pub unsafe extern "C" fn nt_terminate_thread(thread_handle: HANDLE, exit_status:
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_suspend_thread` / `nt_resume_thread` — counters the NT
 /// kernel exposes on every thread. We return 1 (the previous
 /// count) for both.
@@ -305,6 +320,9 @@ pub unsafe extern "C" fn nt_suspend_thread(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_resume_thread(
     thread_handle: HANDLE,
     previous_suspend_count: *mut u32,
@@ -318,6 +336,9 @@ pub unsafe extern "C" fn nt_resume_thread(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_query_information_thread` — supports
 /// `ThreadBasicInformation` (size 28) and a few others.
 pub unsafe extern "C" fn nt_query_information_thread(
@@ -391,6 +412,9 @@ pub extern "C" fn nt_current_teb() -> PVOID {
     crate::arch::current_teb().unwrap_or(0) as PVOID
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_create_thread_ex` — create a thread with extended parameters.
 /// This is the preferred way to create threads in Windows 7+.
 pub unsafe extern "C" fn nt_create_thread_ex(
@@ -472,6 +496,9 @@ pub unsafe extern "C" fn nt_create_thread_ex(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_get_context_thread` — get the register context of a thread.
 pub unsafe extern "C" fn nt_get_context_thread(
     thread_handle: HANDLE,
@@ -493,7 +520,7 @@ pub unsafe extern "C" fn nt_get_context_thread(
     };
 
     // Find the thread
-    let thread = match crate::ps::thread::find_thread_by_tid(tid as u64) {
+    let thread = match crate::ps::thread::find_thread_by_tid(tid) {
         Some(t) => t,
         None => return STATUS_INVALID_HANDLE,
     };
@@ -549,6 +576,9 @@ pub unsafe extern "C" fn nt_get_context_thread(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_set_context_thread` — set the register context of a thread.
 pub unsafe extern "C" fn nt_set_context_thread(
     thread_handle: HANDLE,
@@ -570,7 +600,7 @@ pub unsafe extern "C" fn nt_set_context_thread(
     };
 
     // Find the thread
-    let thread = match crate::ps::thread::find_thread_by_tid(tid as u64) {
+    let thread = match crate::ps::thread::find_thread_by_tid(tid) {
         Some(t) => t,
         None => return STATUS_INVALID_HANDLE,
     };
@@ -608,6 +638,9 @@ pub unsafe extern "C" fn nt_set_context_thread(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_queue_apc_thread` — queue an Asynchronous Procedure Call to a thread.
 /// This is a simplified implementation that just validates the parameters.
 pub unsafe extern "C" fn nt_queue_apc_thread(
@@ -644,6 +677,9 @@ pub unsafe extern "C" fn nt_queue_apc_thread(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_set_information_thread` — set thread information.
 pub unsafe extern "C" fn nt_set_information_thread(
     thread_handle: HANDLE,

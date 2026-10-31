@@ -87,6 +87,9 @@ pub const GROUP_SECURITY_INFORMATION: u32 = 0x00000002;
 pub const DACL_SECURITY_INFORMATION: u32 = 0x00000004;
 pub const SACL_SECURITY_INFORMATION: u32 = 0x00000008;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_open_process_token(
     process_handle: HANDLE,
     desired_access: u32,
@@ -139,6 +142,9 @@ pub fn nt_open_process_token_kernel(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_open_thread_token(
     thread_handle: HANDLE,
     desired_access: u32,
@@ -182,6 +188,9 @@ pub fn nt_open_thread_token_kernel(
     STATUS_NO_TOKEN
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// nt_duplicate_token — duplicate an existing token handle.
 pub unsafe extern "C" fn nt_duplicate_token(
     existing_token_handle: HANDLE,
@@ -243,6 +252,9 @@ pub fn nt_duplicate_token_kernel(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_adjust_privileges_token(
     token_handle: HANDLE,
     disable_all_privileges: u8,
@@ -301,14 +313,14 @@ pub unsafe extern "C" fn nt_adjust_privileges_token(
         return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
     }
 
-    let mut kernel_previous_state = if previous_state.is_null()
+    let kernel_previous_state = if previous_state.is_null()
         || buffer_length < core::mem::size_of::<TOKEN_PRIVILEGES>() as u32
     {
         None
     } else {
         Some(unsafe { &mut *previous_state })
     };
-    let mut kernel_return_length = if return_length.is_null() {
+    let kernel_return_length = if return_length.is_null() {
         None
     } else {
         Some(unsafe { &mut *return_length })
@@ -322,8 +334,8 @@ pub unsafe extern "C" fn nt_adjust_privileges_token(
         } else {
             None
         },
-        kernel_previous_state.as_deref_mut(),
-        kernel_return_length.as_deref_mut(),
+        kernel_previous_state,
+        kernel_return_length,
     )
 }
 
@@ -413,6 +425,9 @@ pub fn nt_adjust_privileges_token_kernel(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_access_check(
     security_descriptor: *const SecurityDescriptor,
     client_token: HANDLE,
@@ -491,120 +506,122 @@ pub fn nt_access_check_kernel(
     granted_access: &mut u32,
     access_status: &mut NTSTATUS,
 ) -> NTSTATUS {
-    if client_token.is_null() || security_descriptor.is_none() {
-        return STATUS_INVALID_PARAMETER;
-    }
+    unsafe {
+        if client_token.is_null() || security_descriptor.is_none() {
+            return STATUS_INVALID_PARAMETER;
+        }
 
-    let token_entry = match lookup_handle(client_token) {
-        Some(entry) if entry.kind == HandleKind::Token => entry,
-        _ => return STATUS_INVALID_HANDLE,
-    };
-    let client_token = token_entry.target as *const crate::se::token::Token;
-    if client_token.is_null() {
-        return STATUS_INVALID_HANDLE;
-    }
+        let token_entry = match lookup_handle(client_token) {
+            Some(entry) if entry.kind == HandleKind::Token => entry,
+            _ => return STATUS_INVALID_HANDLE,
+        };
+        let client_token = token_entry.target as *const crate::se::token::Token;
+        if client_token.is_null() {
+            return STATUS_INVALID_HANDLE;
+        }
 
-    let bytes = security_descriptor.unwrap();
-    if bytes.len() < 40 {
-        return STATUS_INVALID_PARAMETER;
-    }
+        let bytes = security_descriptor.unwrap();
+        if bytes.len() < 40 {
+            return STATUS_INVALID_PARAMETER;
+        }
 
-    // Parse the user-mode SECURITY_DESCRIPTOR (pointer-sized fields at
-    // offsets 8/16/24/32 after revision+sbz1+control).
-    let read_u64 = |off: usize| -> u64 {
-        u64::from_le_bytes([
-            bytes[off],
-            bytes[off + 1],
-            bytes[off + 2],
-            bytes[off + 3],
-            bytes[off + 4],
-            bytes[off + 5],
-            bytes[off + 6],
-            bytes[off + 7],
-        ])
-    };
-    let control = u16::from_le_bytes([bytes[2], bytes[3]]);
-    let owner_ptr = read_u64(8);
-    let dacl_ptr = read_u64(32);
+        // Parse the user-mode SECURITY_DESCRIPTOR (pointer-sized fields at
+        // offsets 8/16/24/32 after revision+sbz1+control).
+        let read_u64 = |off: usize| -> u64 {
+            u64::from_le_bytes([
+                bytes[off],
+                bytes[off + 1],
+                bytes[off + 2],
+                bytes[off + 3],
+                bytes[off + 4],
+                bytes[off + 5],
+                bytes[off + 6],
+                bytes[off + 7],
+            ])
+        };
+        let control = u16::from_le_bytes([bytes[2], bytes[3]]);
+        let owner_ptr = read_u64(8);
+        let dacl_ptr = read_u64(32);
 
-    // Deny-by-default when the descriptor has no DACL (matches the
-    // kernel refmon policy in se/refmon.rs).
-    if dacl_ptr == 0 || (control & 0x0004) == 0 {
-        *granted_access = 0;
-        *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
-        return STATUS_SUCCESS;
-    }
+        // Deny-by-default when the descriptor has no DACL (matches the
+        // kernel refmon policy in se/refmon.rs).
+        if dacl_ptr == 0 || (control & 0x0004) == 0 {
+            *granted_access = 0;
+            *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
+            return STATUS_SUCCESS;
+        }
 
-    // Read the ACL header to learn its size.
-    let mut acl_header = [0u8; 8];
-    if crate::mm::user_copy::copy_from_user(&mut acl_header, dacl_ptr).is_err() {
-        *granted_access = 0;
-        *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
-        return STATUS_SUCCESS;
-    }
-    let acl_size = u16::from_le_bytes([acl_header[2], acl_header[3]]) as usize;
-    if acl_size < 8 || acl_size > 1024 {
-        *granted_access = 0;
-        *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
-        return STATUS_SUCCESS;
-    }
+        // Read the ACL header to learn its size.
+        let mut acl_header = [0u8; 8];
+        if crate::mm::user_copy::copy_from_user(&mut acl_header, dacl_ptr).is_err() {
+            *granted_access = 0;
+            *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
+            return STATUS_SUCCESS;
+        }
+        let acl_size = u16::from_le_bytes([acl_header[2], acl_header[3]]) as usize;
+        if !(8..=1024).contains(&acl_size) {
+            *granted_access = 0;
+            *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
+            return STATUS_SUCCESS;
+        }
 
-    // Copy the ACL into a kernel-side Acl (inline ACE storage).
-    let mut kernel_dacl = crate::se::acl::Acl::new();
-    let copy_len = acl_size.min(core::mem::size_of::<crate::se::acl::Acl>());
-    let acl_bytes = unsafe {
-        core::slice::from_raw_parts_mut(
-            &mut kernel_dacl as *mut crate::se::acl::Acl as *mut u8,
-            copy_len,
-        )
-    };
-    if crate::mm::user_copy::copy_from_user(acl_bytes, dacl_ptr).is_err() {
-        *granted_access = 0;
-        *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
-        return STATUS_SUCCESS;
-    }
-    kernel_dacl.acl_size = copy_len as u16;
-
-    // Read the owner SID (fixed 40-byte se::sid layout).
-    let mut owner_sid = crate::se::sid::sid::new();
-    if owner_ptr != 0 {
-        let sid_bytes = unsafe {
+        // Copy the ACL into a kernel-side Acl (inline ACE storage).
+        let mut kernel_dacl = crate::se::acl::Acl::new();
+        let copy_len = acl_size.min(core::mem::size_of::<crate::se::acl::Acl>());
+        let acl_bytes = unsafe {
             core::slice::from_raw_parts_mut(
-                &mut owner_sid as *mut crate::se::sid::sid as *mut u8,
-                core::mem::size_of::<crate::se::sid::sid>(),
+                &mut kernel_dacl as *mut crate::se::acl::Acl as *mut u8,
+                copy_len,
             )
         };
-        let _ = crate::mm::user_copy::copy_from_user(sid_bytes, owner_ptr);
-    }
-
-    // Build a kernel SecurityDescriptor on the stack — se_access_check
-    // completes synchronously and does not retain the pointer.
-    let kernel_sd = crate::se::seaccess::SecurityDescriptor {
-        revision: 1,
-        sbz1: 0,
-        control: 0x8004, // SE_DACL_PRESENT | SE_SELF_RELATIVE
-        owner: owner_sid,
-        group: owner_sid,
-        sacl: core::ptr::null(),
-        dacl: &kernel_dacl as *const crate::se::acl::Acl,
-    };
-
-    let (result, granted) = crate::se::seaccess::se_access_check(
-        crate::se::seaccess::ObTypeIndex::Null,
-        &kernel_sd as *const crate::se::seaccess::SecurityDescriptor,
-        desired_access,
-        client_token,
-    );
-
-    *granted_access = granted;
-    *access_status = match result {
-        crate::se::seaccess::AccessCheckResult::Allowed => STATUS_SUCCESS,
-        crate::se::seaccess::AccessCheckResult::Denied => {
-            crate::libs::ntdll::status::STATUS_ACCESS_DENIED
+        if crate::mm::user_copy::copy_from_user(acl_bytes, dacl_ptr).is_err() {
+            *granted_access = 0;
+            *access_status = crate::libs::ntdll::status::STATUS_ACCESS_DENIED;
+            return STATUS_SUCCESS;
         }
-    };
+        kernel_dacl.acl_size = copy_len as u16;
 
-    STATUS_SUCCESS
+        // Read the owner SID (fixed 40-byte se::sid layout).
+        let mut owner_sid = crate::se::sid::sid::new();
+        if owner_ptr != 0 {
+            let sid_bytes = unsafe {
+                core::slice::from_raw_parts_mut(
+                    &mut owner_sid as *mut crate::se::sid::sid as *mut u8,
+                    core::mem::size_of::<crate::se::sid::sid>(),
+                )
+            };
+            let _ = crate::mm::user_copy::copy_from_user(sid_bytes, owner_ptr);
+        }
+
+        // Build a kernel SecurityDescriptor on the stack — se_access_check
+        // completes synchronously and does not retain the pointer.
+        let kernel_sd = crate::se::seaccess::SecurityDescriptor {
+            revision: 1,
+            sbz1: 0,
+            control: 0x8004, // SE_DACL_PRESENT | SE_SELF_RELATIVE
+            owner: owner_sid,
+            group: owner_sid,
+            sacl: core::ptr::null(),
+            dacl: &kernel_dacl as *const crate::se::acl::Acl,
+        };
+
+        let (result, granted) = crate::se::seaccess::se_access_check(
+            crate::se::seaccess::ObTypeIndex::Null,
+            &kernel_sd as *const crate::se::seaccess::SecurityDescriptor,
+            desired_access,
+            client_token,
+        );
+
+        *granted_access = granted;
+        *access_status = match result {
+            crate::se::seaccess::AccessCheckResult::Allowed => STATUS_SUCCESS,
+            crate::se::seaccess::AccessCheckResult::Denied => {
+                crate::libs::ntdll::status::STATUS_ACCESS_DENIED
+            }
+        };
+
+        STATUS_SUCCESS
+    }
 }
 
 #[repr(C)]
@@ -623,6 +640,9 @@ pub struct PrivilegeSet {
     pub privilege: [LuidAndAttributes; 1], // Variable length
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_privilege_check(
     client_token: HANDLE,
     required_privileges: *const PrivilegeSet,
@@ -685,6 +705,9 @@ pub fn nt_privilege_check_kernel(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_query_security_object(
     handle: HANDLE,
     security_information: u32,
@@ -799,6 +822,9 @@ pub fn nt_query_security_object_kernel(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_set_security_object(
     handle: HANDLE,
     security_information: u32,
@@ -845,6 +871,9 @@ pub fn nt_set_security_object_kernel(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_impersonate_thread(
     server_thread_handle: HANDLE,
     client_thread_handle: HANDLE,
@@ -887,6 +916,9 @@ pub struct SecurityQualityOfService {
     pub effective_only: u8,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_query_information_token(
     token_handle: HANDLE,
     token_information_class: u32,
@@ -903,10 +935,11 @@ pub unsafe extern "C" fn nt_query_information_token(
     {
         return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
     }
-    if !token_information.is_null() && token_information_length > 0 {
-        if probe_user_write(token_information as u64, token_information_length as usize).is_err() {
-            return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
-        }
+    if !token_information.is_null()
+        && token_information_length > 0
+        && probe_user_write(token_information as u64, token_information_length as usize).is_err()
+    {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
     }
 
     let mut kernel_return_length = 0u32;
@@ -967,6 +1000,9 @@ pub fn nt_query_information_token_kernel(
     STATUS_INVALID_INFO_CLASS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_set_information_token(
     token_handle: HANDLE,
     token_information_class: u32,
@@ -977,10 +1013,11 @@ pub unsafe extern "C" fn nt_set_information_token(
         return STATUS_INVALID_HANDLE;
     }
 
-    if !token_information.is_null() && token_information_length > 0 {
-        if probe_user_read(token_information as u64, token_information_length as usize).is_err() {
-            return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
-        }
+    if !token_information.is_null()
+        && token_information_length > 0
+        && probe_user_read(token_information as u64, token_information_length as usize).is_err()
+    {
+        return crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
     }
 
     let kernel_information = if token_information.is_null() {

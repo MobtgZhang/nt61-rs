@@ -18,11 +18,11 @@
 
 use super::status::{
     STATUS_ACCESS_DENIED, STATUS_ACCESS_VIOLATION, STATUS_BUFFER_TOO_SMALL,
-    STATUS_DEVICE_NOT_READY, STATUS_EA_LIST_INCONSISTENT, STATUS_EA_TOO_LARGE,
-    STATUS_EAS_NOT_SUPPORTED, STATUS_FILE_IS_A_DIRECTORY, STATUS_INVALID_DEVICE_REQUEST,
-    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NO_MEMORY,
-    STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_PATH_NOT_FOUND,
-    STATUS_SHARING_VIOLATION, STATUS_SUCCESS,
+    STATUS_DEVICE_NOT_READY, STATUS_EAS_NOT_SUPPORTED, STATUS_EA_LIST_INCONSISTENT,
+    STATUS_EA_TOO_LARGE, STATUS_FILE_IS_A_DIRECTORY, STATUS_INVALID_DEVICE_REQUEST,
+    STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER, STATUS_NOT_A_DIRECTORY, STATUS_NO_MEMORY,
+    STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_PATH_NOT_FOUND, STATUS_SHARING_VIOLATION,
+    STATUS_SUCCESS,
 };
 use super::types::{FileInformationClass, IoStatusBlock, UnicodeString, HANDLE, NTSTATUS, PVOID};
 use crate::fs::ntfs::RawDirEntry;
@@ -273,6 +273,9 @@ struct CreateIosbCapture {
     information: usize,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Completion routine for the CREATE IRP: copies the filesystem driver's
 /// IoStatus (final status and FILE_OPENED/FILE_CREATED information code)
 /// out of the IRP into the issuer's context. It runs inside
@@ -288,9 +291,12 @@ unsafe extern "C" fn create_completion_capture(
         (*capture).status = (*irp).io_status.status as i32;
         (*capture).information = (*irp).io_status.information;
     }
-    STATUS_SUCCESS as i32
+    STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Issue an IRP_MJ_READ or IRP_MJ_WRITE against a File handle's
 /// FileObject through IoCallDriver. The data buffer travels in
 /// Irp::user_buffer (the same convention the storage stack uses) and
@@ -309,11 +315,11 @@ unsafe fn file_transfer_irp(
 ) -> (i32, usize) {
     let device = (*file_object).device_object;
     if device.is_null() {
-        return (STATUS_INVALID_DEVICE_REQUEST as i32, 0);
+        return (STATUS_INVALID_DEVICE_REQUEST, 0);
     }
     let irp = crate::io::allocate_irp(1);
     if irp.is_null() {
-        return (STATUS_NO_MEMORY as i32, 0);
+        return (STATUS_NO_MEMORY, 0);
     }
     let stack = (*irp).current_stack;
     (*stack).major_function = major;
@@ -337,16 +343,19 @@ unsafe fn file_transfer_irp(
     (status, transferred)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Issue IRP_MJ_CLOSE for a File handle's FileObject, the way the I/O
 /// manager closes a file object when its last handle goes away.
 unsafe fn file_close_irp(file_object: *mut crate::io::FileObject) -> i32 {
     let device = (*file_object).device_object;
     if device.is_null() {
-        return STATUS_INVALID_DEVICE_REQUEST as i32;
+        return STATUS_INVALID_DEVICE_REQUEST;
     }
     let irp = crate::io::allocate_irp(1);
     if irp.is_null() {
-        return STATUS_NO_MEMORY as i32;
+        return STATUS_NO_MEMORY;
     }
     let stack = (*irp).current_stack;
     (*stack).major_function = crate::io::major::IRP_MJ_CLOSE;
@@ -355,6 +364,9 @@ unsafe fn file_close_irp(file_object: *mut crate::io::FileObject) -> i32 {
     crate::io::io_call_driver(device, irp)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Validate a caller-supplied extended-attribute list the way
 /// IopValidateEaList does on Windows 7: the buffer must carry
 /// FILE_FULL_EA_INFORMATION entries (8-byte header, name, value) whose
@@ -478,6 +490,9 @@ impl Default for FileRenameInformation {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Release a caller-owned FileObject together with its name buffer and
 /// the driver-allocated FCB context after a failed open or at CLOSE.
 unsafe fn free_file_object(file_object: *mut crate::io::FileObject) {
@@ -506,144 +521,150 @@ fn file_open_common(
     create_disposition: u32,
     create_options: u32,
 ) -> (NTSTATUS, Option<HANDLE>, usize) {
-    if share_access & !FILE_SHARE_VALID_FLAGS != 0 {
-        return (STATUS_INVALID_PARAMETER, None, 0);
-    }
-    if !check_file_access(name_chars, desired_access) {
-        return (STATUS_ACCESS_DENIED, None, 0);
-    }
-    // wdm.h create dispositions run FILE_SUPERSEDE..FILE_OVERWRITE_IF
-    // (0..=5); anything else is a parameter error.
-    if create_disposition > 5 {
-        return (STATUS_INVALID_PARAMETER, None, 0);
-    }
-
-    // Normalize the NT path (the user-path prefix is stripped below);
-    // drive-letter paths are resolved by the NTFS layer the same way
-    // SMSS opens System32 files.
-    let path = String::from_utf16_lossy(name_chars);
-    let strip = path.as_bytes().len() >= 5
-        && path.as_bytes()[0] == b'\\'
-        && path.as_bytes()[1] == b'\\'
-        && path.as_bytes()[2] == b'?'
-        && path.as_bytes()[3] == b'?'
-        && path.as_bytes()[4] == b'\\';
-    let path = if strip {
-        String::from(&path[4..])
-    } else {
-        path
-    };
-
-    if path.is_empty() {
-        return (STATUS_OBJECT_PATH_NOT_FOUND, None, 0);
-    }
-
-    let is_directory = (create_options & FILE_DIRECTORY_FILE) != 0;
-    let is_non_directory = (create_options & FILE_NON_DIRECTORY_FILE) != 0;
-    let path_u16: Vec<u16> = path.encode_utf16().collect();
-    if path_u16.len() >= 32768 {
-        return (STATUS_OBJECT_NAME_INVALID, None, 0);
-    }
-
-    let device = fs_device();
-    if device.is_null() {
-        return (STATUS_DEVICE_NOT_READY, None, 0);
-    }
-
-    // Share-mode arbitration against other opens of the same name.
-    // FILE_CREATE on a not-yet-existing name cannot conflict: a
-    // collision is reported instead (STATUS_OBJECT_NAME_COLLISION).
-    if create_disposition != 0x2 && !check_share_access(&path_u16, desired_access, share_access) {
-        return (STATUS_SHARING_VIOLATION, None, 0);
-    }
-
-    // Caller-owned FileObject carrying the name; the CREATE IRP hands
-    // it to the driver, which fills in the device wiring and the FCB.
-    let name_storage = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        (path_u16.len() + 1) * 2,
-    ) as *mut u16;
-    if name_storage.is_null() {
-        return (STATUS_NO_MEMORY, None, 0);
-    }
-    let file_object = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<crate::io::FileObject>(),
-    ) as *mut crate::io::FileObject;
-    if file_object.is_null() {
-        let _ = crate::mm::pool::free(name_storage as *mut u8);
-        return (STATUS_NO_MEMORY, None, 0);
-    }
     unsafe {
-        core::ptr::write(file_object, crate::io::FileObject::new());
-        core::ptr::copy_nonoverlapping(path_u16.as_ptr(), name_storage, path_u16.len());
-        *name_storage.add(path_u16.len()) = 0;
-        (*file_object).file_name = crate::io::UnicodeString {
-            length: (path_u16.len() * 2) as u16,
-            maximum_length: ((path_u16.len() + 1) * 2) as u16,
-            buffer: name_storage,
-        };
-    }
-
-    let irp = crate::io::allocate_irp(1);
-    if irp.is_null() {
-        unsafe { free_file_object(file_object) };
-        return (STATUS_NO_MEMORY, None, 0);
-    }
-    unsafe {
-        let stack = (*irp).current_stack;
-        (*stack).major_function = crate::io::major::IRP_MJ_CREATE;
-        (*stack).device_object = device;
-        (*stack).file_object = file_object;
-        (*stack).parameters.create = crate::io::CreateParameters {
-            disposition: create_disposition,
-            options: create_options,
-        };
-    }
-
-    // Capture the driver IoStatus while the IRP completes;
-    // IoCompleteRequest frees the IRP immediately afterwards.
-    let mut capture = CreateIosbCapture {
-        status: STATUS_SUCCESS as i32,
-        information: 0,
-    };
-    unsafe {
-        let stack = (*irp).current_stack;
-        (*stack).completion_routine = Some(create_completion_capture);
-        (*stack).completion_context = core::ptr::addr_of_mut!(capture) as *mut ();
-        (*stack).control = crate::io::irp_stack::SL_INVOKE_ON_SUCCESS;
-    }
-
-    let status = crate::io::io_call_driver(device, irp);
-    if status < 0 {
-        unsafe { free_file_object(file_object) };
-        return (status, None, 0);
-    }
-
-    // The filesystem enforces the directory/non-directory create
-    // options against the object it returned (wdm.h semantics).
-    if !unsafe { (*file_object).fcb }.is_null() {
-        let fcb = unsafe { (*file_object).fcb } as *mut crate::fs::ntfs::NtfsHandle;
-        let target_is_dir = unsafe { (*fcb).is_directory };
-        if is_directory && !target_is_dir {
-            unsafe { free_file_object(file_object) };
-            return (STATUS_NOT_A_DIRECTORY, None, 0);
+        if share_access & !FILE_SHARE_VALID_FLAGS != 0 {
+            return (STATUS_INVALID_PARAMETER, None, 0);
         }
-        if is_non_directory && target_is_dir {
-            unsafe { free_file_object(file_object) };
-            return (STATUS_FILE_IS_A_DIRECTORY, None, 0);
+        if !check_file_access(name_chars, desired_access) {
+            return (STATUS_ACCESS_DENIED, None, 0);
         }
-    }
+        // wdm.h create dispositions run FILE_SUPERSEDE..FILE_OVERWRITE_IF
+        // (0..=5); anything else is a parameter error.
+        if create_disposition > 5 {
+            return (STATUS_INVALID_PARAMETER, None, 0);
+        }
 
-    let handle = alloc_handle(HandleKind::File, file_object as u64);
-    if handle.is_null() {
-        unsafe { free_file_object(file_object) };
-        return (STATUS_NO_MEMORY, None, 0);
+        // Normalize the NT path (the user-path prefix is stripped below);
+        // drive-letter paths are resolved by the NTFS layer the same way
+        // SMSS opens System32 files.
+        let path = String::from_utf16_lossy(name_chars);
+        let strip = path.len() >= 5
+            && path.as_bytes()[0] == b'\\'
+            && path.as_bytes()[1] == b'\\'
+            && path.as_bytes()[2] == b'?'
+            && path.as_bytes()[3] == b'?'
+            && path.as_bytes()[4] == b'\\';
+        let path = if strip {
+            String::from(&path[4..])
+        } else {
+            path
+        };
+
+        if path.is_empty() {
+            return (STATUS_OBJECT_PATH_NOT_FOUND, None, 0);
+        }
+
+        let is_directory = (create_options & FILE_DIRECTORY_FILE) != 0;
+        let is_non_directory = (create_options & FILE_NON_DIRECTORY_FILE) != 0;
+        let path_u16: Vec<u16> = path.encode_utf16().collect();
+        if path_u16.len() >= 32768 {
+            return (STATUS_OBJECT_NAME_INVALID, None, 0);
+        }
+
+        let device = fs_device();
+        if device.is_null() {
+            return (STATUS_DEVICE_NOT_READY, None, 0);
+        }
+
+        // Share-mode arbitration against other opens of the same name.
+        // FILE_CREATE on a not-yet-existing name cannot conflict: a
+        // collision is reported instead (STATUS_OBJECT_NAME_COLLISION).
+        if create_disposition != 0x2 && !check_share_access(&path_u16, desired_access, share_access)
+        {
+            return (STATUS_SHARING_VIOLATION, None, 0);
+        }
+
+        // Caller-owned FileObject carrying the name; the CREATE IRP hands
+        // it to the driver, which fills in the device wiring and the FCB.
+        let name_storage = crate::mm::pool::allocate(
+            crate::mm::pool::PoolType::NonPaged,
+            (path_u16.len() + 1) * 2,
+        ) as *mut u16;
+        if name_storage.is_null() {
+            return (STATUS_NO_MEMORY, None, 0);
+        }
+        let file_object = crate::mm::pool::allocate(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<crate::io::FileObject>(),
+        ) as *mut crate::io::FileObject;
+        if file_object.is_null() {
+            let _ = crate::mm::pool::free(name_storage as *mut u8);
+            return (STATUS_NO_MEMORY, None, 0);
+        }
+        unsafe {
+            core::ptr::write(file_object, crate::io::FileObject::new());
+            core::ptr::copy_nonoverlapping(path_u16.as_ptr(), name_storage, path_u16.len());
+            *name_storage.add(path_u16.len()) = 0;
+            (*file_object).file_name = crate::io::UnicodeString {
+                length: (path_u16.len() * 2) as u16,
+                maximum_length: ((path_u16.len() + 1) * 2) as u16,
+                buffer: name_storage,
+            };
+        }
+
+        let irp = crate::io::allocate_irp(1);
+        if irp.is_null() {
+            unsafe { free_file_object(file_object) };
+            return (STATUS_NO_MEMORY, None, 0);
+        }
+        unsafe {
+            let stack = (*irp).current_stack;
+            (*stack).major_function = crate::io::major::IRP_MJ_CREATE;
+            (*stack).device_object = device;
+            (*stack).file_object = file_object;
+            (*stack).parameters.create = crate::io::CreateParameters {
+                disposition: create_disposition,
+                options: create_options,
+            };
+        }
+
+        // Capture the driver IoStatus while the IRP completes;
+        // IoCompleteRequest frees the IRP immediately afterwards.
+        let mut capture = CreateIosbCapture {
+            status: STATUS_SUCCESS,
+            information: 0,
+        };
+        unsafe {
+            let stack = (*irp).current_stack;
+            (*stack).completion_routine = Some(create_completion_capture);
+            (*stack).completion_context = core::ptr::addr_of_mut!(capture) as *mut ();
+            (*stack).control = crate::io::irp_stack::SL_INVOKE_ON_SUCCESS;
+        }
+
+        let status = crate::io::io_call_driver(device, irp);
+        if status < 0 {
+            unsafe { free_file_object(file_object) };
+            return (status, None, 0);
+        }
+
+        // The filesystem enforces the directory/non-directory create
+        // options against the object it returned (wdm.h semantics).
+        if !unsafe { (*file_object).fcb }.is_null() {
+            let fcb = unsafe { (*file_object).fcb } as *mut crate::fs::ntfs::NtfsHandle;
+            let target_is_dir = unsafe { (*fcb).is_directory };
+            if is_directory && !target_is_dir {
+                unsafe { free_file_object(file_object) };
+                return (STATUS_NOT_A_DIRECTORY, None, 0);
+            }
+            if is_non_directory && target_is_dir {
+                unsafe { free_file_object(file_object) };
+                return (STATUS_FILE_IS_A_DIRECTORY, None, 0);
+            }
+        }
+
+        let handle = alloc_handle(HandleKind::File, file_object as u64);
+        if handle.is_null() {
+            unsafe { free_file_object(file_object) };
+            return (STATUS_NO_MEMORY, None, 0);
+        }
+        record_share_entry(handle, path_u16, desired_access, share_access);
+        (STATUS_SUCCESS, Some(handle), capture.information)
     }
-    record_share_entry(handle, path_u16, desired_access, share_access);
-    (STATUS_SUCCESS, Some(handle), capture.information)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_create_file` — open or create a file with security access check.
 ///
 /// `desired_access` and `share_access` follow the standard
@@ -732,7 +753,11 @@ pub unsafe extern "C" fn nt_create_file(
     // failure alike.
     let iosb = IoStatusBlock {
         status,
-        information: if status == STATUS_SUCCESS { information } else { 0 },
+        information: if status == STATUS_SUCCESS {
+            information
+        } else {
+            0
+        },
     };
     if crate::mm::user_copy::write_user_object(io_status_block as u64, &iosb).is_err() {
         return STATUS_ACCESS_VIOLATION;
@@ -740,6 +765,9 @@ pub unsafe extern "C" fn nt_create_file(
     status
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Trusted-kernel variant of `NtCreateFile` with borrowed, kernel-owned
 /// arguments. This is used by `kernel32` compatibility wrappers and tests.
 pub unsafe fn nt_create_file_kernel(
@@ -785,6 +813,9 @@ pub unsafe fn nt_create_file_kernel(
     status
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_open_file` — open an existing file with security access check.
 pub unsafe extern "C" fn nt_open_file(
     file_handle: *mut HANDLE,
@@ -835,6 +866,9 @@ fn check_file_access(name_chars: &[u16], desired_access: u32) -> bool {
     crate::fs::ntfs::security::check_access(&descriptor, sid_bytes, desired_access)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_read_file` — read `length` bytes from `file_handle` into
 /// `buffer` at `byte_offset`. The byte offset is updated to
 /// reflect the new file position.
@@ -899,6 +933,9 @@ pub unsafe extern "C" fn nt_read_file(
     status
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_write_file` — write `length` bytes to `file_handle`.
 pub unsafe extern "C" fn nt_write_file(
     file_handle: HANDLE,
@@ -961,6 +998,9 @@ pub unsafe extern "C" fn nt_write_file(
     status
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_query_information_file`.
 pub unsafe extern "C" fn nt_query_information_file(
     file_handle: HANDLE,
@@ -1025,6 +1065,9 @@ pub unsafe extern "C" fn nt_query_information_file(
     status
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Trusted-kernel entry point for `nt_query_information_file`.
 pub unsafe fn nt_query_information_file_kernel(
     file_handle: HANDLE,
@@ -1100,6 +1143,9 @@ pub unsafe fn nt_query_information_file_kernel(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_set_information_file` — supports
 /// `FileDispositionInformation` (delete pending) and
 /// `FilePositionInformation` (seek).
@@ -1162,6 +1208,9 @@ pub unsafe extern "C" fn nt_set_information_file(
     status
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Trusted-kernel entry point for `nt_set_information_file`.
 pub unsafe fn nt_set_information_file_kernel(
     file_handle: HANDLE,
@@ -1232,6 +1281,9 @@ pub unsafe fn nt_set_information_file_kernel(
     status
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_close` — release a handle and any associated resources.
 /// Closes the handle in both the ntdll table and the kernel's
 /// object manager (if ob integration is enabled).
@@ -1268,6 +1320,9 @@ pub unsafe extern "C" fn nt_close(handle: HANDLE) -> NTSTATUS {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_delete_file` — delete a file by name through the mounted
 /// NTFS filesystem. Maps to `NtDeleteFile` in the real NT API.
 pub unsafe extern "C" fn nt_delete_file(
@@ -1305,6 +1360,9 @@ pub unsafe extern "C" fn nt_delete_file(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_flush_buffers_file` — flush the file's buffers. Stub.
 pub unsafe extern "C" fn nt_flush_buffers_file(
     file_handle: HANDLE,
@@ -1326,6 +1384,9 @@ pub unsafe extern "C" fn nt_flush_buffers_file(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_query_volume_information_file` — query information about a volume
 pub unsafe extern "C" fn nt_query_volume_information_file(
     _file_handle: HANDLE,
@@ -1349,6 +1410,9 @@ pub unsafe extern "C" fn nt_query_volume_information_file(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_set_volume_information_file` — set information about a volume
 pub unsafe extern "C" fn nt_set_volume_information_file(
     _file_handle: HANDLE,
@@ -1402,8 +1466,7 @@ fn serialize_file_directory_info(
 
     // Entry size = fixed header (0x48) + name in bytes, rounded up to 8.
     let name_bytes = (name_len * 2) as u32;
-    let entry_size = (((0x48u32 + name_bytes) + 7) & !7u32) as u32;
-    entry_size
+    ((0x48u32 + name_bytes) + 7) & !7u32
 }
 
 /// Serialize a `RawDirEntry` into a `FILE_BOTH_DIRECTORY_INFORMATION` buffer.
@@ -1433,8 +1496,7 @@ fn serialize_file_both_dir_info(
     }
 
     let name_bytes = (name_len * 2) as u32;
-    let entry_size = (((0x60u32 + name_bytes) + 7) & !7u32) as u32;
-    entry_size
+    ((0x60u32 + name_bytes) + 7) & !7u32
 }
 
 /// Serialize a `RawDirEntry` into a `FILE_ID_BOTH_DIRECTORY_INFORMATION` buffer.
@@ -1465,10 +1527,12 @@ fn serialize_file_id_both_dir_info(
     }
 
     let name_bytes = (name_len * 2) as u32;
-    let entry_size = (((0x70u32 + name_bytes) + 7) & !7u32) as u32;
-    entry_size
+    ((0x70u32 + name_bytes) + 7) & !7u32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `nt_query_directory_file` — enumerate directory entries.
 pub unsafe extern "C" fn nt_query_directory_file(
     file_handle: HANDLE,
@@ -1512,16 +1576,14 @@ pub unsafe extern "C" fn nt_query_directory_file(
     // 4. Route to the appropriate filesystem driver.
     let mut raw_entries = [RawDirEntry::empty(); 64];
     let n = match crate::fs::ntfs::get_mounted_fs() {
-        Some(fs) => crate::fs::ntfs::list_ntfs_directory(
-            fs,
-            (*ntfs_handle).mft_record,
-            &mut raw_entries,
-        ),
+        Some(fs) => {
+            crate::fs::ntfs::list_ntfs_directory(fs, (*ntfs_handle).mft_record, &mut raw_entries)
+        }
         None => return STATUS_DEVICE_NOT_READY,
     };
 
     // 5. Serialize into the caller's buffer.
-    let info_class = match FileInformationClass::from_u32(file_information_class as u32) {
+    let info_class = match FileInformationClass::from_u32(file_information_class) {
         Some(c) => c,
         None => return STATUS_INVALID_PARAMETER,
     };
@@ -1727,6 +1789,9 @@ fn read_file_common(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Trusted-kernel variant of `NtReadFile` with borrowed kernel buffers.
 pub unsafe fn nt_read_file_kernel(
     file_handle: HANDLE,
@@ -1759,17 +1824,15 @@ fn write_file_common(
         None => return (STATUS_INVALID_HANDLE, 0),
     };
     match entry.kind {
-        HandleKind::File => {
-            unsafe {
-                file_transfer_irp(
-                    file_object_of(entry.target),
-                    crate::io::major::IRP_MJ_WRITE,
-                    buffer.as_ptr() as *mut u8,
-                    buffer.len(),
-                    byte_offset,
-                )
-            }
-        }
+        HandleKind::File => unsafe {
+            file_transfer_irp(
+                file_object_of(entry.target),
+                crate::io::major::IRP_MJ_WRITE,
+                buffer.as_ptr() as *mut u8,
+                buffer.len(),
+                byte_offset,
+            )
+        },
         HandleKind::Pipe => {
             if !pipe_is_write(entry.target) {
                 return (STATUS_INVALID_HANDLE, 0);
@@ -1781,6 +1844,9 @@ fn write_file_common(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Trusted-kernel variant of `NtWriteFile` with borrowed kernel buffers.
 pub unsafe fn nt_write_file_kernel(
     file_handle: HANDLE,

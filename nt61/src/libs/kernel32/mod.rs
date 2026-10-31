@@ -24,7 +24,7 @@
 //!   * `thread`  — create_thread / sleep / get_current_thread_id
 //!   * `console` — write_console_w / alloc_console
 //
-//! References (for layout / signatures only):
+//!     References (for layout / signatures only):
 //!   * Microsoft Windows 7 SDK winbase.h / winuser.h
 //!   * ReactOS 0.3.x winbase.h
 //!   * Wine 1.7.x kernel32.spec

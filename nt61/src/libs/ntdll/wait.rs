@@ -47,6 +47,12 @@ impl KWaitBlock {
     }
 }
 
+impl Default for KWaitBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub const WAIT_TYPE_ANY: u16 = 0; // WaitAny - return when any object is signaled
 pub const WAIT_TYPE_ALL: u16 = 1; // WaitAll - return when all objects are signaled
 
@@ -84,6 +90,12 @@ impl ThreadWaitContext {
             timeout_ms: 0,
             signaled_index: 0,
         }
+    }
+}
+
+impl Default for ThreadWaitContext {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

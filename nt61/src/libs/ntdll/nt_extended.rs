@@ -47,6 +47,9 @@ pub enum ObjectInformationClass {
     ObjectHandleFlagInformation = 4,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_query_object(
     handle: HANDLE,
     object_information_class: u32,
@@ -87,6 +90,9 @@ pub unsafe extern "C" fn nt_query_object(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_set_information_object(
     handle: HANDLE,
     object_information_class: u32,
@@ -116,6 +122,9 @@ pub unsafe extern "C" fn nt_set_information_object(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_query_directory_file(
     file_handle: HANDLE,
     event: HANDLE,
@@ -168,6 +177,9 @@ pub enum FsInformationClass {
     FileFsVolumeFlagsInformation = 10,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_query_volume_information_file(
     file_handle: HANDLE,
     io_status_block: *mut IoStatusBlock,
@@ -188,6 +200,9 @@ pub unsafe extern "C" fn nt_query_volume_information_file(
     write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_set_volume_information_file(
     file_handle: HANDLE,
     io_status_block: *mut IoStatusBlock,
@@ -208,6 +223,9 @@ pub unsafe extern "C" fn nt_set_volume_information_file(
     write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_device_io_control_file(
     file_handle: HANDLE,
     event: HANDLE,
@@ -242,6 +260,9 @@ pub unsafe extern "C" fn nt_device_io_control_file(
     write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_fs_control_file(
     file_handle: HANDLE,
     event: HANDLE,
@@ -276,6 +297,9 @@ pub unsafe extern "C" fn nt_fs_control_file(
     write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_lock_file(
     file_handle: HANDLE,
     event: HANDLE,
@@ -307,6 +331,9 @@ pub unsafe extern "C" fn nt_lock_file(
     write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_unlock_file(
     file_handle: HANDLE,
     io_status_block: *mut IoStatusBlock,
@@ -332,6 +359,9 @@ pub unsafe extern "C" fn nt_unlock_file(
     write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_notify_change_directory_file(
     file_handle: HANDLE,
     event: HANDLE,
@@ -365,6 +395,9 @@ pub unsafe extern "C" fn nt_notify_change_directory_file(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_query_ea_file(
     file_handle: HANDLE,
     io_status_block: *mut IoStatusBlock,
@@ -398,6 +431,9 @@ pub unsafe extern "C" fn nt_query_ea_file(
     write_io_status(io_status_block, STATUS_SUCCESS, 0)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_set_ea_file(
     file_handle: HANDLE,
     io_status_block: *mut IoStatusBlock,

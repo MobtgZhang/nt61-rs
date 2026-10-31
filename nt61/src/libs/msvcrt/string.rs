@@ -7,6 +7,9 @@ use core::ptr;
 
 // for internal use.
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn memcpy(dest: *mut c_void, src: *const c_void, n: SizeT) -> *mut c_void {
     if dest.is_null() || src.is_null() || n == 0 {
         return dest;
@@ -15,6 +18,9 @@ pub unsafe extern "C" fn memcpy(dest: *mut c_void, src: *const c_void, n: SizeT)
     dest
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn memmove(dest: *mut c_void, src: *const c_void, n: SizeT) -> *mut c_void {
     if dest.is_null() || src.is_null() || n == 0 {
         return dest;
@@ -23,6 +29,9 @@ pub unsafe extern "C" fn memmove(dest: *mut c_void, src: *const c_void, n: SizeT
     dest
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn memset(s: *mut c_void, c: CInt, n: SizeT) -> *mut c_void {
     if s.is_null() || n == 0 {
         return s;
@@ -31,6 +40,9 @@ pub unsafe extern "C" fn memset(s: *mut c_void, c: CInt, n: SizeT) -> *mut c_voi
     s
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: SizeT) -> CInt {
     if s1.is_null() || s2.is_null() {
@@ -50,6 +62,9 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: SizeT) 
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn memchr(s: *const c_void, c: CInt, n: SizeT) -> *mut c_void {
     if s.is_null() {
@@ -67,6 +82,9 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: CInt, n: SizeT) -> *mut c_v
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn msvcrt_strlen_c(s: *const CChar) -> SizeT {
     if s.is_null() {
         return 0;
@@ -79,11 +97,17 @@ pub unsafe extern "C" fn msvcrt_strlen_c(s: *const CChar) -> SizeT {
     len
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn msvcrt_strlen(s: *const u8) -> SizeT {
     msvcrt_strlen_c(s.cast::<CChar>())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strcpy(dest: *mut CChar, src: *const CChar) -> *mut CChar {
     if dest.is_null() || src.is_null() {
@@ -102,6 +126,9 @@ pub unsafe extern "C" fn strcpy(dest: *mut CChar, src: *const CChar) -> *mut CCh
     dest
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strncpy(dest: *mut CChar, src: *const CChar, n: SizeT) -> *mut CChar {
     if dest.is_null() || src.is_null() || n == 0 {
@@ -125,6 +152,9 @@ pub unsafe extern "C" fn strncpy(dest: *mut CChar, src: *const CChar, n: SizeT) 
     dest
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strcat(dest: *mut CChar, src: *const CChar) -> *mut CChar {
     if dest.is_null() || src.is_null() {
@@ -136,6 +166,9 @@ pub unsafe extern "C" fn strcat(dest: *mut CChar, src: *const CChar) -> *mut CCh
     dest
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strncat(dest: *mut CChar, src: *const CChar, n: SizeT) -> *mut CChar {
     if dest.is_null() || src.is_null() || n == 0 {
@@ -154,6 +187,9 @@ pub unsafe extern "C" fn strncat(dest: *mut CChar, src: *const CChar, n: SizeT) 
     dest
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strcmp(s1: *const CChar, s2: *const CChar) -> CInt {
     if s1.is_null() || s2.is_null() {
@@ -176,6 +212,9 @@ pub unsafe extern "C" fn strcmp(s1: *const CChar, s2: *const CChar) -> CInt {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strncmp(s1: *const CChar, s2: *const CChar, n: SizeT) -> CInt {
     if s1.is_null() || s2.is_null() || n == 0 {
@@ -197,6 +236,9 @@ pub unsafe extern "C" fn strncmp(s1: *const CChar, s2: *const CChar, n: SizeT) -
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strchr(s: *const CChar, c: CInt) -> *mut CChar {
     if s.is_null() {
@@ -219,6 +261,9 @@ pub unsafe extern "C" fn strchr(s: *const CChar, c: CInt) -> *mut CChar {
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strrchr(s: *const CChar, c: CInt) -> *mut CChar {
     if s.is_null() {
@@ -236,6 +281,9 @@ pub unsafe extern "C" fn strrchr(s: *const CChar, c: CInt) -> *mut CChar {
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strstr(haystack: *const CChar, needle: *const CChar) -> *mut CChar {
     if haystack.is_null() || needle.is_null() {
@@ -260,6 +308,9 @@ pub unsafe extern "C" fn strstr(haystack: *const CChar, needle: *const CChar) ->
     ptr::null_mut()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strdup(s: *const CChar) -> *mut CChar {
     if s.is_null() {
@@ -274,6 +325,9 @@ pub unsafe extern "C" fn strdup(s: *const CChar) -> *mut CChar {
     new_str
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _stricmp(s1: *const CChar, s2: *const CChar) -> CInt {
     if s1.is_null() || s2.is_null() {
@@ -296,6 +350,9 @@ pub unsafe extern "C" fn _stricmp(s1: *const CChar, s2: *const CChar) -> CInt {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _strnicmp(s1: *const CChar, s2: *const CChar, n: SizeT) -> CInt {
     if s1.is_null() || s2.is_null() || n == 0 {
@@ -317,6 +374,9 @@ pub unsafe extern "C" fn _strnicmp(s1: *const CChar, s2: *const CChar, n: SizeT)
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strcpy_s(dest: *mut CChar, dest_size: SizeT, src: *const CChar) -> ErrnoT {
     if dest.is_null() || src.is_null() || dest_size == 0 {
@@ -333,6 +393,9 @@ pub unsafe extern "C" fn strcpy_s(dest: *mut CChar, dest_size: SizeT, src: *cons
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strcat_s(dest: *mut CChar, dest_size: SizeT, src: *const CChar) -> ErrnoT {
     if dest.is_null() || src.is_null() || dest_size == 0 {

@@ -39,6 +39,9 @@ pub const STATUS_ACCESS_DENIED_32: ULONG32 = 0xC0000022;
 // Wow64 System Service Entry Point
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_system_service_ex` — The main Wow64 system service dispatcher.
 pub unsafe extern "C" fn wow64_system_service_ex(
     service_table: ULONG32,
@@ -68,6 +71,9 @@ pub unsafe extern "C" fn wow64_system_service_ex(
 // Service Dispatch
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn dispatch_service(service_number: ULONG32, args: *const u32) -> ULONG32 {
     if args.is_null() {
         return STATUS_INVALID_PARAMETER_32;

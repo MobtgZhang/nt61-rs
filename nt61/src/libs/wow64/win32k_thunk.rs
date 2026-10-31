@@ -15,7 +15,7 @@
 //!   * wow64_win32k_syscall - Make a syscall to win32k.sys
 //!   * wow64_win32k_callback_return - Return from a callback
 //
-//! References:
+//!     References:
 //!   * geoffchappell.com — Win32k syscalls in WoW64
 //!   * ReactOS `win32ss/gdi/gdi32/objects/thunk.c`
 
@@ -34,7 +34,6 @@ pub const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 2;
 pub const IMAGE_SUBSYSTEM_WINDOWS_CUI: u16 = 3;
 
 /// These are used to index into the Win32k service table.
-
 pub mod syscall_numbers {
     use super::ULONG32;
 
@@ -97,6 +96,9 @@ impl Win32kSyscallEntry {
 static WIN32K_SYSCALL_TABLE: [Option<Win32kSyscallEntry>; MAX_WIN32K_SERVICES] =
     [None; MAX_WIN32K_SERVICES];
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_win32k_initialize_thunk(
     callback_info: *const Wow64CallbackInfo,
 ) -> ULONG32 {
@@ -124,6 +126,9 @@ pub struct Wow64CallbackInfo {
     pub spare: ULONG32,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn wow64_win32k_syscall(
     syscall_id: ULONG32,
     params: *const ULONG32,
@@ -160,6 +165,9 @@ pub unsafe extern "C" fn wow64_win32k_syscall(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// window procedures or hook callbacks), this function is used to
 pub unsafe extern "C" fn wow64_win32k_callback_return(
     buffer: *const u8,

@@ -11,7 +11,7 @@
 //!   * wow64_get_context_thread
 //!   * wow64_set_context_thread
 //
-//! References:
+//!     References:
 //!   * geoffchappell.com — wow64 process/thread information
 
 use crate::libs::wow64::types::*;
@@ -20,6 +20,9 @@ use crate::libs::wow64::types::*;
 // wow64_query_information_process
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Query information about a process (32-bit).
 ///
 /// # Arguments
@@ -103,7 +106,7 @@ pub unsafe extern "C" fn wow64_query_information_process_impl(
             if status >= 0 && buffer != 0 && buffer_size >= 4 {
                 // Write a UNICODE_STRING32 pointing at the buffer.
                 let us_ptr = buffer as *mut u32;
-                let len = (ret_len as u32).min(520);
+                let len = ret_len.min(520);
                 *us_ptr.add(0) = len; // Length
                 *us_ptr.add(1) = len; // MaximumLength
                 *us_ptr.add(2) = 0; // Buffer32 (point to buffer+12)
@@ -269,6 +272,9 @@ pub unsafe extern "C" fn wow64_query_information_process_impl(
 // wow64_set_information_process
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Set information about a process (32-bit).
 ///
 /// # Arguments
@@ -363,6 +369,9 @@ pub unsafe extern "C" fn wow64_set_information_process(
 // wow64_query_information_thread
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Query information about a thread (32-bit).
 ///
 /// # Arguments
@@ -523,6 +532,9 @@ pub unsafe extern "C" fn wow64_query_information_thread(
 // wow64_set_information_thread
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Set information about a thread (32-bit).
 ///
 /// # Arguments
@@ -614,6 +626,9 @@ pub unsafe extern "C" fn wow64_set_information_thread_impl(
 // wow64_get_context_thread
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Get the context of a thread (32-bit).
 ///
 /// # Arguments
@@ -796,6 +811,9 @@ pub fn init() {
 // Public Entry Points (for thunk.rs forwarding)
 // =============================================================================
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_query_information_process` — wrapper for wow64_query_information_process.
 pub unsafe extern "C" fn wow64_query_information_process(
     process_handle: u32,
@@ -820,6 +838,9 @@ pub unsafe extern "C" fn wow64_query_information_process(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wow64_set_information_thread` — wrapper for wow64_set_information_thread.
 pub unsafe extern "C" fn wow64_set_information_thread(
     thread_handle: u32,

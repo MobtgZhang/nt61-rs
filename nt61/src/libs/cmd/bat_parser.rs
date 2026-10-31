@@ -515,7 +515,7 @@ impl BatchParser {
                 // 2. Skip-past: `GOTO :else_label` (ELSE form) or
                 //    `GOTO :end_label` (no-ELSE form). This is
                 //    what cond=false falls into.
-                if let Some(_) = else_pos {
+                if else_pos.is_some() {
                     lowered.push(alloc::format!("GOTO :{}", else_label));
                 } else {
                     lowered.push(alloc::format!("GOTO :{}", end_label));
@@ -524,7 +524,7 @@ impl BatchParser {
                 lowered.push(alloc::format!(":{}", then_label));
                 let then_body_end = else_pos.unwrap_or(close_pos);
                 let then_body: alloc::vec::Vec<alloc::string::String> =
-                    self.lines[(i + 1)..then_body_end].iter().cloned().collect();
+                    self.lines[(i + 1)..then_body_end].to_vec();
                 let then_body = self.flatten_lines_block_ifs(then_body, counter);
                 counter = then_body.1;
                 for b in then_body.0 {
@@ -536,7 +536,7 @@ impl BatchParser {
                     // 5. `:else_label` + else-body
                     lowered.push(alloc::format!(":{}", else_label));
                     let else_body: alloc::vec::Vec<alloc::string::String> =
-                        self.lines[(ep + 1)..close_pos].iter().cloned().collect();
+                        self.lines[(ep + 1)..close_pos].to_vec();
                     let else_body = self.flatten_lines_block_ifs(else_body, counter);
                     counter = else_body.1;
                     for b in else_body.0 {
@@ -610,14 +610,14 @@ impl BatchParser {
                 let mut lowered: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
                 let then_body_end = else_pos.unwrap_or(close_pos);
                 lowered.push(alloc::format!("IF {} GOTO :{}", cond, then_label));
-                if let Some(_) = else_pos {
+                if else_pos.is_some() {
                     lowered.push(alloc::format!("GOTO :{}", else_label));
                 } else {
                     lowered.push(alloc::format!("GOTO :{}", end_label));
                 }
                 lowered.push(alloc::format!(":{}", then_label));
                 let then_body: alloc::vec::Vec<alloc::string::String> =
-                    lines[(i + 1)..then_body_end].iter().cloned().collect();
+                    lines[(i + 1)..then_body_end].to_vec();
                 let then_body_result = self.flatten_lines_block_ifs(then_body, counter);
                 counter = then_body_result.1;
                 for b in then_body_result.0 {
@@ -627,7 +627,7 @@ impl BatchParser {
                     lowered.push(alloc::format!("GOTO :{}", end_label));
                     lowered.push(alloc::format!(":{}", else_label));
                     let else_body: alloc::vec::Vec<alloc::string::String> =
-                        lines[(ep + 1)..close_pos].iter().cloned().collect();
+                        lines[(ep + 1)..close_pos].to_vec();
                     let else_body_result = self.flatten_lines_block_ifs(else_body, counter);
                     counter = else_body_result.1;
                     for b in else_body_result.0 {
@@ -1184,7 +1184,7 @@ impl BatchParser {
         let content = set.trim_matches('(').trim_matches(')');
 
         // Split by comma or space
-        for part in content.split(|c| c == ',' || c == ' ') {
+        for part in content.split([',', ' ']) {
             let trimmed = part.trim();
             if !trimmed.is_empty() {
                 items.push(trimmed.to_string());
@@ -1395,6 +1395,12 @@ impl BatchParser {
         }
 
         executor.execute_command(command)
+    }
+}
+
+impl Default for BatchParser {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

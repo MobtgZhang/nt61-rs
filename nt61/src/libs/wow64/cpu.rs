@@ -50,7 +50,6 @@ pub struct Wow64CpuState {
 
 impl Wow64CpuState {
     /// create a new WoW64 CPU state.
-
     pub fn new() -> Self {
         Self {
             context32: Context32::new(),
@@ -172,6 +171,12 @@ impl SegmentState {
     }
 }
 
+impl Default for SegmentState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// CPU flags and control bits.
 #[repr(C)]
 pub struct CpuFlags {
@@ -187,6 +192,12 @@ impl CpuFlags {
             in_syscall: false,
             exception_pending: false,
         }
+    }
+}
+
+impl Default for CpuFlags {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

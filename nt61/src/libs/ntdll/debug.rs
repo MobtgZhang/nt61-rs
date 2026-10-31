@@ -225,6 +225,9 @@ fn format_message(msg: &str) -> [u8; 512] {
     buf
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `dbg_print` - send a formatted message to the kernel debugger.
 /// In the Windows API this is variadic; we accept a NUL-terminated
 /// format string pointer. Since we can't parse C format strings,
@@ -253,6 +256,9 @@ pub unsafe extern "C" fn dbg_print(format: PVOID) -> u32 {
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `dbg_print_ex` - same as dbg_print but with component/level filtering.
 /// Messages are only printed if `level <= the configured debug level
 /// for the specified component`.
@@ -291,6 +297,9 @@ pub unsafe extern "C" fn dbg_print_ex(component: u32, level: u32, format: PVOID)
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `v_dbg_print_ex` - takes a va_list for format arguments.
 /// Since we cannot parse C format strings, we emit the raw format
 /// string as a placeholder. Returns 0.
@@ -318,6 +327,9 @@ pub unsafe extern "C" fn v_dbg_print_ex(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `v_dbg_print_ex_with_prefix` - same as v_dbg_print_ex but with a prefix string.
 pub unsafe extern "C" fn v_dbg_print_ex_with_prefix(
     _prefix: PVOID,

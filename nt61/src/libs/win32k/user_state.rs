@@ -367,6 +367,12 @@ impl UserState {
     }
 }
 
+impl Default for UserState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn with_user_state<T>(operation: impl FnOnce(&mut UserState) -> T) -> T {
     let mut state = USER_STATE.lock();
     operation(&mut state)

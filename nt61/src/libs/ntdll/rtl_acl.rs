@@ -13,6 +13,9 @@ pub struct Acl {
     pub _pad: u16,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_create_acl(
     acl: *mut Acl,
     acl_length: u32,
@@ -31,6 +34,9 @@ pub unsafe extern "C" fn rtl_create_acl(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_add_access_allowed_ace(
     acl: *mut Acl,
     acl_revision: u32,
@@ -40,6 +46,9 @@ pub unsafe extern "C" fn rtl_add_access_allowed_ace(
     write_ace(acl, 0x00, acl_revision, access_mask, sid)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_add_access_denied_ace(
     acl: *mut Acl,
     acl_revision: u32,
@@ -49,6 +58,9 @@ pub unsafe extern "C" fn rtl_add_access_denied_ace(
     write_ace(acl, 0x01, acl_revision, access_mask, sid)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn write_ace(
     acl: *mut Acl,
     ace_type: u8,
@@ -90,6 +102,9 @@ unsafe fn write_ace(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_valid_acl(acl: *mut Acl) -> u32 {
     if acl.is_null() {
         return 0;
@@ -102,6 +117,9 @@ pub unsafe extern "C" fn rtl_valid_acl(acl: *mut Acl) -> u32 {
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_first_free_ace(acl: *mut Acl) -> PVOID {
     if acl.is_null() {
         return ptr::null_mut();

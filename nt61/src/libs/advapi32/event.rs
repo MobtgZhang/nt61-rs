@@ -118,6 +118,9 @@ fn get_event_handle(handle: HandleEventlog) -> Option<&'static mut EventSourceHa
     None
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn copy_wide_to_buffer(dest: &mut [u16], src: PCWSTR) {
     if src.is_null() {
         dest[0] = 0;
@@ -134,6 +137,9 @@ pub unsafe fn copy_wide_to_buffer(dest: &mut [u16], src: PCWSTR) {
     dest[i] = 0;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn ReadEventLogW(
     h_event_log: HandleEventlog,
@@ -164,6 +170,9 @@ pub unsafe extern "C" fn ReadEventLogW(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn GetNumberOfEventLogRecords(
     h_event_log: HandleEventlog,
@@ -188,6 +197,9 @@ pub unsafe extern "C" fn GetNumberOfEventLogRecords(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn GetOldestEventLogRecord(
     h_event_log: HandleEventlog,
@@ -205,6 +217,9 @@ pub unsafe extern "C" fn GetOldestEventLogRecord(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn BackupEventLogW(
     h_event_log: HandleEventlog,
@@ -221,6 +236,9 @@ pub unsafe extern "C" fn BackupEventLogW(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn NotifyChangeEventLog(
     h_event_log: HandleEventlog,

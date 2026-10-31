@@ -8,7 +8,7 @@ use core::ptr;
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isalpha(c: CInt) -> CInt {
     let ch = c as u8;
-    if (ch >= b'a' && ch <= b'z') || (ch >= b'A' && ch <= b'Z') {
+    if ch.is_ascii_lowercase() || ch.is_ascii_uppercase() {
         1
     } else {
         0
@@ -18,7 +18,7 @@ pub extern "C" fn isalpha(c: CInt) -> CInt {
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isdigit(c: CInt) -> CInt {
     let ch = c as u8;
-    if ch >= b'0' && ch <= b'9' {
+    if ch.is_ascii_digit() {
         1
     } else {
         0
@@ -47,7 +47,7 @@ pub extern "C" fn isspace(c: CInt) -> CInt {
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isupper(c: CInt) -> CInt {
     let ch = c as u8;
-    if ch >= b'A' && ch <= b'Z' {
+    if ch.is_ascii_uppercase() {
         1
     } else {
         0
@@ -57,7 +57,7 @@ pub extern "C" fn isupper(c: CInt) -> CInt {
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn islower(c: CInt) -> CInt {
     let ch = c as u8;
-    if ch >= b'a' && ch <= b'z' {
+    if ch.is_ascii_lowercase() {
         1
     } else {
         0
@@ -67,7 +67,7 @@ pub extern "C" fn islower(c: CInt) -> CInt {
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isxdigit(c: CInt) -> CInt {
     let ch = c as u8;
-    if (ch >= b'0' && ch <= b'9') || (ch >= b'a' && ch <= b'f') || (ch >= b'A' && ch <= b'F') {
+    if ch.is_ascii_digit() || (b'a'..=b'f').contains(&ch) || (b'A'..=b'F').contains(&ch) {
         1
     } else {
         0
@@ -77,7 +77,7 @@ pub extern "C" fn isxdigit(c: CInt) -> CInt {
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isprint(c: CInt) -> CInt {
     let ch = c as u8;
-    if ch >= 32 && ch <= 126 {
+    if (32..=126).contains(&ch) {
         1
     } else {
         0
@@ -87,7 +87,7 @@ pub extern "C" fn isprint(c: CInt) -> CInt {
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn isgraph(c: CInt) -> CInt {
     let ch = c as u8;
-    if ch >= 33 && ch <= 126 {
+    if (33..=126).contains(&ch) {
         1
     } else {
         0
@@ -116,7 +116,7 @@ pub extern "C" fn ispunct(c: CInt) -> CInt {
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn tolower(c: CInt) -> CInt {
     let ch = c as u8;
-    if ch >= b'A' && ch <= b'Z' {
+    if ch.is_ascii_uppercase() {
         (ch - b'A' + b'a') as CInt
     } else {
         c
@@ -126,7 +126,7 @@ pub extern "C" fn tolower(c: CInt) -> CInt {
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn toupper(c: CInt) -> CInt {
     let ch = c as u8;
-    if ch >= b'a' && ch <= b'z' {
+    if ch.is_ascii_lowercase() {
         (ch - b'a' + b'A') as CInt
     } else {
         c
@@ -143,6 +143,9 @@ pub extern "C" fn _toupper(c: CInt) -> CInt {
     toupper(c)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn atoi(s: *const CChar) -> CInt {
     if s.is_null() {
@@ -173,6 +176,9 @@ pub unsafe extern "C" fn atoi(s: *const CChar) -> CInt {
     result * sign
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn atol(s: *const CChar) -> CLong {
     if s.is_null() {
@@ -203,6 +209,9 @@ pub unsafe extern "C" fn atol(s: *const CChar) -> CLong {
     result * sign
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn atoll(s: *const CChar) -> CLonglong {
     if s.is_null() {
@@ -233,11 +242,17 @@ pub unsafe extern "C" fn atoll(s: *const CChar) -> CLonglong {
     result * sign
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn atof(s: *const CChar) -> CDouble {
     strtod(s, ptr::null_mut())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtol(s: *const CChar, endptr: *mut *mut CChar, base: CInt) -> CLong {
     if s.is_null() || base < 0 || base == 1 || base > 36 {
@@ -271,10 +286,11 @@ pub unsafe extern "C" fn strtol(s: *const CChar, endptr: *mut *mut CChar, base: 
             10
         }
     } else {
-        if base == 16 && *s.add(i) == b'0' as CChar {
-            if *s.add(i + 1) == b'x' as CChar || *s.add(i + 1) == b'X' as CChar {
-                i += 2;
-            }
+        if base == 16
+            && *s.add(i) == b'0' as CChar
+            && (*s.add(i + 1) == b'x' as CChar || *s.add(i + 1) == b'X' as CChar)
+        {
+            i += 2;
         }
         base
     };
@@ -283,11 +299,11 @@ pub unsafe extern "C" fn strtol(s: *const CChar, endptr: *mut *mut CChar, base: 
 
     loop {
         let ch = *s.add(i) as u8;
-        let digit = if ch >= b'0' && ch <= b'9' {
+        let digit = if ch.is_ascii_digit() {
             (ch - b'0') as CInt
-        } else if ch >= b'a' && ch <= b'z' {
+        } else if ch.is_ascii_lowercase() {
             (ch - b'a' + 10) as CInt
-        } else if ch >= b'A' && ch <= b'Z' {
+        } else if ch.is_ascii_uppercase() {
             (ch - b'A' + 10) as CInt
         } else {
             break;
@@ -314,11 +330,17 @@ pub unsafe extern "C" fn strtol(s: *const CChar, endptr: *mut *mut CChar, base: 
     result * sign
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtoul(s: *const CChar, endptr: *mut *mut CChar, base: CInt) -> CUlong {
     strtol(s, endptr, base) as CUlong
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtoll(
     s: *const CChar,
@@ -363,11 +385,11 @@ pub unsafe extern "C" fn strtoll(
 
     loop {
         let ch = *s.add(i) as u8;
-        let digit = if ch >= b'0' && ch <= b'9' {
+        let digit = if ch.is_ascii_digit() {
             (ch - b'0') as CInt
-        } else if ch >= b'a' && ch <= b'z' {
+        } else if ch.is_ascii_lowercase() {
             (ch - b'a' + 10) as CInt
-        } else if ch >= b'A' && ch <= b'Z' {
+        } else if ch.is_ascii_uppercase() {
             (ch - b'A' + 10) as CInt
         } else {
             break;
@@ -394,6 +416,9 @@ pub unsafe extern "C" fn strtoll(
     result * sign
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtoull(
     s: *const CChar,
@@ -403,6 +428,9 @@ pub unsafe extern "C" fn strtoull(
     strtoll(s, endptr, base) as CUlonglong
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtod(s: *const CChar, endptr: *mut *mut CChar) -> CDouble {
     if s.is_null() {
@@ -480,14 +508,20 @@ pub unsafe extern "C" fn strtod(s: *const CChar, endptr: *mut *mut CChar) -> CDo
     result * sign
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strtof(s: *const CChar, endptr: *mut *mut CChar) -> CFloat {
     strtod(s, endptr) as CFloat
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn itoa(value: CInt, str: *mut CChar, base: CInt) -> *mut CChar {
-    if str.is_null() || base < 2 || base > 36 {
+    if str.is_null() || !(2..=36).contains(&base) {
         return ptr::null_mut();
     }
 
@@ -532,19 +566,28 @@ pub unsafe extern "C" fn itoa(value: CInt, str: *mut CChar, base: CInt) -> *mut 
     str
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _itoa(value: CInt, str: *mut CChar, base: CInt) -> *mut CChar {
     itoa(value, str, base)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _ltoa(value: CLong, str: *mut CChar, base: CInt) -> *mut CChar {
     itoa(value as CInt, str, base)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _itoa_s(value: CInt, str: *mut CChar, size: SizeT, base: CInt) -> ErrnoT {
-    if str.is_null() || size == 0 || base < 2 || base > 36 {
+    if str.is_null() || size == 0 || !(2..=36).contains(&base) {
         return EINVAL;
     }
 
@@ -556,16 +599,25 @@ pub unsafe extern "C" fn _itoa_s(value: CInt, str: *mut CChar, size: SizeT, base
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _ltoa_s(value: CLong, str: *mut CChar, size: SizeT, base: CInt) -> ErrnoT {
     _itoa_s(value as CInt, str, size, base)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _i64toa(value: CLonglong, str: *mut CChar, base: CInt) -> *mut CChar {
     itoa(value as CInt, str, base)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn _ui64toa(value: CUlonglong, str: *mut CChar, base: CInt) -> *mut CChar {
     itoa(value as CInt, str, base)

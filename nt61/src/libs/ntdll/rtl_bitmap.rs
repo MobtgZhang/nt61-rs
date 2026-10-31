@@ -22,6 +22,15 @@ impl RtlBitmap {
     }
 }
 
+impl Default for RtlBitmap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_initialize_bit_map(
     bitmap_header: *mut RtlBitmap,
     bitmap_buffer: *mut u32,
@@ -34,6 +43,9 @@ pub unsafe extern "C" fn rtl_initialize_bit_map(
     (*bitmap_header).buffer = bitmap_buffer;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_set_bit(bitmap_header: *mut RtlBitmap, bit_number: u32) {
     if bitmap_header.is_null() {
         return;
@@ -47,6 +59,9 @@ pub unsafe extern "C" fn rtl_set_bit(bitmap_header: *mut RtlBitmap, bit_number: 
     *bm.buffer.add(dword_index as usize) |= 1u32 << bit_index;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_clear_bit(bitmap_header: *mut RtlBitmap, bit_number: u32) {
     if bitmap_header.is_null() {
         return;
@@ -60,6 +75,9 @@ pub unsafe extern "C" fn rtl_clear_bit(bitmap_header: *mut RtlBitmap, bit_number
     *bm.buffer.add(dword_index as usize) &= !(1u32 << bit_index);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_test_bit(bitmap_header: *mut RtlBitmap, bit_number: u32) -> u8 {
     if bitmap_header.is_null() {
         return 0;
@@ -77,24 +95,33 @@ pub unsafe extern "C" fn rtl_test_bit(bitmap_header: *mut RtlBitmap, bit_number:
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_clear_all_bits(bitmap_header: *mut RtlBitmap) {
     if bitmap_header.is_null() {
         return;
     }
     let bm = &*bitmap_header;
-    let dword_count = (bm.size_of_bit_map + 31) / 32;
+    let dword_count = bm.size_of_bit_map.div_ceil(32);
     ptr::write_bytes(bm.buffer, 0, dword_count as usize);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_set_all_bits(bitmap_header: *mut RtlBitmap) {
     if bitmap_header.is_null() {
         return;
     }
     let bm = &*bitmap_header;
-    let dword_count = (bm.size_of_bit_map + 31) / 32;
+    let dword_count = bm.size_of_bit_map.div_ceil(32);
     ptr::write_bytes(bm.buffer, 0xFF, dword_count as usize);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_find_clear_bits(
     bitmap_header: *mut RtlBitmap,
     number_to_find: u32,
@@ -142,6 +169,9 @@ pub unsafe extern "C" fn rtl_find_clear_bits(
     0xFFFF_FFFF
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_find_set_bits(
     bitmap_header: *mut RtlBitmap,
     number_to_find: u32,
@@ -174,6 +204,9 @@ pub unsafe extern "C" fn rtl_find_set_bits(
     0xFFFF_FFFF
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_set_bits(
     bitmap_header: *mut RtlBitmap,
     starting_index: u32,
@@ -187,6 +220,9 @@ pub unsafe extern "C" fn rtl_set_bits(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_clear_bits(
     bitmap_header: *mut RtlBitmap,
     starting_index: u32,
@@ -200,6 +236,9 @@ pub unsafe extern "C" fn rtl_clear_bits(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_number_of_set_bits(bitmap_header: *mut RtlBitmap) -> u32 {
     if bitmap_header.is_null() {
         return 0;
@@ -214,6 +253,9 @@ pub unsafe extern "C" fn rtl_number_of_set_bits(bitmap_header: *mut RtlBitmap) -
     count
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_number_of_clear_bits(bitmap_header: *mut RtlBitmap) -> u32 {
     if bitmap_header.is_null() {
         return 0;

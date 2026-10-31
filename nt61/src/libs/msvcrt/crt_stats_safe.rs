@@ -41,6 +41,12 @@ impl CrtStats {
     }
 }
 
+impl Default for CrtStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub static CRT_STATS: CrtStats = CrtStats::new();
 
 #[export_name = "__security_cookie"]

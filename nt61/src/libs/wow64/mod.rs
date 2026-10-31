@@ -12,7 +12,7 @@
 //!   * ReactOS 0.3.x `wow64` thunk layer
 //!   * Wine 1.7.x wow64 stub
 //
-//! Module layout:
+//!     Module layout:
 //!   * `klog`     — wow64-local lightweight log macro
 //!     (avoids the `kprintln!` memcpy path).
 //!   * `handle`   — HANDLE32 → kernel object resolvers.

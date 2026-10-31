@@ -9,6 +9,9 @@ use super::status::{STATUS_BUFFER_TOO_SMALL, STATUS_INVALID_PARAMETER, STATUS_SU
 use super::string::BOOLEAN;
 use super::types::UnicodeString;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_hash_unicode_string(
     string: *const UnicodeString,
     case_insensitive: BOOLEAN,
@@ -59,6 +62,9 @@ pub unsafe extern "C" fn rtl_hash_unicode_string(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_integer_to_unicode_string(
     value: u32,
     base: u32,
@@ -110,6 +116,9 @@ pub unsafe extern "C" fn rtl_integer_to_unicode_string(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_unicode_string_to_integer(
     string: *const UnicodeString,
     base: u32,
@@ -154,7 +163,7 @@ pub unsafe extern "C" fn rtl_unicode_string_to_integer(
         }
     }
 
-    if actual_base < 2 || actual_base > 36 {
+    if !(2..=36).contains(&actual_base) {
         actual_base = 10;
     }
 
@@ -182,6 +191,9 @@ pub unsafe extern "C" fn rtl_unicode_string_to_integer(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_int64_to_unicode_string(
     value: u64,
     base: u32,
@@ -231,6 +243,9 @@ pub unsafe extern "C" fn rtl_int64_to_unicode_string(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_time_to_seconds_since1970(
     time: *const i64,
     elapsed_seconds: *mut u32,
@@ -251,6 +266,9 @@ pub unsafe extern "C" fn rtl_time_to_seconds_since1970(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_seconds_since1970_to_time(
     elapsed_seconds: u32,
     time: *mut i64,
@@ -275,6 +293,9 @@ pub struct OsVersionInfoW {
     pub service_pack: [u16; 128],
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_get_version(version_info: *mut OsVersionInfoW) -> i32 {
     if version_info.is_null() {
         return STATUS_INVALID_PARAMETER;
@@ -290,6 +311,9 @@ pub unsafe extern "C" fn rtl_get_version(version_info: *mut OsVersionInfoW) -> i
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_get_nt_version_numbers(
     major: *mut u32,
     minor: *mut u32,

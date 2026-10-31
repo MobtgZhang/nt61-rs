@@ -29,6 +29,9 @@ pub extern "C" fn set_last_error(code: DWORD) {
     *LAST_ERROR.lock() = code;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `format_message_w` — render an error code to a localised
 /// string. The bootstrap ignores the localisation flags and
 /// returns a hard-coded English message for a small set of
@@ -93,6 +96,9 @@ pub unsafe extern "C" fn format_message_w(
     copy as DWORD
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `format_message_a` — UTF-8 variant. We transcode the same
 /// English messages to ANSI for the smoke test.
 pub unsafe extern "C" fn format_message_a(
@@ -141,8 +147,10 @@ pub extern "C" fn tls_set_value(_index: DWORD, _value: usize) -> BOOL {
 
 /// `get_last_error` again, the last-error accessor is its
 /// own sub-module so the smoke test can verify the
-/// value is sticky.
-
+/// value is sticky.///
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `output_debug_string_w` — emit a string to the kernel
 /// debugger (we route to `kprintln!`).
 pub unsafe extern "C" fn output_debug_string_w(message: *const u16) {

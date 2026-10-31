@@ -33,7 +33,7 @@ pub fn case(_name: &str, ok: bool) -> bool {
 
 pub fn test_get_release_dc() -> bool {
     let h = dc::get_dc(core::ptr::null_mut());
-    if h == core::ptr::null_mut() {
+    if h.is_null() {
         return false;
     }
     let r = dc::release_dc(core::ptr::null_mut(), h);
@@ -43,7 +43,7 @@ pub fn test_get_release_dc() -> bool {
 pub fn test_compatible_dc() -> bool {
     let h1 = dc::create_compatible_dc(core::ptr::null_mut());
     let h2 = dc::get_dc(core::ptr::null_mut());
-    h1 != core::ptr::null_mut() && h2 != core::ptr::null_mut()
+    !h1.is_null() && !h2.is_null()
 }
 
 pub fn test_pat_blt() -> bool {
@@ -54,15 +54,15 @@ pub fn test_pat_blt() -> bool {
 pub fn test_create_pen_brush() -> bool {
     let pen = pen_brush::create_pen(pen_brush::ps::PS_SOLID, 1, 0);
     let brush = pen_brush::create_solid_brush(0xFFFFFF);
-    pen != core::ptr::null_mut() && brush != core::ptr::null_mut()
+    !pen.is_null() && !brush.is_null()
 }
 
 pub fn test_select_delete() -> bool {
     let dc_h = dc::get_dc(core::ptr::null_mut());
     let brush = pen_brush::create_solid_brush(0);
-    let prev = pen_brush::select_object(dc_h, brush as *mut core::ffi::c_void);
-    let r = unsafe { pen_brush::delete_object(brush as *mut core::ffi::c_void) };
-    prev == brush as *mut _ && r == 1
+    let prev = pen_brush::select_object(dc_h, brush);
+    let r = unsafe { pen_brush::delete_object(brush) };
+    core::ptr::eq(prev, brush) && r == 1
 }
 
 pub fn test_text_out() -> bool {
@@ -100,7 +100,7 @@ pub fn test_create_font() -> bool {
     let h = unsafe {
         pen_brush::create_font_w(16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, core::ptr::null())
     };
-    h != core::ptr::null_mut()
+    !h.is_null()
 }
 
 pub fn test_gdi_handle_unique() -> bool {
@@ -113,9 +113,7 @@ pub fn test_get_stock_object() -> bool {
     let white = pen_brush::get_stock_object(pen_brush::stock::WHITE_BRUSH);
     let black = pen_brush::get_stock_object(pen_brush::stock::BLACK_PEN);
     let invalid = pen_brush::get_stock_object(0xDEAD_BEEFu32 as i32);
-    white != core::ptr::null_mut()
-        && black != core::ptr::null_mut()
-        && invalid == core::ptr::null_mut()
+    !white.is_null() && !black.is_null() && invalid.is_null()
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +206,7 @@ pub fn test_object_lifecycle() -> bool {
 pub fn test_select_object_dc_pen() -> bool {
     let hdc = dc::get_dc(core::ptr::null_mut());
     let pen = pen_brush::create_pen(pen_brush::ps::PS_SOLID, 2, 0x00FF_00FF);
-    let prev = pen_brush::select_object(hdc, pen as *mut core::ffi::c_void);
+    let prev = pen_brush::select_object(hdc, pen);
     if prev.is_null() {
         return false;
     }

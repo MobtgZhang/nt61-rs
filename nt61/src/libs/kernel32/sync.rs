@@ -21,6 +21,9 @@ use core::sync::atomic::AtomicU32;
 // Events
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `create_event_w`.
 pub unsafe extern "C" fn create_event_w(
     _security_attributes: *const u8,
@@ -39,6 +42,9 @@ pub unsafe extern "C" fn create_event_w(
     h
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `set_event` / `reset_event` / `pulse_event`.
 pub unsafe extern "C" fn set_event(event: HANDLE) -> BOOL {
     if ntdll_sync::nt_set_event(event, ptr::null_mut()) == STATUS_SUCCESS {
@@ -47,6 +53,9 @@ pub unsafe extern "C" fn set_event(event: HANDLE) -> BOOL {
         FALSE
     }
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn reset_event(event: HANDLE) -> BOOL {
     if ntdll_sync::nt_reset_event(event, ptr::null_mut()) == STATUS_SUCCESS {
         TRUE
@@ -54,6 +63,9 @@ pub unsafe extern "C" fn reset_event(event: HANDLE) -> BOOL {
         FALSE
     }
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn pulse_event(event: HANDLE) -> BOOL {
     if ntdll_sync::nt_pulse_event(event, ptr::null_mut()) == STATUS_SUCCESS {
         TRUE
@@ -66,6 +78,9 @@ pub unsafe extern "C" fn pulse_event(event: HANDLE) -> BOOL {
 // Mutexes
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `create_mutex_w`.
 pub unsafe extern "C" fn create_mutex_w(
     _security: *const u8,
@@ -82,6 +97,9 @@ pub unsafe extern "C" fn create_mutex_w(
     h
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `release_mutex`.
 pub unsafe extern "C" fn release_mutex(mutex: HANDLE) -> BOOL {
     if ntdll_sync::nt_release_mutant(mutex, ptr::null_mut()) == STATUS_SUCCESS {
@@ -95,6 +113,9 @@ pub unsafe extern "C" fn release_mutex(mutex: HANDLE) -> BOOL {
 // Semaphores
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `create_semaphore_w`.
 pub unsafe extern "C" fn create_semaphore_w(
     _security: *const u8,
@@ -112,6 +133,9 @@ pub unsafe extern "C" fn create_semaphore_w(
     h
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `release_semaphore`.
 pub unsafe extern "C" fn release_semaphore(
     semaphore: HANDLE,
@@ -136,6 +160,9 @@ const WAIT_TIMEOUT: DWORD = 0x102;
 const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
 pub const INFINITE: DWORD = 0xFFFF_FFFF;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wait_for_single_object`.
 pub unsafe extern "C" fn wait_for_single_object(handle: HANDLE, _milliseconds: DWORD) -> DWORD {
     if handle.is_null() {
@@ -153,6 +180,9 @@ pub unsafe extern "C" fn wait_for_single_object(handle: HANDLE, _milliseconds: D
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `wait_for_multiple_objects`.
 pub unsafe extern "C" fn wait_for_multiple_objects(
     count: DWORD,
@@ -195,6 +225,9 @@ pub struct CriticalSection {
     pub spin: Spinlock<()>,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `initialize_critical_section`.
 pub unsafe extern "C" fn initialize_critical_section(cs: *mut CriticalSection) {
     if cs.is_null() {
@@ -207,6 +240,9 @@ pub unsafe extern "C" fn initialize_critical_section(cs: *mut CriticalSection) {
     (*cs).spin = Spinlock::new(());
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `enter_critical_section`.
 pub unsafe extern "C" fn enter_critical_section(cs: *mut CriticalSection) {
     if cs.is_null() {
@@ -217,6 +253,9 @@ pub unsafe extern "C" fn enter_critical_section(cs: *mut CriticalSection) {
     (*cs).owning_thread = 1;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `leave_critical_section`.
 pub unsafe extern "C" fn leave_critical_section(cs: *mut CriticalSection) {
     if cs.is_null() {
@@ -230,6 +269,9 @@ pub unsafe extern "C" fn leave_critical_section(cs: *mut CriticalSection) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `delete_critical_section`.
 pub unsafe extern "C" fn delete_critical_section(cs: *mut CriticalSection) {
     if cs.is_null() {
@@ -238,6 +280,9 @@ pub unsafe extern "C" fn delete_critical_section(cs: *mut CriticalSection) {
     (*cs).magic = 0;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `initialize_critical_section_and_spin_count` / `set_critical_section_spin_count`.
 pub unsafe extern "C" fn initialize_critical_section_and_spin_count(
     cs: *mut CriticalSection,
@@ -247,6 +292,9 @@ pub unsafe extern "C" fn initialize_critical_section_and_spin_count(
     TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn set_critical_section_spin_count(
     _cs: *mut CriticalSection,
     _spins: DWORD,

@@ -165,6 +165,9 @@ pub extern "C" fn get_async_key_state(_vk: i32) -> i16 {
 pub extern "C" fn get_key_state(_vk: i32) -> i16 {
     0
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_keyboard_state` — fill the buffer with zeros and
 /// return non-zero.
 pub unsafe extern "C" fn get_keyboard_state(buf: *mut u8) -> BOOL {
@@ -176,6 +179,9 @@ pub unsafe extern "C" fn get_keyboard_state(buf: *mut u8) -> BOOL {
     }
     TRUE
 }
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `get_cursor_pos` — return 0,0.
 pub unsafe extern "C" fn get_cursor_pos(p: *mut i32) -> BOOL {
     if p.is_null() {

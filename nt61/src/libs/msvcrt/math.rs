@@ -44,7 +44,7 @@ fn ln_impl_f64(x: f64) -> f64 {
     let exp = ((bits >> 52) & 0x7FF) as i32 - 1023;
     let mantissa = f64::from_bits((bits & 0x000FFFFFFFFFFFFF) | 0x3FF0000000000000);
 
-    const LN2: f64 = 0.693147180559945309417232121458;
+    const LN2: f64 = core::f64::consts::LN_2;
     ln_impl_f64(mantissa) + (exp as f64) * LN2
 }
 
@@ -60,7 +60,7 @@ fn exp_impl_f64(x: f64) -> f64 {
         return 0.0;
     }
 
-    const LN2: f64 = 0.693147180559945309417232121458;
+    const LN2: f64 = core::f64::consts::LN_2;
     let k_f = x / LN2;
     let k = if k_f >= 0.0 { k_f + 0.5 } else { k_f - 0.5 } as i32 as f64;
     let r = x - k * LN2;
@@ -76,7 +76,7 @@ fn exp_impl_f64(x: f64) -> f64 {
     }
 
     let ki = k as i32;
-    if ki >= -1022 && ki <= 1023 {
+    if (-1022..=1023).contains(&ki) {
         let scale = f64::from_bits(((ki + 1023) as u64) << 52);
         result * scale
     } else {
@@ -113,7 +113,7 @@ fn pow_impl_f64(x: f64, y: f64) -> f64 {
 
     // For integer exponents, use repeated multiplication
     let y_int = y as i64;
-    if y as f64 == y_int as f64 && y.abs() < 100.0 {
+    if y == y_int as f64 && y.abs() < 100.0 {
         let mut result = 1.0;
         let mut base = x;
         let mut exp = y.abs() as i32;
@@ -144,10 +144,10 @@ fn pow_impl_f32(x: f32, y: f32) -> f32 {
 }
 
 fn sin_impl_f64(mut x: f64) -> f64 {
-    const PI: f64 = 3.14159265358979323846;
-    const PI2: f64 = 6.28318530717958647692;
+    const PI: f64 = core::f64::consts::PI;
+    const PI2: f64 = core::f64::consts::TAU;
 
-    x = x % PI2;
+    x %= PI2;
     if x > PI {
         x -= PI2;
     }
@@ -182,7 +182,7 @@ fn sin_impl_f32(x: f32) -> f32 {
 }
 
 fn cos_impl_f64(x: f64) -> f64 {
-    const PI_2: f64 = 1.57079632679489661923;
+    const PI_2: f64 = core::f64::consts::FRAC_PI_2;
     sin_impl_f64(PI_2 - x)
 }
 
@@ -199,7 +199,7 @@ fn tan_impl_f32(x: f32) -> f32 {
 }
 
 fn atan_impl_f64(x: f64) -> f64 {
-    const PI_2: f64 = 1.57079632679489661923;
+    const PI_2: f64 = core::f64::consts::FRAC_PI_2;
 
     if x.is_nan() {
         return x;
@@ -376,25 +376,25 @@ pub extern "C" fn logf(x: CFloat) -> CFloat {
 
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn log10(x: CDouble) -> CDouble {
-    const LN10: f64 = 2.302585092994046;
+    const LN10: f64 = core::f64::consts::LN_10;
     ln_impl_f64(x) / LN10
 }
 
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn log10f(x: CFloat) -> CFloat {
-    const LN10: f32 = 2.302585092994046f32;
+    const LN10: f32 = core::f32::consts::LN_10;
     ln_impl_f32(x) / LN10
 }
 
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn log2(x: CDouble) -> CDouble {
-    const LN2: f64 = 0.693147180559945309417232121458;
+    const LN2: f64 = core::f64::consts::LN_2;
     ln_impl_f64(x) / LN2
 }
 
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn log2f(x: CFloat) -> CFloat {
-    const LN2: f32 = 0.693147180559945309417232121458f32;
+    const LN2: f32 = core::f32::consts::LN_2;
     ln_impl_f32(x) / LN2
 }
 
@@ -448,7 +448,7 @@ pub extern "C" fn asin(x: CDouble) -> CDouble {
         return f64::NAN;
     }
     if x.abs() == 1.0 {
-        const PI_2: f64 = 1.57079632679489661923;
+        const PI_2: f64 = core::f64::consts::FRAC_PI_2;
         return PI_2 * x;
     }
     atan_impl_f64(x / sqrt_impl_f64(1.0 - x * x))
@@ -464,7 +464,7 @@ pub extern "C" fn acos(x: CDouble) -> CDouble {
     if x < -1.0 || x > 1.0 {
         return f64::NAN;
     }
-    const PI_2: f64 = 1.57079632679489661923;
+    const PI_2: f64 = core::f64::consts::FRAC_PI_2;
     PI_2 - asin(x)
 }
 
@@ -485,8 +485,8 @@ pub extern "C" fn atanf(x: CFloat) -> CFloat {
 
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C" fn atan2(y: CDouble, x: CDouble) -> CDouble {
-    const PI: f64 = 3.14159265358979323846;
-    const PI_2: f64 = 1.57079632679489661923;
+    const PI: f64 = core::f64::consts::PI;
+    const PI_2: f64 = core::f64::consts::FRAC_PI_2;
 
     if x.is_nan() || y.is_nan() {
         return f64::NAN;
@@ -675,8 +675,11 @@ pub extern "C" fn remainderf(x: CFloat, y: CFloat) -> CFloat {
     remainder(x as f64, y as f64) as f32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn modf(x: CDouble, iptr: *mut CDouble) -> CDouble {
+pub unsafe extern "C" fn modf(x: CDouble, iptr: *mut CDouble) -> CDouble {
     unsafe {
         let int_part = trunc(x);
         let frac_part = x - int_part;
@@ -687,8 +690,11 @@ pub extern "C" fn modf(x: CDouble, iptr: *mut CDouble) -> CDouble {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn modff(x: CFloat, iptr: *mut CFloat) -> CFloat {
+pub unsafe extern "C" fn modff(x: CFloat, iptr: *mut CFloat) -> CFloat {
     unsafe {
         let int_part = truncf(x);
         let frac_part = x - int_part;
@@ -699,8 +705,11 @@ pub extern "C" fn modff(x: CFloat, iptr: *mut CFloat) -> CFloat {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn frexp(x: CDouble, exp: *mut CInt) -> CDouble {
+pub unsafe extern "C" fn frexp(x: CDouble, exp: *mut CInt) -> CDouble {
     unsafe {
         if x == 0.0 {
             if !exp.is_null() {
@@ -718,8 +727,11 @@ pub extern "C" fn frexp(x: CDouble, exp: *mut CInt) -> CDouble {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
-pub extern "C" fn frexpf(x: CFloat, exp: *mut CInt) -> CFloat {
+pub unsafe extern "C" fn frexpf(x: CFloat, exp: *mut CInt) -> CFloat {
     unsafe {
         if x == 0.0 {
             if !exp.is_null() {
@@ -942,6 +954,9 @@ pub extern "C" fn fdimf(x: CFloat, y: CFloat) -> CFloat {
 use core::sync::atomic::{AtomicU32, Ordering};
 static RAND_SEED: AtomicU32 = AtomicU32::new(1);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn rand() -> CInt {
     let old_seed = RAND_SEED.load(Ordering::Relaxed);
@@ -950,6 +965,9 @@ pub unsafe extern "C" fn rand() -> CInt {
     ((new_seed >> 16) & 0x7FFF) as CInt
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn srand(seed: CUint) {
     RAND_SEED.store(seed, Ordering::Relaxed);

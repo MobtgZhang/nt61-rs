@@ -51,7 +51,7 @@ pub fn function_table_for_address(address: u64) -> Option<(PVOID, u32, u64)> {
         .iter()
         .find(|table| {
             let span = u64::from(table.entry_count) * RUNTIME_FUNCTION_SIZE;
-            let end = table.base_address.checked_add(span).unwrap_or(u64::MAX);
+            let end = table.base_address.saturating_add(span);
             address >= table.base_address && address < end
         })
         .map(|table| (table.table, table.entry_count, table.base_address))
@@ -78,6 +78,12 @@ impl ExceptionRecord {
             number_parameters: 0,
             exception_information: [0; 15],
         }
+    }
+}
+
+impl Default for ExceptionRecord {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -164,6 +170,12 @@ impl Context {
     }
 }
 
+impl Default for Context {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub const CONTEXT_AMD64: u32 = 0x00100000;
 pub const CONTEXT_CONTROL: u32 = CONTEXT_AMD64 | 0x01;
 pub const CONTEXT_INTEGER: u32 = CONTEXT_AMD64 | 0x02;
@@ -230,6 +242,9 @@ pub const EXCEPTION_EXECUTE_HANDLER: i32 = 1;
 pub const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 pub const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_add_vectored_exception_handler(
     first_handler: u32,
     handler: VectoredHandlerFn,
@@ -253,6 +268,9 @@ pub unsafe extern "C" fn rtl_add_vectored_exception_handler(
     handler as PVOID
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_remove_vectored_exception_handler(handle: PVOID) -> u32 {
     let _handler_fn: VectoredHandlerFn = core::mem::transmute(handle);
     let mut list = VEH_HANDLERS.lock();
@@ -284,6 +302,9 @@ fn call_vectored_handlers(
     false // No handler handled it
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_dispatch_exception(
     exception_record: *mut ExceptionRecord,
     context_record: *mut Context,
@@ -303,6 +324,9 @@ pub unsafe extern "C" fn rtl_dispatch_exception(
     0 // Unhandled
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_raise_exception(exception_record: *mut ExceptionRecord) -> NTSTATUS {
     if exception_record.is_null() {
         return STATUS_INVALID_PARAMETER;
@@ -322,6 +346,9 @@ pub unsafe extern "C" fn rtl_raise_exception(exception_record: *mut ExceptionRec
     STATUS_UNHANDLED_EXCEPTION
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// On x64, this uses inline assembly to save all registers.
 pub unsafe extern "C" fn rtl_capture_context(context_record: *mut Context) {
     if context_record.is_null() {
@@ -336,6 +363,9 @@ pub unsafe extern "C" fn rtl_capture_context(context_record: *mut Context) {
     (*context_record).context_flags = CONTEXT_FULL;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_restore_context(
     context_record: *mut Context,
     exception_record: *mut ExceptionRecord,
@@ -352,6 +382,9 @@ pub unsafe extern "C" fn rtl_restore_context(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_unwind(
     target_frame: PVOID,
     target_ip: PVOID,
@@ -372,6 +405,9 @@ pub unsafe extern "C" fn rtl_unwind(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_unwind2(
     target_frame: PVOID,
     target_ip: PVOID,
@@ -389,6 +425,9 @@ pub unsafe extern "C" fn rtl_unwind2(
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_unwind_ex(
     target_frame: PVOID,
     target_ip: PVOID,
@@ -431,6 +470,9 @@ pub unsafe extern "C" fn rtl_unwind_ex(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_add_function_table(
     function_table: PVOID,
     entry_count: u32,
@@ -451,6 +493,9 @@ pub unsafe extern "C" fn rtl_add_function_table(
     1
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_delete_function_table(function_table: PVOID) -> u8 {
     let mut tables = FUNCTION_TABLES.lock();
     if let Some(pos) = tables.iter().position(|t| t.table == function_table) {
@@ -461,6 +506,9 @@ pub unsafe extern "C" fn rtl_delete_function_table(function_table: PVOID) -> u8 
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn rtl_install_function_table_callback(
     _table_identifier: u64,
     _base_address: u64,
@@ -472,6 +520,9 @@ pub unsafe extern "C" fn rtl_install_function_table_callback(
     1 // Success
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// It's used by exception handlers that want to resume execution.
 pub unsafe extern "C" fn nt_continue(context_record: *mut Context, test_alert: u8) -> NTSTATUS {
     if context_record.is_null() {
@@ -484,6 +535,9 @@ pub unsafe extern "C" fn nt_continue(context_record: *mut Context, test_alert: u
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn nt_raise_exception(
     exception_record: *mut ExceptionRecord,
     context_record: *mut Context,
