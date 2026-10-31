@@ -35,6 +35,12 @@ impl CsrsState {
     }
 }
 
+impl Default for CsrsState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Console object tracked by CSRSS (one per process, MSDN:
 /// `alloc_console` / `set_console_mode` / `get_console_mode` / `free_console`).
 #[derive(Clone, Copy)]
@@ -74,6 +80,12 @@ impl CsrsConsole {
     }
 }
 
+impl Default for CsrsConsole {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Process record tracked by CSRSS for subsystem notifications.
 #[derive(Clone, Copy)]
 pub struct CsrsProcess {
@@ -96,6 +108,12 @@ impl CsrsProcess {
             connected: false,
             in_use: false,
         }
+    }
+}
+
+impl Default for CsrsProcess {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -166,6 +184,12 @@ impl CsrsGlobal {
     }
 }
 
+impl Default for CsrsGlobal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub static CSRS_STATE: Spinlock<CsrsGlobal> = Spinlock::new(CsrsGlobal::new());
 
 fn copy_str(dest: &mut [u16], src: &str) {
@@ -205,30 +229,18 @@ fn create_session_locked(state: &mut CsrsGlobal, session_id: u32) -> bool {
 }
 
 fn find_session(state: &CsrsGlobal, session_id: u32) -> Option<usize> {
-    for slot in 0..state.session_count {
-        if state.sessions[slot].active && state.sessions[slot].session_id == session_id {
-            return Some(slot);
-        }
-    }
-    None
+    (0..state.session_count)
+        .find(|&slot| state.sessions[slot].active && state.sessions[slot].session_id == session_id)
 }
 
 fn find_console(state: &CsrsGlobal, handle: usize) -> Option<usize> {
-    for slot in 0..state.console_count {
-        if state.consoles[slot].in_use && state.consoles[slot].handle == handle {
-            return Some(slot);
-        }
-    }
-    None
+    (0..state.console_count)
+        .find(|&slot| state.consoles[slot].in_use && state.consoles[slot].handle == handle)
 }
 
 fn find_process(state: &CsrsGlobal, pid: u32) -> Option<usize> {
-    for slot in 0..state.process_count {
-        if state.processes[slot].in_use && state.processes[slot].pid == pid {
-            return Some(slot);
-        }
-    }
-    None
+    (0..state.process_count)
+        .find(|&slot| state.processes[slot].in_use && state.processes[slot].pid == pid)
 }
 
 /// create a CSRSS session. Session 0 is the services session; interactive

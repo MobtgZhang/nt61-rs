@@ -179,6 +179,12 @@ impl WireWriter {
     }
 }
 
+impl Default for WireWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Borrowing wire reader.
 pub struct WireReader<'a> {
     data: &'a [u8],
@@ -349,9 +355,8 @@ impl Transport {
             self.rx_buffer[2],
             self.rx_buffer[3],
         ]) as usize;
-        if packet_len < PADDING_MIN + 1
-            || packet_len > PACKET_LENGTH_LIMIT
-            || (packet_len + 4) % block != 0
+        if !(PADDING_MIN + 1..=PACKET_LENGTH_LIMIT).contains(&packet_len)
+            || !(packet_len + 4).is_multiple_of(block)
         {
             return Err(TransportError::MalformedPacket);
         }
@@ -454,6 +459,12 @@ impl Transport {
     /// Bytes buffered but not yet forming a complete packet.
     pub fn pending_rx_len(&self) -> usize {
         self.rx_buffer.len()
+    }
+}
+
+impl Default for Transport {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

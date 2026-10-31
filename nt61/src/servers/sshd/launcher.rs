@@ -66,10 +66,8 @@ pub fn start_from_disk() -> Result<bool, LauncherError> {
         )
         .is_ok()
     {
-        let _ = crate::ps::thread::ps_create_system_thread(
-            service_thread_entry as *const () as u64,
-            0,
-        );
+        let _ =
+            crate::ps::thread::ps_create_system_thread(service_thread_entry as *const () as u64, 0);
     }
     crate::hal::serial::write_string_always("[SSHD] listener started\r\n");
     Ok(true)
@@ -276,16 +274,16 @@ static LAUNCHER_STATE: Spinlock<LauncherState> = Spinlock::new(LauncherState::Un
 /// Accepting. Each transition is gated by `can_transition_to`.
 pub fn set_state(next: LauncherState) -> bool {
     let mut current = LAUNCHER_STATE.lock();
-    let ok = match (*current, next) {
+    let ok = matches!(
+        (*current, next),
         (LauncherState::Uninitialised, LauncherState::ConfigLoaded)
-        | (LauncherState::ConfigLoaded, LauncherState::ListenerBound)
-        | (LauncherState::ListenerBound, LauncherState::Accepting)
-        | (LauncherState::Uninitialised, LauncherState::Stopped)
-        | (LauncherState::ConfigLoaded, LauncherState::Stopped)
-        | (LauncherState::ListenerBound, LauncherState::Stopped)
-        | (LauncherState::Accepting, LauncherState::Stopped) => true,
-        _ => false,
-    };
+            | (LauncherState::ConfigLoaded, LauncherState::ListenerBound)
+            | (LauncherState::ListenerBound, LauncherState::Accepting)
+            | (LauncherState::Uninitialised, LauncherState::Stopped)
+            | (LauncherState::ConfigLoaded, LauncherState::Stopped)
+            | (LauncherState::ListenerBound, LauncherState::Stopped)
+            | (LauncherState::Accepting, LauncherState::Stopped)
+    );
     if ok {
         *current = next;
     }

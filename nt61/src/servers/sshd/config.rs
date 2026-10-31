@@ -80,7 +80,7 @@ impl SshdConfig {
             let key_lower = key.to_ascii_lowercase();
             match key_lower.as_str() {
                 "port" => {
-                    if let Some(p) = parse_port(&value) {
+                    if let Some(p) = parse_port(value) {
                         cfg.port = p;
                     }
                 }
@@ -110,17 +110,17 @@ impl SshdConfig {
                     };
                 }
                 "pubkeyauthentication" => {
-                    cfg.pubkey_authentication = parse_bool(&value);
+                    cfg.pubkey_authentication = parse_bool(value);
                 }
                 "passwordauthentication" => {
-                    cfg.password_authentication = parse_bool(&value);
+                    cfg.password_authentication = parse_bool(value);
                 }
                 "challengeresponseauthentication" => {
-                    cfg.challenge_response_authentication = parse_bool(&value);
+                    cfg.challenge_response_authentication = parse_bool(value);
                 }
                 "kbdinteractiveauthentication" => {
                     // Aliased to ChallengeResponseAuthentication in OpenSSH.
-                    cfg.challenge_response_authentication = parse_bool(&value);
+                    cfg.challenge_response_authentication = parse_bool(value);
                 }
                 "authorizedkeysfile" => {
                     if let Some(first) = value.split_whitespace().next() {
@@ -136,20 +136,20 @@ impl SshdConfig {
                     }
                 }
                 "usedns" => {
-                    cfg.use_dns = parse_bool(&value);
+                    cfg.use_dns = parse_bool(value);
                 }
                 "logingraceTime" => {
-                    if let Some(n) = parse_seconds(&value) {
+                    if let Some(n) = parse_seconds(value) {
                         cfg.login_grace_time = n;
                     }
                 }
                 "maxauthtries" => {
-                    if let Some(n) = parse_u32(&value) {
+                    if let Some(n) = parse_u32(value) {
                         cfg.max_auth_tries = n;
                     }
                 }
                 "clientaliveinterval" => {
-                    if let Some(n) = parse_u32(&value) {
+                    if let Some(n) = parse_u32(value) {
                         cfg.client_alive_interval = n;
                     }
                 }
@@ -161,7 +161,7 @@ impl SshdConfig {
 }
 
 fn split_key_value(line: &str) -> Option<(&str, &str)> {
-    let mut split = line.splitn(2, |c: char| c == ' ' || c == '\t');
+    let mut split = line.splitn(2, [' ', '\t']);
     let key = split.next()?.trim();
     let value = split.next()?.trim();
     if key.is_empty() || value.is_empty() {

@@ -534,7 +534,7 @@ fn read_command() -> [u8; CMD_BUFFER_SIZE] {
     if cmd_len > 0 {
         let mut history = CMD_HISTORY.lock();
         // Don't add duplicate of last command
-        let is_duplicate = history.len() > 0 && {
+        let is_duplicate = !history.is_empty() && {
             let last = &history[history.len() - 1];
             last[..cmd_len] == buf[..cmd_len]
         };
@@ -1103,9 +1103,7 @@ fn normalize_windows_path(path: &str, cwd: &Cwd) -> Option<Vec<u8>> {
         match component {
             "" | "." => {}
             ".." => {
-                if components.pop().is_none() {
-                    return None;
-                }
+                components.pop()?;
             }
             _ => components.push(component.as_bytes().to_vec()),
         }
@@ -1317,13 +1315,11 @@ fn parse_dir_options(args: &str) -> (DirOptions, &str) {
             options.brief = true;
         } else if upper == "/W" {
             options.wide = true;
-        } else if upper.starts_with("/A:") {
+        } else if let Some(attr_str) = upper.strip_prefix("/A:") {
             // Parse attribute filter
-            let attr_str = &upper[3..];
             options.attr_filter = parse_attr_filter(attr_str);
-        } else if upper.starts_with("/O:") {
+        } else if let Some(sort_str) = upper.strip_prefix("/O:") {
             // Parse sort order
-            let sort_str = &upper[3..];
             options.sort_order = parse_sort_order(sort_str);
         } else if upper.starts_with("/") {
             // Unknown option, skip
@@ -1710,7 +1706,7 @@ fn cmd_type(path: &str, _cwd: &Cwd) {
                     if let Ok(n) = fat32::read_file(fs, cluster, read_size as u32, &mut buffer) {
                         // Print content as text (limit to readable ASCII)
                         for &b in &buffer[..n] {
-                            if b >= 0x20 && b < 0x7F {
+                            if (0x20..0x7F).contains(&b) {
                                 dual_put_byte(b);
                             } else if b == b'\n' {
                                 dual_put_byte(b);
@@ -1785,8 +1781,8 @@ fn try_read_ntfs_file(path: &str, cwd: &Cwd) -> bool {
     true
 }
 
-fn find_file_in_root<'a>(
-    fs: &'a fat32::Fat32FileSystem,
+fn find_file_in_root(
+    fs: &fat32::Fat32FileSystem,
     filename: &[u8],
 ) -> Option<fat32::FatDirectoryEntry> {
     // Convert filename to 8.3 format
@@ -2109,10 +2105,7 @@ fn cmd_copy(args: &str, _cwd: &Cwd) {
             let mut current_source_cluster = source_cluster;
             let mut current_dest_cluster = dest_cluster;
 
-            while remaining > 0
-                && current_source_cluster >= 2
-                && current_source_cluster < fat32::FAT32_EOC
-            {
+            while remaining > 0 && (2..fat32::FAT32_EOC).contains(&current_source_cluster) {
                 let to_copy = core::cmp::min(remaining, cluster_size);
 
                 // read from source
@@ -2250,10 +2243,8 @@ fn cmd_del(args: &str, _cwd: &Cwd) {
         serial_print(b"\r\n");
 
         // Free the cluster chain
-        if file_cluster >= 2 {
-            if fat32::free_cluster_chain(fs, file_cluster).is_err() {
-                serial_print(b"Warning: Error freeing file clusters.\r\n");
-            }
+        if file_cluster >= 2 && fat32::free_cluster_chain(fs, file_cluster).is_err() {
+            serial_print(b"Warning: Error freeing file clusters.\r\n");
         }
 
         // Mark directory entry as deleted
@@ -2852,7 +2843,7 @@ impl CmdBatchExecutor {
             Some(f) => f,
             None => return Err(BatError::IoError),
         };
-        let data = match crate::fs::ext2::read_whole_file(fs, filename) {
+        let data = match unsafe { crate::fs::ext2::read_whole_file(fs, filename) } {
             Ok(v) => v,
             Err(_) => {
                 return Err(BatError::FileNotFound(alloc::string::String::from(
@@ -3152,15 +3143,6 @@ pub fn execute_command_from_user_ptr(
     user_ptr: *const u8,
     user_length: usize,
 ) -> Result<bool, &'static str> {
-    let diagnostic = alloc::format!(
-        "[CMD-PTR] ptr={:#x} len={:#x} range={} root={:#x} trans={:#x?}\r\n",
-        user_ptr as usize,
-        user_length,
-        crate::mm::user_copy::is_user_range(user_ptr as u64, user_length),
-        crate::arch::read_current_page_root(),
-        crate::arch::translate_virt(user_ptr as u64)
-    );
-    crate::hal::serial::write_string_always(&diagnostic);
     if user_ptr.is_null() {
         return Err("null command pointer");
     }

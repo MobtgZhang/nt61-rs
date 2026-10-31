@@ -7,9 +7,9 @@
 //!  * the Local Security Authority subsystem process (LSASS)
 //!  * the Windows Logon UI infrastructure
 //
-//! In the bootstrap we model WinInit as a kernel thread that runs the
-//! `wininit_main` loop and owns the SCM, the LSA, and the start menu
-//! for Session 0.
+//!    In the bootstrap we model WinInit as a kernel thread that runs the
+//!    `wininit_main` loop and owns the SCM, the LSA, and the start menu
+//!    for Session 0.
 
 /// WinInit per-session state.
 pub struct WinInitState {
@@ -25,6 +25,12 @@ impl WinInitState {
             services_started: 0,
             lsa_endpoint: core::ptr::null_mut(),
         }
+    }
+}
+
+impl Default for WinInitState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

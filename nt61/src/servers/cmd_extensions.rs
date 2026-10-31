@@ -622,13 +622,13 @@ fn cmd_label(arguments: &str) -> bool {
         output_line("The type of the file system is NTFS.\r\nEnter new label:");
         return false;
     }
-    let label = arguments.splitn(2, ' ').next().unwrap_or("");
+    let label = arguments.split(' ').next().unwrap_or("");
     output_line(&format!("Volume label is {}", label));
     false
 }
 
 fn cmd_mklink(arguments: &str) -> bool {
-    let target = arguments.splitn(2, ' ').next().unwrap_or("");
+    let target = arguments.split(' ').next().unwrap_or("");
     if target.is_empty() {
         output_line("Syntax: MKLINK [/D | /J] Link Target");
         return false;
@@ -724,7 +724,7 @@ mod route_tests {
 
 fn parse_mac(text: &str) -> Option<[u8; 6]> {
     let bytes = text
-        .split(|separator: char| separator == '-' || separator == ':')
+        .split(['-', ':'])
         .map(|part| u8::from_str_radix(part, 16).ok())
         .collect::<Option<Vec<u8>>>()?;
     if bytes.len() != 6 {
@@ -1705,7 +1705,7 @@ fn cmd_chkdsk(command: &str, arguments: &str) -> bool {
         .split_whitespace()
         .find(|token| token.len() == 2 && token.ends_with(':'))
         .unwrap_or("C:");
-    output_line(&format!("The type of the file system is NTFS."));
+    output_line("The type of the file system is NTFS.");
     output_line(&format!("{} is checking the volume {}.", label, volume));
     output_line("No file system errors were found.");
     false
@@ -2962,7 +2962,7 @@ fn cmd_ping(arguments: &str) -> bool {
         while crate::hal::common::pit::get_system_time_ms() < deadline {
             crate::drivers::net::poll_all();
             if let Some((_, size)) = crate::netstack::icmp::take_echo_reply(identifier, sequence) {
-                replies_size = size.max(0);
+                replies_size = size;
                 received += 1;
                 got_reply = true;
                 break;

@@ -9,7 +9,7 @@
 //! - Session 0: System session (services, lsass)
 //! - Session 1+: User sessions (interactive logon)
 //
-//! Each session has its own:
+//!   Each session has its own:
 //! - Win32 subsystem state (desktop, window station)
 //! - environment variables
 //! - User profile
@@ -191,6 +191,12 @@ impl SmssState {
     }
 }
 
+impl Default for SmssState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Global SMSS state. Mutated by `init()` and the per-phase
 /// routines; read by the smoke test.
 pub static SMSS_STATE: Spinlock<SmssState> = Spinlock::new(SmssState::new());
@@ -219,6 +225,12 @@ impl SmssConfig {
             pending_renames_len: 0,
             system_root: [0; 260],
         }
+    }
+}
+
+impl Default for SmssConfig {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -457,6 +469,9 @@ fn init_environment() {
     // kprintln!("[SMSS] environment initialized: {} variables", env_vars.len());
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialize TEB (Thread environment Block) for a user-mode thread.
 ///
 /// The TEB is allocated in user-mode address space and contains
@@ -469,7 +484,7 @@ fn init_environment() {
 ///   - ProcessEnvironmentBlock: pointer back to PEB
 ///
 /// Returns the TEB pointer.
-pub fn init_teb(ethread: *mut crate::ps::thread::Ethread) -> *mut crate::ps::thread::Teb {
+pub unsafe fn init_teb(ethread: *mut crate::ps::thread::Ethread) -> *mut crate::ps::thread::Teb {
     // Allocate a page for the TEB in user address space.
     let pml4_phys = unsafe { (*(*ethread).kthread.process).page_table_pml4 };
     if pml4_phys == 0 {
@@ -488,7 +503,7 @@ pub fn init_teb(ethread: *mut crate::ps::thread::Ethread) -> *mut crate::ps::thr
 
     // Map every page of the TEB while still on the system root.
     // Page-table installation writes physical page-table pages directly.
-    let page_count = ((TEB_SIZE + 0xFFF) / 0x1000) as usize;
+    let page_count = TEB_SIZE.div_ceil(0x1000) as usize;
     for page in 0..page_count {
         let Some(teb_phys) = crate::mm::vas::alloc_zeroed_page_for_vas() else {
             return core::ptr::null_mut();
@@ -547,6 +562,9 @@ pub fn init_teb(ethread: *mut crate::ps::thread::Ethread) -> *mut crate::ps::thr
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Initialize PEB (Process environment Block) for a user-mode process.
 ///
 /// The PEB is allocated in user-mode address space and contains
@@ -560,7 +578,7 @@ pub fn init_teb(ethread: *mut crate::ps::thread::Ethread) -> *mut crate::ps::thr
 ///   - being_debugged: is a debugger attached?
 ///
 /// Returns the PEB pointer.
-pub fn init_peb(process: *mut crate::ps::process::Eprocess) -> *mut crate::ps::process::peb {
+pub unsafe fn init_peb(process: *mut crate::ps::process::Eprocess) -> *mut crate::ps::process::peb {
     boot_println!("[SMSS] init_peb enter");
     crate::hal::serial::write_string_always("[SMSS] peb enter\r\n");
     // Allocate a page for the PEB.
@@ -742,8 +760,8 @@ fn init_process_parameters(
     let params_phys_va = params_phys;
     const IMAGE_LIMIT: u64 = PARAMS_BASE + PARAMS_SIZE;
 
-    let string_data_base = params_va
-        + (core::mem::size_of::<crate::ps::process::RtlUserProcessParameters>() as u64 + 15)
+    let string_data_base = (params_va
+        + (core::mem::size_of::<crate::ps::process::RtlUserProcessParameters>() as u64 + 15))
         & !15;
     debug_assert!(string_data_base < IMAGE_LIMIT);
     let mut string_data = string_data_base;
@@ -841,30 +859,32 @@ fn init_process_parameters(
 /// Initialize TEB and PEB for all threads/processes created during boot.
 /// This is called from SMSS init to set up the user-mode environment.
 pub fn init_teb_peb_for_boot_processes() {
-    // Walk all processes and initialize their PEBs.
-    let _ = crate::ps::process::iterate_processes(|pid, process| {
-        // Skip the idle and system processes (they have no user-mode address space).
-        if pid == 0 || pid == 4 {
-            return true;
-        }
+    unsafe {
+        // Walk all processes and initialize their PEBs.
+        crate::ps::process::iterate_processes(|pid, process| {
+            // Skip the idle and system processes (they have no user-mode address space).
+            if pid == 0 || pid == 4 {
+                return true;
+            }
 
-        // Check if process pointer is valid
-        if process.is_null() {
-            return true;
-        }
+            // Check if process pointer is valid
+            if process.is_null() {
+                return true;
+            }
 
-        // Check PML4 validity before trying to initialize PEB
-        let pml4 = unsafe { (*process).page_table_pml4 };
-        if pml4 == 0 {
-            return true;
-        }
+            // Check PML4 validity before trying to initialize PEB
+            let pml4 = unsafe { (*process).page_table_pml4 };
+            if pml4 == 0 {
+                return true;
+            }
 
-        // Initialize PEB if not already set.
-        if unsafe { (*process).peb.is_null() } {
-            let _peb = init_peb(process);
-        }
-        true
-    });
+            // Initialize PEB if not already set.
+            if unsafe { (*process).peb.is_null() } {
+                let _peb = init_peb(process);
+            }
+            true
+        });
+    }
 }
 
 /// Initialize DOS devices
@@ -1324,122 +1344,125 @@ pub fn load_and_create_process(
     session_id: u32,
     base_pid: u64,
 ) -> Result<SystemExeLoadResult, ExeLoadError> {
-    crate::hal::serial::write_string_always("[SMSS] load enter\r\n");
-    boot_println!(
-        "[SMSS] load_and_create_process: path={} name={} session={} pid=0x{:x}",
-        disk_path,
-        process_name,
-        session_id,
-        base_pid
-    );
+    unsafe {
+        crate::hal::serial::write_string_always("[SMSS] load enter\r\n");
+        boot_println!(
+            "[SMSS] load_and_create_process: path={} name={} session={} pid=0x{:x}",
+            disk_path,
+            process_name,
+            session_id,
+            base_pid
+        );
 
-    // Step 1: read the PE file from the mounted disk
-    boot_println!("[SMSS] Reading PE from disk...");
-    let pe_data = match read_pe_from_disk(disk_path) {
-        Some(data) => {
-            boot_println!("[SMSS] pe_data acquired, len={}", data.len());
-            data
-        }
-        None => {
-            boot_println!("[SMSS] Failed to read {} from disk", disk_path);
-            return Err(ExeLoadError::FileNotFound);
-        }
-    };
-    crate::hal::serial::write_string_always("[SMSS] after disk read\r\n");
-    crate::hal::serial::write_string_always("[SMSS] before parse\r\n");
+        // Step 1: read the PE file from the mounted disk
+        boot_println!("[SMSS] Reading PE from disk...");
+        let pe_data = match read_pe_from_disk(disk_path) {
+            Some(data) => {
+                boot_println!("[SMSS] pe_data acquired, len={}", data.len());
+                data
+            }
+            None => {
+                boot_println!("[SMSS] Failed to read {} from disk", disk_path);
+                return Err(ExeLoadError::FileNotFound);
+            }
+        };
+        crate::hal::serial::write_string_always("[SMSS] after disk read\r\n");
+        crate::hal::serial::write_string_always("[SMSS] before parse\r\n");
 
-    boot_println!("[SMSS] Read {} bytes for {}", pe_data.len(), process_name);
+        boot_println!("[SMSS] Read {} bytes for {}", pe_data.len(), process_name);
 
-    // Step 2: Parse PE headers to get entry point and image base
-    let (entry_point, _preferred_base) = match parse_pe_headers(&pe_data) {
-        Some(result) => result,
-        None => {
-            boot_println!("[SMSS] Failed to parse PE headers for {}", process_name);
-            return Err(ExeLoadError::InvalidPe);
-        }
-    };
-    crate::hal::serial::write_string_always("[SMSS] after parse\r\n");
+        // Step 2: Parse PE headers to get entry point and image base
+        let (entry_point, _preferred_base) = match parse_pe_headers(&pe_data) {
+            Some(result) => result,
+            None => {
+                boot_println!("[SMSS] Failed to parse PE headers for {}", process_name);
+                return Err(ExeLoadError::InvalidPe);
+            }
+        };
+        crate::hal::serial::write_string_always("[SMSS] after parse\r\n");
 
-    boot_println!("[SMSS] PE parsed: entry=0x{:016x}", entry_point);
+        boot_println!("[SMSS] PE parsed: entry=0x{:016x}", entry_point);
 
-    // Step 3: create the process using the PE data
-    let pid = base_pid;
-    crate::hal::serial::write_string_always("[SMSS] before create\r\n");
-    let process = match crate::ps::process::create_user_process(&pe_data, pid, Some(entry_point)) {
-        Some(p) => p as *mut crate::ps::process::Eprocess,
-        None => {
-            crate::hal::serial::write_string_always("[SMSS] create failed\r\n");
-            boot_println!("[SMSS] Failed to create process {}", process_name);
-            return Err(ExeLoadError::ProcessCreationFailed);
-        }
-    };
-    crate::hal::serial::write_string_always("[SMSS] after create\r\n");
+        // Step 3: create the process using the PE data
+        let pid = base_pid;
+        crate::hal::serial::write_string_always("[SMSS] before create\r\n");
+        let process =
+            match crate::ps::process::create_user_process(&pe_data, pid, Some(entry_point)) {
+                Some(p) => p as *mut crate::ps::process::Eprocess,
+                None => {
+                    crate::hal::serial::write_string_always("[SMSS] create failed\r\n");
+                    boot_println!("[SMSS] Failed to create process {}", process_name);
+                    return Err(ExeLoadError::ProcessCreationFailed);
+                }
+            };
+        crate::hal::serial::write_string_always("[SMSS] after create\r\n");
 
-    boot_println!(
-        "[SMSS] Created process {} with PID 0x{:x}",
-        process_name,
-        pid
-    );
-    boot_println!(
-        "[SMSS] process created process=0x{:x} page_table=0x{:x} alias=0x{:x}",
-        process as u64,
-        unsafe { (*process).page_table_pml4 },
-        unsafe { (*process).pml4_phys }
-    );
+        boot_println!(
+            "[SMSS] Created process {} with PID 0x{:x}",
+            process_name,
+            pid
+        );
+        boot_println!(
+            "[SMSS] process created process=0x{:x} page_table=0x{:x} alias=0x{:x}",
+            process as u64,
+            unsafe { (*process).page_table_pml4 },
+            unsafe { (*process).pml4_phys }
+        );
 
-    // Step 4: Get PML4 for loading PE
-    let pml4_phys = unsafe { (*process).pml4_phys };
-    if pml4_phys == 0 {
-        boot_println!("[SMSS] Invalid PML4 for process {}", process_name);
-        return Err(ExeLoadError::LoadFailed);
-    }
-
-    // Step 5: Load the PE into the process's address space using the loader
-    crate::hal::serial::write_string_always("[SMSS] before loader\r\n");
-    let mapping = match crate::loader::load_into_user_address_space(pml4_phys, &pe_data) {
-        Some(mapping) => mapping,
-        None => {
-            crate::hal::serial::write_string_always("[SMSS] loader FAILED\r\n");
-            boot_println!(
-                "[SMSS] Failed to load PE into address space for {}",
-                process_name
-            );
+        // Step 4: Get PML4 for loading PE
+        let pml4_phys = unsafe { (*process).pml4_phys };
+        if pml4_phys == 0 {
+            boot_println!("[SMSS] Invalid PML4 for process {}", process_name);
             return Err(ExeLoadError::LoadFailed);
         }
-    };
-    crate::hal::serial::write_string_always("[SMSS] loader ok\r\n");
 
-    boot_println!(
-        "[SMSS] Loaded PE into process {}: base=0x{:x} entry=0x{:x} size=0x{:x}",
-        process_name,
-        mapping.image_base,
-        mapping.entry_point,
-        mapping.image_size
-    );
-    boot_println!(
-        "[SMSS] after PE load page_table=0x{:x} alias=0x{:x}",
-        unsafe { (*process).page_table_pml4 },
-        unsafe { (*process).pml4_phys }
-    );
-    unsafe {
-        (*process).user_rip = mapping.entry_point;
-        (*process).user_image_base = mapping.image_base;
-        (*process).user_image_size = mapping.image_size;
-    }
-    let peb = init_peb(process);
-    crate::hal::serial::write_string_always("[SMSS] peb done\r\n");
-    if peb.is_null() {
-        boot_println!("[SMSS] Failed to initialize PEB for {}", process_name);
-        return Err(ExeLoadError::LoadFailed);
-    }
+        // Step 5: Load the PE into the process's address space using the loader
+        crate::hal::serial::write_string_always("[SMSS] before loader\r\n");
+        let mapping = match crate::loader::load_into_user_address_space(pml4_phys, &pe_data) {
+            Some(mapping) => mapping,
+            None => {
+                crate::hal::serial::write_string_always("[SMSS] loader FAILED\r\n");
+                boot_println!(
+                    "[SMSS] Failed to load PE into address space for {}",
+                    process_name
+                );
+                return Err(ExeLoadError::LoadFailed);
+            }
+        };
+        crate::hal::serial::write_string_always("[SMSS] loader ok\r\n");
 
-    let _r = SystemExeLoadResult {
-        pid,
-        entry_point: mapping.entry_point,
-        image_base: mapping.image_base,
-    };
-    boot_println!("[SMSS] Returning Ok result");
-    Ok(_r)
+        boot_println!(
+            "[SMSS] Loaded PE into process {}: base=0x{:x} entry=0x{:x} size=0x{:x}",
+            process_name,
+            mapping.image_base,
+            mapping.entry_point,
+            mapping.image_size
+        );
+        boot_println!(
+            "[SMSS] after PE load page_table=0x{:x} alias=0x{:x}",
+            unsafe { (*process).page_table_pml4 },
+            unsafe { (*process).pml4_phys }
+        );
+        unsafe {
+            (*process).user_rip = mapping.entry_point;
+            (*process).user_image_base = mapping.image_base;
+            (*process).user_image_size = mapping.image_size;
+        }
+        let peb = init_peb(process);
+        crate::hal::serial::write_string_always("[SMSS] peb done\r\n");
+        if peb.is_null() {
+            boot_println!("[SMSS] Failed to initialize PEB for {}", process_name);
+            return Err(ExeLoadError::LoadFailed);
+        }
+
+        let _r = SystemExeLoadResult {
+            pid,
+            entry_point: mapping.entry_point,
+            image_base: mapping.image_base,
+        };
+        boot_println!("[SMSS] Returning Ok result");
+        Ok(_r)
+    }
 }
 
 /// Spawn a user-mode subsystem process from a NUL-terminated UTF-8 path
@@ -1864,7 +1887,7 @@ fn read_pe_from_ext2(path: &str) -> Option<core::mem::ManuallyDrop<Vec<u8>>> {
 
     let data = {
         crate::hal::serial::write_string_always("[SMSS] ext2 before read\r\n");
-        let result = crate::fs::ext2::read_whole_file(fs, path);
+        let result = unsafe { crate::fs::ext2::read_whole_file(fs, path) };
         crate::hal::serial::write_string_always("[SMSS] ext2 after read\r\n");
         match result {
             Ok(v) => v,
@@ -1999,8 +2022,11 @@ fn parse_pe_headers(pe_data: &[u8]) -> Option<(u64, u64)> {
     Some((entry_point, image_base))
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Load a PE image into a process's address space.
-pub fn load_pe_into_process(
+pub unsafe fn load_pe_into_process(
     process: *mut crate::ps::process::Eprocess,
     pe_data: &[u8],
     preferred_base: u64,
@@ -2092,7 +2118,7 @@ pub fn parse_pe_sections(pe_data: &[u8]) -> Option<Vec<PeSection>> {
     let optional_header_size =
         u16::from_le_bytes([pe_data[coff_offset + 16], pe_data[coff_offset + 17]]) as usize;
 
-    let section_table_offset = coff_offset + 20 + optional_header_size as usize;
+    let section_table_offset = coff_offset + 20 + optional_header_size;
 
     let mut sections = Vec::new();
 
@@ -2146,8 +2172,11 @@ pub fn parse_pe_sections(pe_data: &[u8]) -> Option<Vec<PeSection>> {
     Some(sections)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Allocate memory for a PE image in a process's address space.
-pub fn allocate_image_memory(
+pub unsafe fn allocate_image_memory(
     process: *mut crate::ps::process::Eprocess,
     preferred_base: u64,
     size: u64,
@@ -2165,7 +2194,7 @@ pub fn allocate_image_memory(
     base = (base + 0xFFF) & !0xFFF;
 
     // Allocate pages for the image
-    let num_pages = ((size + 0xFFF) / 0x1000) as usize;
+    let num_pages = size.div_ceil(0x1000) as usize;
 
     for i in 0..num_pages {
         let page_addr = base + (i as u64 * 0x1000);
@@ -2177,8 +2206,11 @@ pub fn allocate_image_memory(
     Ok(base)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Map a user-mode page into a process's address space.
-pub fn map_user_page(
+pub unsafe fn map_user_page(
     process: *mut crate::ps::process::Eprocess,
     virtual_addr: u64,
 ) -> Result<(), ExeLoadError> {
@@ -2470,86 +2502,88 @@ pub fn launch_userinit() -> Result<SystemExeLoadResult, ExeLoadError> {
 /// `arch::x86_64::user_entry::enter_first_user_thread`. On other
 /// architectures it falls back to the legacy "show prompt" stub.
 pub fn launch_cmd_shell() -> ! {
-    crate::hal::serial::write_string_always("[CMD] enter\r\n");
-    boot_println!("[BOOT]   Loading cmd.exe from disk...");
+    unsafe {
+        crate::hal::serial::write_string_always("[CMD] enter\r\n");
+        boot_println!("[BOOT]   Loading cmd.exe from disk...");
 
-    let disk_path = "C:\\Windows\\System32\\cmd.exe";
-    let process_name = "cmd.exe";
-    let base_pid = PID_CMD;
+        let disk_path = "C:\\Windows\\System32\\cmd.exe";
+        let process_name = "cmd.exe";
+        let base_pid = PID_CMD;
 
-    match load_and_create_process(disk_path, process_name, SESSION_1, base_pid) {
-        Ok(result) => {
-            crate::hal::serial::write_string_always("[CMD] load ok\r\n");
-            boot_println!("[BOOT]   cmd.exe loaded successfully");
-            boot_println!("[BOOT]   Process ID: 0x{:x}", result.pid);
-            boot_println!("[BOOT]   Entry Point: 0x{:016x}", result.entry_point);
-            boot_println!("[BOOT]   Image Base: 0x{:016x}", result.image_base);
+        match load_and_create_process(disk_path, process_name, SESSION_1, base_pid) {
+            Ok(result) => {
+                crate::hal::serial::write_string_always("[CMD] load ok\r\n");
+                boot_println!("[BOOT]   cmd.exe loaded successfully");
+                boot_println!("[BOOT]   Process ID: 0x{:x}", result.pid);
+                boot_println!("[BOOT]   Entry Point: 0x{:016x}", result.entry_point);
+                boot_println!("[BOOT]   Image Base: 0x{:016x}", result.image_base);
 
-            // On x86_64 we hand off to Ring 3 here and never come
-            // back. The bootloader entry into SMSS was via
-            // `arch::boot::try_launch_cmd_exe_arch`, which now
-            // delegates to `smss::run()` — see Phase E.
-            if let Some(proc) = crate::ps::process::get_by_pid(result.pid) {
-                crate::hal::serial::write_string_always("[CMD] process found\r\n");
-                let proc_ptr = proc as *mut crate::ps::process::Eprocess;
-                let main_thread = unsafe { (*proc_ptr).main_thread };
-                if !main_thread.is_null() {
-                    crate::hal::serial::write_string_always("[CMD] main thread ok\r\n");
-                    crate::ke::scheduler::setup_bsp(main_thread);
-                    let root_table_phys = unsafe { (*proc_ptr).pml4_phys };
-                    let user_rip = unsafe { (*proc_ptr).user_rip };
-                    let user_rsp = unsafe { (*proc_ptr).user_rsp };
-                    crate::hal::serial::write_string_always("[CMD] root=");
-                    crate::hal::serial::write_hex_u64_always(root_table_phys);
-                    crate::hal::serial::write_string_always(" rip=");
-                    crate::hal::serial::write_hex_u64_always(user_rip);
-                    crate::hal::serial::write_string_always(" rsp=");
-                    crate::hal::serial::write_hex_u64_always(user_rsp);
-                    crate::hal::serial::write_string_always("\r\n");
-                    boot_println!(
+                // On x86_64 we hand off to Ring 3 here and never come
+                // back. The bootloader entry into SMSS was via
+                // `arch::boot::try_launch_cmd_exe_arch`, which now
+                // delegates to `smss::run()` — see Phase E.
+                if let Some(proc) = crate::ps::process::get_by_pid(result.pid) {
+                    crate::hal::serial::write_string_always("[CMD] process found\r\n");
+                    let proc_ptr = proc as *mut crate::ps::process::Eprocess;
+                    let main_thread = unsafe { (*proc_ptr).main_thread };
+                    if !main_thread.is_null() {
+                        crate::hal::serial::write_string_always("[CMD] main thread ok\r\n");
+                        crate::ke::scheduler::setup_bsp(main_thread);
+                        let root_table_phys = unsafe { (*proc_ptr).pml4_phys };
+                        let user_rip = unsafe { (*proc_ptr).user_rip };
+                        let user_rsp = unsafe { (*proc_ptr).user_rsp };
+                        crate::hal::serial::write_string_always("[CMD] root=");
+                        crate::hal::serial::write_hex_u64_always(root_table_phys);
+                        crate::hal::serial::write_string_always(" rip=");
+                        crate::hal::serial::write_hex_u64_always(user_rip);
+                        crate::hal::serial::write_string_always(" rsp=");
+                        crate::hal::serial::write_hex_u64_always(user_rsp);
+                        crate::hal::serial::write_string_always("\r\n");
+                        boot_println!(
                         "[BOOT]   Dispatching cmd.exe into Ring 3 (root=0x{:x} RIP=0x{:x} RSP=0x{:x})",
                         root_table_phys,
                         user_rip,
                         user_rsp
                     );
-                    crate::hal::serial::write_string_always("[CMD] clear console\r\n");
-                    unsafe {
-                        // Give cmd.exe a clean canvas: wipe both the text
-                        // console and the bootvid LFB (which still shows the
-                        // boot menu text and the animation's white progress
-                        // bar) so the banner + C:\> land at the top-left
-                        // instead of being buried under boot-time leftovers.
-                        crate::hal::text_console::clear();
-                        crate::drivers::bootvid::vid_clear_black();
-                        crate::drivers::bootvid::vid_set_cursor_position(0, 0);
-                        crate::hal::serial::write_string_always("[CMD] enter ring3\r\n");
-                        crate::arch::common::user_entry::enter_first_user_thread(
-                            root_table_phys,
-                            user_rip,
-                            user_rsp,
-                        );
+                        crate::hal::serial::write_string_always("[CMD] clear console\r\n");
+                        unsafe {
+                            // Give cmd.exe a clean canvas: wipe both the text
+                            // console and the bootvid LFB (which still shows the
+                            // boot menu text and the animation's white progress
+                            // bar) so the banner + C:\> land at the top-left
+                            // instead of being buried under boot-time leftovers.
+                            crate::hal::text_console::clear();
+                            crate::drivers::bootvid::vid_clear_black();
+                            crate::drivers::bootvid::vid_set_cursor_position(0, 0);
+                            crate::hal::serial::write_string_always("[CMD] enter ring3\r\n");
+                            crate::arch::common::user_entry::enter_first_user_thread(
+                                root_table_phys,
+                                user_rip,
+                                user_rsp,
+                            );
+                        }
+                    } else {
+                        boot_println!("[BOOT]   ERROR: cmd.exe main_thread is NULL");
+                        loop {
+                            crate::arch::halt();
+                        }
                     }
                 } else {
-                    boot_println!("[BOOT]   ERROR: cmd.exe main_thread is NULL");
+                    boot_println!("[BOOT]   ERROR: cmd.exe process not found in PID table");
                     loop {
                         crate::arch::halt();
                     }
                 }
-            } else {
-                boot_println!("[BOOT]   ERROR: cmd.exe process not found in PID table");
+            }
+            Err(e) => {
+                boot_println!("[BOOT]   ERROR: Failed to launch cmd.exe: {:?}", e);
+                boot_println!("[BOOT]   System cannot proceed without a shell!");
+
+                // Fallback: Show error message
+                show_boot_error();
                 loop {
                     crate::arch::halt();
                 }
-            }
-        }
-        Err(e) => {
-            boot_println!("[BOOT]   ERROR: Failed to launch cmd.exe: {:?}", e);
-            boot_println!("[BOOT]   System cannot proceed without a shell!");
-
-            // Fallback: Show error message
-            show_boot_error();
-            loop {
-                crate::arch::halt();
             }
         }
     }

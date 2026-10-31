@@ -8,8 +8,8 @@
 //!  * running the credential provider chain
 //!  * managing the user profile once a user logs on
 //
-//! In the bootstrap we model WinLogon as a kernel thread that runs
-//! the `winlogon_main` loop and reports login events via ALPC.
+//!    In the bootstrap we model WinLogon as a kernel thread that runs
+//!    the `winlogon_main` loop and reports login events via ALPC.
 
 /// WinLogon state.
 pub struct WinLogonState {
@@ -25,6 +25,12 @@ impl WinLogonState {
             logged_on: false,
             user_sid: 0,
         }
+    }
+}
+
+impl Default for WinLogonState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

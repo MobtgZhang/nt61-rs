@@ -305,5 +305,5 @@ pub fn run_tests() -> bool {
     let (session_count, _notif, _port) = csrss::get_statistics();
     let all_services = services::list_services();
 
-    session_count >= 2 && all_services.len() > 0
+    session_count >= 2 && !all_services.is_empty()
 }

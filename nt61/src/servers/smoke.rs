@@ -9,7 +9,7 @@
 //!   * SMSS (PID 256) - the Session Manager
 //!   * The Service control Manager (services.exe, PID 1024)
 //
-//! In the bootstrap these are represented by:
+//!     In the bootstrap these are represented by:
 //!   * `ps::process::create_system_process(PID_SYSTEM)` for the
 //!     System process;
 //!   * `ke::scheduler::create_idle_thread()` for the Idle
@@ -18,7 +18,7 @@
 //!     services;
 //!   * `servers::services::init()` for the SCM.
 //
-//! This smoke test verifies that:
+//!     This smoke test verifies that:
 //
 //! 1. The System process (PID 4) exists in the process list
 //!    after init.
@@ -119,7 +119,7 @@ fn step4_scm_state() -> bool {
         let mut buf = [0u8; 8];
         let mut len = 0;
         for j in 0..name_end.min(buf.len()) {
-            buf[j] = (state.services[i].name[j] as u8) as u8;
+            buf[j] = state.services[i].name[j] as u8;
             len = j + 1;
         }
         if len >= 5 && &buf[..5] == b"RpcSs" {

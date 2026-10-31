@@ -74,6 +74,12 @@ impl SessionStats {
     }
 }
 
+impl Default for SessionStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ====================================================================
 // Host key
 // ====================================================================
@@ -479,7 +485,7 @@ impl ActiveSession {
             let session_id = self.session_id.unwrap_or([0u8; 32]);
             let data_to_sign =
                 auth::publickey_data_to_sign(&session_id, &payload[..pos_after_blob]);
-            auth::verify_public_key(user, &algorithm, key_blob, signature, &data_to_sign)
+            auth::verify_public_key(user, algorithm, key_blob, signature, &data_to_sign)
         } else {
             false
         };

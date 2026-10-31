@@ -108,6 +108,12 @@ impl ServiceStatus {
     }
 }
 
+impl Default for ServiceStatus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Service database entry
 #[derive(Clone)]
 pub struct ServiceEntry {
@@ -147,6 +153,12 @@ impl ServiceEntry {
     }
 }
 
+impl Default for ServiceEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// SCM state
 pub struct ScmState {
     pub running: bool,
@@ -163,6 +175,12 @@ impl ScmState {
             services: [const { ServiceEntry::new() }; 32],
             service_count: 0,
         }
+    }
+}
+
+impl Default for ScmState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1111,12 +1129,8 @@ fn utf16_to_string(value: &[u16]) -> String {
 }
 
 fn find_service(state: &ScmState, service_name: &str) -> Option<usize> {
-    for i in 0..state.service_count {
-        if utf16_to_string(&state.services[i].name).eq_ignore_ascii_case(service_name) {
-            return Some(i);
-        }
-    }
-    None
+    (0..state.service_count)
+        .find(|&i| utf16_to_string(&state.services[i].name).eq_ignore_ascii_case(service_name))
 }
 
 /// Query the full service record (`QueryServiceEx` / `QueryServiceLockStatus`).
@@ -1203,9 +1217,7 @@ static CONTROL_PIPE_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Returns the pipe handle, or `None` when the service is unknown.
 pub fn create_service_pipe(service_name: &str) -> Option<usize> {
     let state = SCM_STATE.lock();
-    if find_service(&state, service_name).is_none() {
-        return None;
-    }
+    find_service(&state, service_name)?;
     // Handles start at 1 so that 0 keeps meaning "no pipe".
     Some(CONTROL_PIPE_COUNT.fetch_add(1, Ordering::Relaxed) + 1)
 }
