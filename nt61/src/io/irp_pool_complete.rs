@@ -15,13 +15,16 @@ use crate::ke::sync::Spinlock;
 use crate::mm::pool;
 use alloc::vec::Vec;
 
-const IRP_TAG: u32 = u32::from_be_bytes([b'I', b'r', b'p', b' ']);
+const IRP_TAG: u32 = u32::from_be_bytes(*b"Irp ");
 
 #[inline]
 fn block_size(stack_locations: usize) -> usize {
     core::mem::size_of::<Irp>() + core::mem::size_of::<IoStackLocation>() * stack_locations
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Lay out the inline stack locations after the IRP body.
 ///
 /// Locations are numbered 1..StackCount from the low end of the block and
@@ -135,7 +138,10 @@ impl DynamicIrpPool {
         None
     }
 
-    pub fn free(&mut self, irp: *mut Irp) {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+    pub unsafe fn free(&mut self, irp: *mut Irp) {
         if irp.is_null() {
             return;
         }
@@ -177,16 +183,18 @@ impl DynamicIrpPool {
 
     /// Shrink the pool (free unused IRPs)
     pub fn shrink(&mut self, target_free: usize) -> usize {
-        let mut freed = 0;
+        unsafe {
+            let mut freed = 0;
 
-        while self.free_list.len() > target_free {
-            if let Some((irp, _)) = self.free_list.pop() {
-                pool::free(irp as *mut u8);
-                freed += 1;
+            while self.free_list.len() > target_free {
+                if let Some((irp, _)) = self.free_list.pop() {
+                    pool::free(irp as *mut u8);
+                    freed += 1;
+                }
             }
-        }
 
-        freed
+            freed
+        }
     }
 
     pub fn get_stats(&self) -> IrpPoolStats {
@@ -213,10 +221,15 @@ pub fn allocate_irp(stack_locations: u8) -> Option<*mut Irp> {
     pool.as_mut()?.allocate(stack_locations)
 }
 
-pub fn free_irp(irp: *mut Irp) {
-    let mut pool = IRP_POOL.lock();
-    if let Some(p) = pool.as_mut() {
-        p.free(irp);
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn free_irp(irp: *mut Irp) {
+    unsafe {
+        let mut pool = IRP_POOL.lock();
+        if let Some(p) = pool.as_mut() {
+            p.free(irp);
+        }
     }
 }
 
@@ -259,7 +272,9 @@ mod tests {
             assert!(!(*irp.unwrap()).current_stack.is_null());
         }
 
-        pool.free(irp.unwrap());
+        unsafe {
+            pool.free(irp.unwrap());
+        }
         assert_eq!(pool.stats.current_allocated, 0);
     }
 
@@ -284,7 +299,9 @@ mod tests {
                 as *mut IoStackLocation;
             assert!(next >= base && next < current);
         }
-        pool.free(irp);
+        unsafe {
+            pool.free(irp);
+        }
     }
 
     #[test]
@@ -299,9 +316,15 @@ mod tests {
         assert!(irp3.is_some());
         assert!(pool.stats.grow_operations > 0);
 
-        pool.free(irp1);
-        pool.free(irp2);
-        pool.free(irp3.unwrap());
+        unsafe {
+            pool.free(irp1);
+        }
+        unsafe {
+            pool.free(irp2);
+        }
+        unsafe {
+            pool.free(irp3.unwrap());
+        }
     }
 
     #[test]
@@ -320,7 +343,9 @@ mod tests {
         if !irps.is_empty() {
             assert!(pool.stats.current_allocated <= 5);
             for irp in irps {
-                pool.free(irp);
+                unsafe {
+                    pool.free(irp);
+                }
             }
         } else {
             // No heap available in libtest: the only observable behaviour

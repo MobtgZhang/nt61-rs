@@ -60,15 +60,17 @@ pub fn cancel_irp_timeout(irp: *mut Irp) {
 }
 
 fn process_timeouts() {
-    let current_tick = get_tick_count();
-    let mut tracker = TIMEOUT_TRACKER.lock();
+    unsafe {
+        let current_tick = get_tick_count();
+        let mut tracker = TIMEOUT_TRACKER.lock();
 
-    for entry in tracker.iter_mut() {
-        if !entry.fired && entry.timeout_at <= current_tick {
-            entry.fired = true;
+        for entry in tracker.iter_mut() {
+            if !entry.fired && entry.timeout_at <= current_tick {
+                entry.fired = true;
 
-            if !entry.irp.is_null() {
-                super::cancel_irp(entry.irp);
+                if !entry.irp.is_null() {
+                    super::cancel_irp(entry.irp);
+                }
             }
         }
     }

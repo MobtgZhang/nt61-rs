@@ -41,7 +41,10 @@ impl CancelSafeQueue {
         }
     }
 
-    pub fn insert(&self, irp: *mut Irp) -> bool {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+    pub unsafe fn insert(&self, irp: *mut Irp) -> bool {
         if irp.is_null() {
             return false;
         }
@@ -65,6 +68,9 @@ impl CancelSafeQueue {
         true
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn remove_next(&self) -> *mut Irp {
         let mut queue = self.queue.lock();
 
@@ -79,6 +85,9 @@ impl CancelSafeQueue {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn remove_irp(&self, irp: *mut Irp) -> bool {
         if irp.is_null() {
             return false;
@@ -126,6 +135,9 @@ pub const IRP_PENDING: u32 = 0x00000001;
 pub const IRP_SYNCHRONOUS_API: u32 = 0x00000004;
 pub const IRP_DEALLOCATE_BUFFER: u32 = 0x00000010;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn cancel_queued_irp(irp: *mut Irp) {
     if irp.is_null() {
         return;
@@ -168,7 +180,7 @@ mod tests {
         let irp = super::super::allocate_irp(1);
 
         assert!(!irp.is_null());
-        assert!(queue.insert(irp));
+        assert!(unsafe { queue.insert(irp) });
         assert_eq!(queue.count(), 1);
 
         let removed = unsafe { queue.remove_next() };
@@ -189,8 +201,12 @@ mod tests {
         assert!(!irp1.is_null());
         assert!(!irp2.is_null());
 
-        queue.insert(irp1);
-        queue.insert(irp2);
+        unsafe {
+            queue.insert(irp1);
+        }
+        unsafe {
+            queue.insert(irp2);
+        }
         assert_eq!(queue.count(), 2);
 
         queue.flush(STATUS_CANCELLED);

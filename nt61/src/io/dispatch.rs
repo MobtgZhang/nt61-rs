@@ -55,9 +55,12 @@ impl DispatchTable {
         table
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Install this table onto a driver object, merging over whatever
     /// handlers are already present (wdm.h IoSetDispatchTable semantics).
-    pub fn install(&self, driver: *mut super::DriverObject) {
+    pub unsafe fn install(&self, driver: *mut super::DriverObject) {
         if driver.is_null() {
             return;
         }
@@ -68,6 +71,12 @@ impl DispatchTable {
                 }
             }
         }
+    }
+}
+
+impl Default for DispatchTable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -107,6 +116,9 @@ unsafe extern "C" fn default_shutdown(_device: *mut DeviceObject, irp: *mut Irp)
 // Dispatch core (IoCallDriver / IoForwardIrpToLower)
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IoCallDriver: route an IRP to the device's driver using the current
 /// stack location's major function code.
 pub unsafe fn dispatch_irp(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
@@ -137,6 +149,9 @@ pub unsafe fn dispatch_irp(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Attach a lower device object onto a device stack
 /// (wdm.h IoAttachDeviceToDeviceStack).
 pub unsafe fn attach_device(device: *mut DeviceObject, lower: *mut DeviceObject) {
@@ -146,6 +161,9 @@ pub unsafe fn attach_device(device: *mut DeviceObject, lower: *mut DeviceObject)
     (*device).attached_device = lower;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IoForwardIrpToLower: forward the IRP to the next lower device in
 /// the stack, keeping the same stack location parameters.
 pub unsafe fn forward_irp_to_lower(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
@@ -170,6 +188,9 @@ pub unsafe fn forward_irp_to_lower(device: *mut DeviceObject, irp: *mut Irp) -> 
 // Storage request helpers
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Allocate and populate an IRP for a storage read/write request.
 /// The data buffer pointer is carried in Irp::user_buffer, matching
 /// NT's UserBuffer slot for buffered I/O requests.
@@ -205,6 +226,9 @@ pub unsafe fn build_storage_request(
     irp
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Read the parameters of a storage read/write IRP from its stack
 /// location: (byte offset, byte count, data buffer).
 pub unsafe fn storage_request_parameters(irp: *mut Irp) -> (u64, u32, *mut u8) {
@@ -223,6 +247,9 @@ pub unsafe fn storage_request_parameters(irp: *mut Irp) -> (u64, u32, *mut u8) {
     )
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Send a sector read/write through the dispatcher to the device
 /// stack rooted at device. Storage handlers must not complete the IRP
 /// themselves; this function completes it exactly once. Returns the

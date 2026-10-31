@@ -97,10 +97,16 @@ fn ensure_registry(registry: &mut Vec<Option<DriverRegistryEntry>>) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Register an already-created driver object for loading by one of the
 /// `load_*_start_drivers` waves. The entry starts as `NotLoaded`; the
 /// wave matching its start type runs the driver's `DriverEntry`.
-pub fn register_start_type_driver(driver: *mut DriverObject, start_type: ServiceStartType) -> bool {
+pub unsafe fn register_start_type_driver(
+    driver: *mut DriverObject,
+    start_type: ServiceStartType,
+) -> bool {
     if driver.is_null() {
         return false;
     }
@@ -137,57 +143,60 @@ pub fn load_driver(
     registry_path: &[u8],
     start_type: ServiceStartType,
 ) -> *mut DriverObject {
-    let driver = super::allocate_driver(driver_name);
-    if driver.is_null() {
-        return null_mut();
-    }
+    unsafe {
+        let driver = super::allocate_driver(driver_name);
+        if driver.is_null() {
+            return null_mut();
+        }
 
-    let mut entry = DriverRegistryEntry::new(driver_name, driver, start_type);
-    entry.load_state = DriverLoadState::Loading;
+        let mut entry = DriverRegistryEntry::new(driver_name, driver, start_type);
+        entry.load_state = DriverLoadState::Loading;
 
-    let mut registry = DRIVER_REGISTRY.lock();
-    ensure_registry(&mut registry);
-    let slot = registry.iter_mut().find(|e| e.is_none());
+        let mut registry = DRIVER_REGISTRY.lock();
+        ensure_registry(&mut registry);
+        let slot = registry.iter_mut().find(|e| e.is_none());
 
-    if let Some(slot) = slot {
-        *slot = Some(entry.clone());
-    } else {
-        pool::free(driver as *mut u8);
-        return null_mut();
-    }
+        if let Some(slot) = slot {
+            *slot = Some(entry.clone());
+        } else {
+            pool::free(driver as *mut u8);
+            return null_mut();
+        }
 
-    let init_status = unsafe {
-        if let Some(driver_init) = (*driver).driver_init {
+        let init_status = if let Some(driver_init) = (*driver).driver_init {
             let reg_path_ptr = registry_path.as_ptr() as *mut u16;
             driver_init(driver, reg_path_ptr)
         } else {
             STATUS_SUCCESS as u32
-        }
-    };
+        };
 
-    if init_status != STATUS_SUCCESS as u32 {
-        entry.load_state = DriverLoadState::Failed;
+        if init_status != STATUS_SUCCESS as u32 {
+            entry.load_state = DriverLoadState::Failed;
+            if let Some(slot) = registry
+                .iter_mut()
+                .find(|e| e.as_ref().is_some_and(|e| e.driver_object == driver))
+            {
+                *slot = Some(entry);
+            }
+            return null_mut();
+        }
+
+        entry.load_state = DriverLoadState::Loaded;
         if let Some(slot) = registry
             .iter_mut()
-            .find(|e| e.as_ref().map_or(false, |e| e.driver_object == driver))
+            .find(|e| e.as_ref().is_some_and(|e| e.driver_object == driver))
         {
             *slot = Some(entry);
         }
-        return null_mut();
-    }
 
-    entry.load_state = DriverLoadState::Loaded;
-    if let Some(slot) = registry
-        .iter_mut()
-        .find(|e| e.as_ref().map_or(false, |e| e.driver_object == driver))
-    {
-        *slot = Some(entry);
+        driver
     }
-
-    driver
 }
 
-pub fn unload_driver(driver: *mut DriverObject) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn unload_driver(driver: *mut DriverObject) -> bool {
     if driver.is_null() {
         return false;
     }
@@ -196,7 +205,7 @@ pub fn unload_driver(driver: *mut DriverObject) -> bool {
 
     let entry_idx = registry
         .iter()
-        .position(|e| e.as_ref().map_or(false, |e| e.driver_object == driver));
+        .position(|e| e.as_ref().is_some_and(|e| e.driver_object == driver));
 
     let entry_idx = match entry_idx {
         Some(idx) => idx,

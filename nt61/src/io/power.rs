@@ -112,8 +112,11 @@ pub fn init() {
     power_klog!("[IO-POWER] I/O power management initialized");
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Request a device power state change
-pub fn request_device_power_state(
+pub unsafe fn request_device_power_state(
     device: *mut DeviceObject,
     target_state: DevicePowerState,
 ) -> bool {
@@ -219,8 +222,11 @@ pub fn query_device_power_capabilities(device: *mut DeviceObject) -> DevicePower
     DevicePowerCapabilities::default()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Process a power IRP
-pub fn process_power_irp(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
+pub unsafe fn process_power_irp(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if device.is_null() || irp.is_null() {
         return -1; // STATUS_INVALID_PARAMETER
     }

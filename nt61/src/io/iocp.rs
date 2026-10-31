@@ -62,6 +62,12 @@ impl IoCompletionPacket {
     }
 }
 
+impl Default for IoCompletionPacket {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// I/O Completion Port Structure
 pub struct IoCompletionPort {
     /// Port ID
@@ -332,11 +338,9 @@ pub fn close_io_completion_port(port_id: u64) -> u32 {
 pub fn associate_handle_with_iocp(port_id: u64, handle: u64, completion_key: u64) -> u32 {
     let table = IOCP_TABLE.lock();
 
-    for slot in table.iter() {
-        if let Some(port) = slot {
-            if port.port_id() == port_id {
-                return port.associate_handle(handle, completion_key);
-            }
+    for port in table.iter().flatten() {
+        if port.port_id() == port_id {
+            return port.associate_handle(handle, completion_key);
         }
     }
 
@@ -356,17 +360,15 @@ pub fn post_completion_status(
 ) -> u32 {
     let table = IOCP_TABLE.lock();
 
-    for slot in table.iter() {
-        if let Some(port) = slot {
-            if port.port_id() == port_id {
-                let packet = IoCompletionPacket {
-                    bytes_transferred,
-                    completion_key,
-                    overlapped,
-                    status,
-                };
-                return port.post_completion(packet);
-            }
+    for port in table.iter().flatten() {
+        if port.port_id() == port_id {
+            let packet = IoCompletionPacket {
+                bytes_transferred,
+                completion_key,
+                overlapped,
+                status,
+            };
+            return port.post_completion(packet);
         }
     }
 
@@ -430,11 +432,9 @@ pub fn port_exists(port_id: u64) -> bool {
 pub fn get_iocp_stats(port_id: u64) -> Option<(u64, u64, u32, usize)> {
     let table = IOCP_TABLE.lock();
 
-    for slot in table.iter() {
-        if let Some(port) = slot {
-            if port.port_id() == port_id {
-                return Some(port.get_stats());
-            }
+    for port in table.iter().flatten() {
+        if port.port_id() == port_id {
+            return Some(port.get_stats());
         }
     }
 

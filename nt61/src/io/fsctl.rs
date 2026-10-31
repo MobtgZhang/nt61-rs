@@ -85,7 +85,10 @@ impl FsctlRequest {
     }
 }
 
-pub fn get_fsctl_code(stack: *const IoStackLocation) -> u32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn get_fsctl_code(stack: *const IoStackLocation) -> u32 {
     if stack.is_null() {
         return 0;
     }
@@ -96,50 +99,65 @@ pub fn get_fsctl_code(stack: *const IoStackLocation) -> u32 {
     unsafe { (*stack).parameters.device_io_control.io_control_code }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn handle_lock_volume(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     (*irp).io_status.status = STATUS_SUCCESS as u32;
     (*irp).io_status.information = 0;
     super::io_complete_request(irp, 0);
-    STATUS_SUCCESS as i32
+    STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn handle_unlock_volume(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     (*irp).io_status.status = STATUS_SUCCESS as u32;
     (*irp).io_status.information = 0;
     super::io_complete_request(irp, 0);
-    STATUS_SUCCESS as i32
+    STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn handle_dismount_volume(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     (*irp).io_status.status = STATUS_SUCCESS as u32;
     (*irp).io_status.information = 0;
     super::io_complete_request(irp, 0);
-    STATUS_SUCCESS as i32
+    STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn handle_is_volume_mounted(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     (*irp).io_status.status = STATUS_SUCCESS as u32;
     (*irp).io_status.information = 0;
     super::io_complete_request(irp, 0);
-    STATUS_SUCCESS as i32
+    STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn dispatch_fsctl(device: *mut DeviceObject, irp: *mut Irp, fsctl_code: u32) -> i32 {
     match fsctl_code {
         fsctl::FSCTL_LOCK_VOLUME => handle_lock_volume(device, irp),
@@ -152,22 +170,25 @@ pub unsafe fn dispatch_fsctl(device: *mut DeviceObject, irp: *mut Irp, fsctl_cod
                 (*irp).io_status.information = 0;
                 super::io_complete_request(irp, 0);
             }
-            STATUS_INVALID_DEVICE_REQUEST as i32
+            STATUS_INVALID_DEVICE_REQUEST
         }
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn file_system_control_dispatch(
     device: *mut DeviceObject,
     irp: *mut Irp,
 ) -> i32 {
     if irp.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     let stack = (*irp).current_stack;
     if stack.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     let fsctl_code = get_fsctl_code(stack);

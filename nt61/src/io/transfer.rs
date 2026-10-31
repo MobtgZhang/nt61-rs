@@ -49,6 +49,12 @@ impl Mdl {
     }
 }
 
+impl Default for Mdl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub const MDL_MAPPED_TO_SYSTEM_VA: u16 = 0x0001;
 pub const MDL_PAGES_LOCKED: u16 = 0x0002;
 pub const MDL_SOURCE_IS_NONPAGED_POOL: u16 = 0x0004;
@@ -94,7 +100,10 @@ pub fn allocate_mdl(
     mdl
 }
 
-pub fn build_mdl_for_non_paged_pool(mdl: *mut Mdl) {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn build_mdl_for_non_paged_pool(mdl: *mut Mdl) {
     if !mdl.is_null() {
         unsafe {
             (*mdl).mdl_flags |= MDL_SOURCE_IS_NONPAGED_POOL | MDL_PAGES_LOCKED;
@@ -102,7 +111,10 @@ pub fn build_mdl_for_non_paged_pool(mdl: *mut Mdl) {
     }
 }
 
-pub fn probe_and_lock_pages(mdl: *mut Mdl, access_mode: u8, operation: u32) -> u32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn probe_and_lock_pages(mdl: *mut Mdl, access_mode: u8, operation: u32) -> u32 {
     let _ = access_mode;
     if mdl.is_null() {
         return STATUS_INVALID_PARAMETER as u32;
@@ -131,7 +143,10 @@ pub fn probe_and_lock_pages(mdl: *mut Mdl, access_mode: u8, operation: u32) -> u
     STATUS_SUCCESS as u32
 }
 
-pub fn unlock_pages(mdl: *mut Mdl) {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn unlock_pages(mdl: *mut Mdl) {
     if mdl.is_null() {
         return;
     }
@@ -141,17 +156,25 @@ pub fn unlock_pages(mdl: *mut Mdl) {
     }
 }
 
-pub fn free_mdl(mdl: *mut Mdl) {
-    if mdl.is_null() {
-        return;
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn free_mdl(mdl: *mut Mdl) {
+    unsafe {
+        if mdl.is_null() {
+            return;
+        }
+
+        unlock_pages(mdl);
+
+        pool::free(mdl as *mut u8);
     }
-
-    unlock_pages(mdl);
-
-    pool::free(mdl as *mut u8);
 }
 
-pub fn map_locked_pages(mdl: *mut Mdl, access_mode: u8) -> *mut u8 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn map_locked_pages(mdl: *mut Mdl, access_mode: u8) -> *mut u8 {
     let _ = access_mode;
 
     if mdl.is_null() {
@@ -171,7 +194,10 @@ pub fn map_locked_pages(mdl: *mut Mdl, access_mode: u8) -> *mut u8 {
     }
 }
 
-pub fn unmap_locked_pages(mdl: *mut Mdl) {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn unmap_locked_pages(mdl: *mut Mdl) {
     if mdl.is_null() {
         return;
     }
@@ -182,7 +208,10 @@ pub fn unmap_locked_pages(mdl: *mut Mdl) {
     }
 }
 
-pub fn get_system_address_for_mdl(mdl: *mut Mdl) -> *mut u8 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn get_system_address_for_mdl(mdl: *mut Mdl) -> *mut u8 {
     if mdl.is_null() {
         return null_mut();
     }
@@ -202,37 +231,42 @@ pub fn allocate_buffered_io_buffer(
     length: u32,
     for_write: bool,
 ) -> *mut u8 {
-    if length == 0 {
-        return null_mut();
-    }
-
-    let sys_buffer = pool::allocate(pool::PoolType::NonPaged, length as usize) as *mut u8;
-
-    if sys_buffer.is_null() {
-        return null_mut();
-    }
-
-    // Copy from user buffer if this is a write operation. The caller
-    // buffer is a user-mode address: probe it and copy through the
-    // user_copy helpers instead of dereferencing it directly.
-    if for_write && !user_buffer.is_null() {
-        let va = user_buffer as u64;
-        if crate::mm::user_copy::probe_user_read(va, length as usize).is_err() {
-            pool::free(sys_buffer);
+    unsafe {
+        if length == 0 {
             return null_mut();
         }
-        let dst = unsafe { core::slice::from_raw_parts_mut(sys_buffer, length as usize) };
-        if crate::mm::user_copy::copy_from_user(dst, va).is_err() {
-            pool::free(sys_buffer);
+
+        let sys_buffer = pool::allocate(pool::PoolType::NonPaged, length as usize);
+
+        if sys_buffer.is_null() {
             return null_mut();
         }
-    }
 
-    sys_buffer
+        // Copy from user buffer if this is a write operation. The caller
+        // buffer is a user-mode address: probe it and copy through the
+        // user_copy helpers instead of dereferencing it directly.
+        if for_write && !user_buffer.is_null() {
+            let va = user_buffer as u64;
+            if crate::mm::user_copy::probe_user_read(va, length as usize).is_err() {
+                pool::free(sys_buffer);
+                return null_mut();
+            }
+            let dst = core::slice::from_raw_parts_mut(sys_buffer, length as usize);
+            if crate::mm::user_copy::copy_from_user(dst, va).is_err() {
+                pool::free(sys_buffer);
+                return null_mut();
+            }
+        }
+
+        sys_buffer
+    }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Buffered I/O: Copy from system buffer back to user space and free.
-pub fn free_buffered_io_buffer(
+pub unsafe fn free_buffered_io_buffer(
     sys_buffer: *mut u8,
     user_buffer: *mut u8,
     length: u32,
@@ -257,7 +291,10 @@ pub fn free_buffered_io_buffer(
     pool::free(sys_buffer);
 }
 
-pub fn get_io_buffer(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn get_io_buffer(
     device_flags: u32,
     user_buffer: *mut u8,
     length: u32,
@@ -291,7 +328,10 @@ pub fn get_io_buffer(
     }
 }
 
-pub fn release_io_buffer(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn release_io_buffer(
     device_flags: u32,
     sys_buffer: *mut u8,
     user_buffer: *mut u8,
@@ -299,15 +339,17 @@ pub fn release_io_buffer(
     for_read: bool,
     mdl: *mut Mdl,
 ) {
-    if (device_flags & DO_BUFFERED_IO) != 0 {
-        free_buffered_io_buffer(sys_buffer, user_buffer, length, for_read);
-    } else if (device_flags & DO_DIRECT_IO) != 0 {
-        if !mdl.is_null() {
-            unmap_locked_pages(mdl);
-            unlock_pages(mdl);
-            free_mdl(mdl);
+    unsafe {
+        if (device_flags & DO_BUFFERED_IO) != 0 {
+            free_buffered_io_buffer(sys_buffer, user_buffer, length, for_read);
+        } else if (device_flags & DO_DIRECT_IO) != 0 {
+            if !mdl.is_null() {
+                unmap_locked_pages(mdl);
+                unlock_pages(mdl);
+                free_mdl(mdl);
+            }
+        } else {
+            // Neither I/O - nothing to free (used user buffer directly)
         }
-    } else {
-        // Neither I/O - nothing to free (used user buffer directly)
     }
 }

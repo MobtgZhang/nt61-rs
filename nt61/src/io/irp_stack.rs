@@ -10,8 +10,11 @@ use super::{
 };
 use core::ptr::null_mut;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[inline]
-pub fn get_current_stack_location(irp: *mut Irp) -> *mut IoStackLocation {
+pub unsafe fn get_current_stack_location(irp: *mut Irp) -> *mut IoStackLocation {
     if irp.is_null() {
         return null_mut();
     }
@@ -19,7 +22,10 @@ pub fn get_current_stack_location(irp: *mut Irp) -> *mut IoStackLocation {
     unsafe { (*irp).current_stack }
 }
 
-pub fn get_next_stack_location(irp: *mut Irp) -> *mut IoStackLocation {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn get_next_stack_location(irp: *mut Irp) -> *mut IoStackLocation {
     if irp.is_null() {
         return null_mut();
     }
@@ -35,13 +41,14 @@ pub fn get_next_stack_location(irp: *mut Irp) -> *mut IoStackLocation {
             return null_mut();
         }
 
-        let next =
-            (stack_base as usize - core::mem::size_of::<IoStackLocation>()) as *mut IoStackLocation;
-        next
+        (stack_base as usize - core::mem::size_of::<IoStackLocation>()) as *mut IoStackLocation
     }
 }
 
-pub fn skip_current_stack_location(irp: *mut Irp) {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn skip_current_stack_location(irp: *mut Irp) {
     if irp.is_null() {
         return;
     }
@@ -65,7 +72,10 @@ pub fn skip_current_stack_location(irp: *mut Irp) {
     }
 }
 
-pub fn copy_current_irp_stack_location_to_next(irp: *mut Irp) {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn copy_current_irp_stack_location_to_next(irp: *mut Irp) {
     if irp.is_null() {
         return;
     }
@@ -80,7 +90,10 @@ pub fn copy_current_irp_stack_location_to_next(irp: *mut Irp) {
     }
 }
 
-pub fn set_completion_routine(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn set_completion_routine(
     irp: *mut Irp,
     completion_routine: Option<unsafe extern "C" fn(*mut DeviceObject, *mut Irp, *mut ()) -> i32>,
     context: *mut (),
@@ -124,7 +137,10 @@ pub const SL_INVOKE_ON_ERROR: u8 = 0x20;
 pub const SL_INVOKE_ON_CANCEL: u8 = 0x10;
 pub const SL_PENDING_RETURNED: u8 = 0x01;
 
-pub fn mark_irp_pending(irp: *mut Irp) {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn mark_irp_pending(irp: *mut Irp) {
     if irp.is_null() {
         return;
     }
@@ -138,7 +154,10 @@ pub fn mark_irp_pending(irp: *mut Irp) {
     }
 }
 
-pub fn is_irp_pending(irp: *mut Irp) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn is_irp_pending(irp: *mut Irp) -> bool {
     if irp.is_null() {
         return false;
     }
@@ -146,7 +165,10 @@ pub fn is_irp_pending(irp: *mut Irp) -> bool {
     unsafe { (*irp).pending_returned != 0 }
 }
 
-pub fn init_stack_location(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn init_stack_location(
     stack: *mut IoStackLocation,
     major_function: u8,
     minor_function: u8,
@@ -241,7 +263,12 @@ pub fn build_device_io_control_irp(
     irp
 }
 
-pub fn get_read_write_parameters(stack: *const IoStackLocation) -> Option<(*mut u8, u32, u64)> {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn get_read_write_parameters(
+    stack: *const IoStackLocation,
+) -> Option<(*mut u8, u32, u64)> {
     if stack.is_null() {
         return None;
     }
@@ -257,7 +284,10 @@ pub fn get_read_write_parameters(stack: *const IoStackLocation) -> Option<(*mut 
     }
 }
 
-pub fn set_read_write_parameters(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn set_read_write_parameters(
     stack: *mut IoStackLocation,
     buffer: *mut u8,
     length: u32,

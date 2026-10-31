@@ -55,6 +55,12 @@ impl IoStatusBlock {
     }
 }
 
+impl Default for IoStatusBlock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 pub struct IoApc {
     pub apc_type: ApcType,
@@ -238,7 +244,7 @@ pub fn has_user_apcs(thread_id: u64) -> bool {
     queues
         .iter()
         .find(|q| q.thread_id == thread_id)
-        .map_or(false, |q| q.has_user_apcs())
+        .is_some_and(|q| q.has_user_apcs())
 }
 
 pub fn has_kernel_apcs(thread_id: u64) -> bool {
@@ -246,7 +252,7 @@ pub fn has_kernel_apcs(thread_id: u64) -> bool {
     queues
         .iter()
         .find(|q| q.thread_id == thread_id)
-        .map_or(false, |q| q.has_kernel_apcs())
+        .is_some_and(|q| q.has_kernel_apcs())
 }
 
 pub fn clear_thread_apcs(thread_id: u64) {

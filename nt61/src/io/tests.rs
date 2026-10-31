@@ -38,11 +38,13 @@ mod tests {
 
         let driver = crate::io::allocate_driver(b"\\Driver\\TestDriverName");
         assert!(!driver.is_null());
-        let device = crate::io::create_device(
-            driver,
-            crate::io::DeviceType::Unknown,
-            b"\\Device\\TestDevice",
-        );
+        let device = unsafe {
+            crate::io::create_device(
+                driver,
+                crate::io::DeviceType::Unknown,
+                b"\\Device\\TestDevice",
+            )
+        };
         assert!(!device.is_null());
 
         unsafe {
@@ -178,29 +180,31 @@ fn test_irp_allocation() -> bool {
 }
 
 fn test_irp_stack_location() -> bool {
-    let irp = crate::io::allocate_irp(3);
-    if irp.is_null() {
-        return false;
-    }
+    unsafe {
+        let irp = crate::io::allocate_irp(3);
+        if irp.is_null() {
+            return false;
+        }
 
-    // Get current stack location
-    let stack_loc = crate::io::irp_stack::get_current_stack_location(irp);
-    if stack_loc.is_null() {
+        // Get current stack location
+        let stack_loc = crate::io::irp_stack::get_current_stack_location(irp);
+        if stack_loc.is_null() {
+            crate::io::free_irp(irp);
+            return false;
+        }
+
+        // Get next stack location
+        let next_stack = crate::io::irp_stack::get_next_stack_location(irp);
+        if next_stack.is_null() {
+            crate::io::free_irp(irp);
+            return false;
+        }
+
+        crate::boot_println!("    IRP stack locations: OK");
         crate::io::free_irp(irp);
-        return false;
+
+        true
     }
-
-    // Get next stack location
-    let next_stack = crate::io::irp_stack::get_next_stack_location(irp);
-    if next_stack.is_null() {
-        crate::io::free_irp(irp);
-        return false;
-    }
-
-    crate::boot_println!("    IRP stack locations: OK");
-    crate::io::free_irp(irp);
-
-    true
 }
 
 fn test_irp_skip_stack_location_boundary() -> bool {
@@ -214,10 +218,12 @@ fn test_irp_skip_stack_location_boundary() -> bool {
 
         // Skip down one slot at a time and confirm each skip advances
         // the pointer towards the bottom of the IRP allocation.
-        while (*irp).current_location > 1 {
+        let mut current_location = (*irp).current_location;
+        while current_location > 1 {
             let stack_before = (*irp).current_stack;
             let location_before = (*irp).current_location;
             crate::io::irp_stack::skip_current_stack_location(irp);
+            current_location = (*irp).current_location;
             if (*irp).current_stack == stack_before || (*irp).current_location >= location_before {
                 ok = false;
                 break;
@@ -247,53 +253,57 @@ fn test_irp_skip_stack_location_boundary() -> bool {
 }
 
 fn test_irp_completion() -> bool {
-    let irp = crate::io::allocate_irp(1);
-    if irp.is_null() {
-        return false;
-    }
+    unsafe {
+        let irp = crate::io::allocate_irp(1);
+        if irp.is_null() {
+            return false;
+        }
 
-    // Set completion status
-    let status = 0i32; // STATUS_SUCCESS
-    crate::io::complete_irp(irp, status, 0);
+        // Set completion status
+        let status = 0i32; // STATUS_SUCCESS
+        crate::io::complete_irp(irp, status, 0);
 
-    let completed_status = unsafe { (*irp).io_status.status };
-    if completed_status != status as u32 {
+        let completed_status = (*irp).io_status.status;
+        if completed_status != status as u32 {
+            crate::io::free_irp(irp);
+            return false;
+        }
+
+        crate::boot_println!("    IRP completed with status: 0x{:x}", status);
         crate::io::free_irp(irp);
-        return false;
+
+        true
     }
-
-    crate::boot_println!("    IRP completed with status: 0x{:x}", status);
-    crate::io::free_irp(irp);
-
-    true
 }
 
 fn test_irp_cancellation() -> bool {
-    let irp = crate::io::allocate_irp(1);
-    if irp.is_null() {
-        return false;
-    }
+    unsafe {
+        let irp = crate::io::allocate_irp(1);
+        if irp.is_null() {
+            return false;
+        }
 
-    // Not cancelled yet
-    if crate::io::irp_is_cancelled(irp) {
+        // Not cancelled yet
+        if crate::io::irp_is_cancelled(irp) {
+            crate::io::free_irp(irp);
+            return false;
+        }
+
+        // Cancel the IRP
+        if !crate::io::cancel_irp(irp) {
+            crate::io::free_irp(irp);
+            return false;
+        }
+
+        if !crate::io::irp_is_cancelled(irp) {
+            crate::io::free_irp(irp);
+            return false;
+        }
+
         crate::io::free_irp(irp);
-        return false;
+
+        true
     }
-
-    // Cancel the IRP
-    if !crate::io::cancel_irp(irp) {
-        crate::io::free_irp(irp);
-        return false;
-    }
-
-    if !crate::io::irp_is_cancelled(irp) {
-        crate::io::free_irp(irp);
-        return false;
-    }
-
-    crate::io::free_irp(irp);
-
-    true
 }
 
 // =============================================================================
@@ -301,19 +311,20 @@ fn test_irp_cancellation() -> bool {
 // =============================================================================
 
 fn test_device_creation() -> bool {
-    let driver = crate::io::allocate_driver(b"\\Driver\\TestDriver");
-    if driver.is_null() {
-        return false;
-    }
-
-    let device_name = b"\\Device\\TestDevice";
-    let device_ptr = crate::io::create_device(driver, crate::io::DeviceType::Unknown, device_name);
-
-    if device_ptr.is_null() {
-        return false;
-    }
-
     unsafe {
+        let driver = crate::io::allocate_driver(b"\\Driver\\TestDriver");
+        if driver.is_null() {
+            return false;
+        }
+
+        let device_name = b"\\Device\\TestDevice";
+        let device_ptr =
+            crate::io::create_device(driver, crate::io::DeviceType::Unknown, device_name);
+
+        if device_ptr.is_null() {
+            return false;
+        }
+
         if (*device_ptr).device_type as u32 != crate::io::DeviceType::Unknown as u32 {
             return false;
         }
@@ -328,25 +339,26 @@ fn test_device_creation() -> bool {
             return false;
         }
         crate::boot_println!("    Created device at {:p}", device_ptr);
-    }
 
-    true
+        true
+    }
 }
 
 fn test_device_lookup() -> bool {
-    let driver = crate::io::allocate_driver(b"\\Driver\\TestLookupDriver");
-    if driver.is_null() {
-        return false;
-    }
-
-    let device_name = b"\\Device\\TestLookup";
-    let device_ptr = crate::io::create_device(driver, crate::io::DeviceType::Unknown, device_name);
-
-    if device_ptr.is_null() {
-        return false;
-    }
-
     unsafe {
+        let driver = crate::io::allocate_driver(b"\\Driver\\TestLookupDriver");
+        if driver.is_null() {
+            return false;
+        }
+
+        let device_name = b"\\Device\\TestLookup";
+        let device_ptr =
+            crate::io::create_device(driver, crate::io::DeviceType::Unknown, device_name);
+
+        if device_ptr.is_null() {
+            return false;
+        }
+
         let header = crate::ob::lookup_object(device_name);
         if header.is_null() {
             // Object manager not initialised (early boot): the driver
@@ -358,33 +370,33 @@ fn test_device_lookup() -> bool {
 }
 
 fn test_device_deletion() -> bool {
-    let driver = crate::io::allocate_driver(b"\\Driver\\TestDeleteDriver");
-    if driver.is_null() {
-        return false;
-    }
-
-    let device_ptr = crate::io::create_device(
-        driver,
-        crate::io::DeviceType::Unknown,
-        b"\\Device\\TestDelete",
-    );
-    if device_ptr.is_null() {
-        return false;
-    }
-
-    // There is no IoDeleteDevice equivalent in this tree; the implemented
-    // removal path is the PnP state machine, which ends in `Deleted`.
-    if !crate::io::pnp_remove_device(device_ptr) {
-        return false;
-    }
-
     unsafe {
+        let driver = crate::io::allocate_driver(b"\\Driver\\TestDeleteDriver");
+        if driver.is_null() {
+            return false;
+        }
+
+        let device_ptr = crate::io::create_device(
+            driver,
+            crate::io::DeviceType::Unknown,
+            b"\\Device\\TestDelete",
+        );
+        if device_ptr.is_null() {
+            return false;
+        }
+
+        // There is no IoDeleteDevice equivalent in this tree; the implemented
+        // removal path is the PnP state machine, which ends in `Deleted`.
+        if !crate::io::pnp_remove_device(device_ptr) {
+            return false;
+        }
+
         if (*device_ptr).pnp_state != crate::io::DevicePnPState::Deleted {
             return false;
         }
-    }
 
-    true
+        true
+    }
 }
 
 // =============================================================================
@@ -415,7 +427,7 @@ fn test_driver_registration() -> bool {
         return false;
     }
 
-    if !crate::io::register_driver(driver_ptr) {
+    if !unsafe { crate::io::register_driver(driver_ptr) } {
         return false;
     }
 
@@ -489,40 +501,40 @@ fn test_driver_dispatch() -> bool {
 // =============================================================================
 
 fn test_device_queue_init() -> bool {
-    let driver = crate::io::allocate_driver(b"\\Driver\\TestQueueDriver");
-    if driver.is_null() {
-        return false;
-    }
-
-    let device = crate::io::create_device(driver, crate::io::DeviceType::Unknown, b"");
-    if device.is_null() {
-        return false;
-    }
-
     unsafe {
+        let driver = crate::io::allocate_driver(b"\\Driver\\TestQueueDriver");
+        if driver.is_null() {
+            return false;
+        }
+
+        let device = crate::io::create_device(driver, crate::io::DeviceType::Unknown, b"");
+        if device.is_null() {
+            return false;
+        }
+
         if !(*device).device_queue.is_empty() {
             return false;
         }
-    }
 
-    crate::boot_println!("    Device queue initialized");
-    true
+        crate::boot_println!("    Device queue initialized");
+        true
+    }
 }
 
 fn test_device_queue_insert() -> bool {
-    let driver = crate::io::allocate_driver(b"\\Driver\\TestQueueInsertDriver");
-    if driver.is_null() {
-        return false;
-    }
-
-    let device = crate::io::create_device(driver, crate::io::DeviceType::Unknown, b"");
-    let irp_ptr = crate::io::allocate_irp(1);
-
-    if device.is_null() || irp_ptr.is_null() {
-        return false;
-    }
-
     unsafe {
+        let driver = crate::io::allocate_driver(b"\\Driver\\TestQueueInsertDriver");
+        if driver.is_null() {
+            return false;
+        }
+
+        let device = crate::io::create_device(driver, crate::io::DeviceType::Unknown, b"");
+        let irp_ptr = crate::io::allocate_irp(1);
+
+        if device.is_null() || irp_ptr.is_null() {
+            return false;
+        }
+
         // Manual DEVICE_QUEUE insert: link the IRP entry into the head.
         let head = &mut (*device).device_queue;
         let entry = &mut (*irp_ptr).thread_list_entry;
@@ -533,53 +545,55 @@ fn test_device_queue_insert() -> bool {
             crate::io::free_irp(irp_ptr);
             return false;
         }
-        if entry.flink == head as *mut crate::io::ListEntry {
+        if core::ptr::eq(entry.flink, head) {
             crate::io::free_irp(irp_ptr);
             return false;
         }
         crate::boot_println!("    Inserted IRP into queue");
-    }
 
-    crate::io::free_irp(irp_ptr);
-    true
+        crate::io::free_irp(irp_ptr);
+        true
+    }
 }
 
 fn test_device_queue_remove() -> bool {
-    let driver = crate::io::allocate_driver(b"\\Driver\\TestQueueRemoveDriver");
-    if driver.is_null() {
-        return false;
-    }
+    unsafe {
+        let driver = crate::io::allocate_driver(b"\\Driver\\TestQueueRemoveDriver");
+        if driver.is_null() {
+            return false;
+        }
 
-    let device = crate::io::create_device(driver, crate::io::DeviceType::Unknown, b"");
-    let irp_ptr = crate::io::allocate_irp(1);
+        let device = crate::io::create_device(driver, crate::io::DeviceType::Unknown, b"");
+        let irp_ptr = crate::io::allocate_irp(1);
 
-    if device.is_null() || irp_ptr.is_null() {
-        return false;
-    }
+        if device.is_null() || irp_ptr.is_null() {
+            return false;
+        }
 
-    let head = unsafe { &mut (*device).device_queue };
-    let entry = unsafe { &mut (*irp_ptr).thread_list_entry };
-    entry.flink = head;
-    entry.blink = head;
-    head.flink = entry;
-    head.blink = entry;
+        let head = &mut (*device).device_queue;
+        let entry = &mut (*irp_ptr).thread_list_entry;
+        entry.flink = head;
+        entry.blink = head;
+        head.flink = entry;
+        head.blink = entry;
 
-    let removed = head.flink;
-    if removed.is_null() || removed != entry {
+        let removed = head.flink;
+        if removed.is_null() || removed != entry {
+            crate::io::free_irp(irp_ptr);
+            return false;
+        }
+
+        // Unlink: the head becomes empty again.
+        head.flink = head;
+        head.blink = head;
+        if !head.is_empty() {
+            crate::io::free_irp(irp_ptr);
+            return false;
+        }
+
         crate::io::free_irp(irp_ptr);
-        return false;
+        true
     }
-
-    // Unlink: the head becomes empty again.
-    head.flink = head;
-    head.blink = head;
-    if !head.is_empty() {
-        crate::io::free_irp(irp_ptr);
-        return false;
-    }
-
-    crate::io::free_irp(irp_ptr);
-    true
 }
 
 // =============================================================================

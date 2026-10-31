@@ -9,9 +9,9 @@
 //!   * **VPB table** — Volume Parameter Blocks for mounted filesystems.
 //!   * **I/O system counters** — bytes read/written, IRPs processed.
 //
-//! The smoke test creates a dummy driver, attaches a dummy device,
-//! allocates an IRP, routes it through the driver stack, and
-//! completes it.
+//!     The smoke test creates a dummy driver, attaches a dummy device,
+//!     allocates an IRP, routes it through the driver stack, and
+//!     completes it.
 
 // I/O manager uses NT-driver naming (IRP, IRP_MJ_*, IO_*, ...).
 
@@ -265,6 +265,12 @@ impl ListEntry {
     }
 }
 
+impl Default for ListEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // IRP
 // ---------------------------------------------------------------------------
@@ -337,6 +343,12 @@ impl Irp {
     }
 }
 
+impl Default for Irp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone)]
 pub struct IoStatusBlock {
@@ -350,6 +362,12 @@ impl IoStatusBlock {
             status: 0,
             information: 0,
         }
+    }
+}
+
+impl Default for IoStatusBlock {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -429,6 +447,12 @@ impl IoStackLocation {
     }
 }
 
+impl Default for IoStackLocation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone)]
 pub struct FileObject {
@@ -453,6 +477,12 @@ impl FileObject {
     }
 }
 
+impl Default for FileObject {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct UnicodeString {
@@ -468,6 +498,12 @@ impl UnicodeString {
             maximum_length: 0,
             buffer: null_mut(),
         }
+    }
+}
+
+impl Default for UnicodeString {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -558,6 +594,12 @@ impl DeviceObject {
     }
 }
 
+impl Default for DeviceObject {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Driver object
 // ---------------------------------------------------------------------------
@@ -598,6 +640,12 @@ impl DriverObject {
             driver_unload: None,
             major_functions: [None; 28],
         }
+    }
+}
+
+impl Default for DriverObject {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -643,6 +691,12 @@ impl Vpb {
     }
 }
 
+impl Default for Vpb {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// internal VPB table entry wrapper (used only as a storage slot marker).
 pub struct VpbEntry {
     pub vpb: Vpb,
@@ -677,8 +731,11 @@ pub fn allocate_vpb() -> *mut Vpb {
     raw
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Free a VPB.
-pub fn free_vpb(vpb: *mut Vpb) {
+pub unsafe fn free_vpb(vpb: *mut Vpb) {
     if vpb.is_null() {
         return;
     }
@@ -692,8 +749,11 @@ pub fn free_vpb(vpb: *mut Vpb) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Reference a VPB (increment reference count).
-pub fn reference_vpb(vpb: *mut Vpb) {
+pub unsafe fn reference_vpb(vpb: *mut Vpb) {
     if !vpb.is_null() {
         unsafe {
             (*vpb).ref_count.fetch_add(1, Ordering::Acquire);
@@ -701,8 +761,11 @@ pub fn reference_vpb(vpb: *mut Vpb) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Attach a VPB to a device object.
-pub fn attach_vpb(device: *mut DeviceObject, vpb: *mut Vpb) {
+pub unsafe fn attach_vpb(device: *mut DeviceObject, vpb: *mut Vpb) {
     if !device.is_null() && !vpb.is_null() {
         unsafe {
             (*device).vpb = vpb;
@@ -711,8 +774,11 @@ pub fn attach_vpb(device: *mut DeviceObject, vpb: *mut Vpb) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Detach a VPB from a device object.
-pub fn detach_vpb(device: *mut DeviceObject) -> *mut Vpb {
+pub unsafe fn detach_vpb(device: *mut DeviceObject) -> *mut Vpb {
     if device.is_null() {
         return null_mut();
     }
@@ -723,8 +789,11 @@ pub fn detach_vpb(device: *mut DeviceObject) -> *mut Vpb {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Mark a volume as mounted in the VPB.
-pub fn mark_vpb_mounted(vpb: *mut Vpb, fs_name: &[u8]) {
+pub unsafe fn mark_vpb_mounted(vpb: *mut Vpb, fs_name: &[u8]) {
     if !vpb.is_null() {
         unsafe {
             (*vpb).flags |= vpb_flags::MOUNTED;
@@ -735,8 +804,11 @@ pub fn mark_vpb_mounted(vpb: *mut Vpb, fs_name: &[u8]) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if a VPB volume is mounted.
-pub fn is_vpb_mounted(vpb: *mut Vpb) -> bool {
+pub unsafe fn is_vpb_mounted(vpb: *mut Vpb) -> bool {
     if vpb.is_null() {
         return false;
     }
@@ -747,11 +819,17 @@ pub fn is_vpb_mounted(vpb: *mut Vpb) -> bool {
 // Public API
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// io_call_driver - Pass an IRP to the next lower driver
-pub fn io_call_driver(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
+pub unsafe fn io_call_driver(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     unsafe { dispatch::dispatch_irp(device, irp) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Invoke the completion routines registered on the IRP's stack locations,
 /// walking the driver stack from the lowest slot upward the way NT does as
 /// an IRP unwinds. Each routine is taken out of the stack location before
@@ -794,6 +872,9 @@ unsafe fn invoke_completion_routines(irp: *mut Irp) -> bool {
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// io_complete_request - Complete an IRP
 ///
 /// Runs registered completion routines, updates statistics, delivers the
@@ -811,7 +892,7 @@ unsafe fn invoke_completion_routines(irp: *mut Irp) -> bool {
 ///
 /// # Completion notification (APC)
 ///
-pub fn io_complete_request(irp: *mut Irp, priority_boost: i32) {
+pub unsafe fn io_complete_request(irp: *mut Irp, priority_boost: i32) {
     let _ = priority_boost;
     if irp.is_null() {
         return;
@@ -834,10 +915,9 @@ pub fn io_complete_request(irp: *mut Irp, priority_boost: i32) {
         // pass its thread id, which the current file syscall path
         // does not track yet.
         if (*irp).requestor_mode == 1 && (*irp).overlapped != 0 {
-            let thread_id = crate::ke::scheduler::with_current_thread(|t| {
-                t.client_id.unique_thread
-            })
-            .unwrap_or(0);
+            let thread_id =
+                crate::ke::scheduler::with_current_thread(|t| t.client_id.unique_thread)
+                    .unwrap_or(0);
             let _ = crate::io::apc::insert_io_apc(
                 thread_id,
                 crate::io::apc::ApcMode::KernelMode,
@@ -931,19 +1011,24 @@ pub fn allocate_irp(stack_locations: u8) -> *mut Irp {
 /// Free an IRP back to the non-paged pool.
 /// This properly deallocates the IRP and its stack locations.
 pub fn free_irp(irp: *mut Irp) {
-    if irp.is_null() {
-        return;
+    unsafe {
+        if irp.is_null() {
+            return;
+        }
+
+        // Free the memory back to the pool
+        let raw = irp as *mut u8;
+        let _ = pool::free(raw);
+
+        IO_STATS.lock().irps_completed += 1;
     }
-
-    // Free the memory back to the pool
-    let raw = irp as *mut u8;
-    let _ = pool::free(raw);
-
-    IO_STATS.lock().irps_completed += 1;
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Complete an IRP with the given status. Updates the I/O stats.
-pub fn complete_irp(irp: *mut Irp, status: i32, information: usize) {
+pub unsafe fn complete_irp(irp: *mut Irp, status: i32, information: usize) {
     unsafe {
         (*irp).io_status.status = status as u32;
         (*irp).io_status.information = information;
@@ -994,8 +1079,11 @@ pub fn allocate_driver(name: &[u8]) -> *mut DriverObject {
     raw
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Register a driver in the global list and the object manager namespace.
-pub fn register_driver(driver: *mut DriverObject) -> bool {
+pub unsafe fn register_driver(driver: *mut DriverObject) -> bool {
     if driver.is_null() {
         return false;
     }
@@ -1123,9 +1211,12 @@ fn register_driver_in_object_manager(driver: *mut DriverObject, driver_name: &[u
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// create a device object and attach it to a driver.
 /// This also registers the device in the object manager namespace.
-pub fn create_device(
+pub unsafe fn create_device(
     driver: *mut DriverObject,
     device_type: DeviceType,
     device_name: &[u8],
@@ -1174,7 +1265,7 @@ pub fn create_device(
 
     // Register the device in the object manager namespace
     // Skip registration if OB is not initialized yet (during early boot)
-    if device_name.len() > 0 && !device_name.iter().all(|&b| b == 0) {
+    if !device_name.is_empty() && !device_name.iter().all(|&b| b == 0) {
         register_device_in_object_manager(raw, device_name);
     }
 
@@ -1226,8 +1317,11 @@ fn register_device_in_object_manager(device: *mut DeviceObject, device_name: &[u
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Attach one device above another.
-pub fn attach_device(above: *mut DeviceObject, below: *mut DeviceObject) {
+pub unsafe fn attach_device(above: *mut DeviceObject, below: *mut DeviceObject) {
     unsafe {
         (*above).attached_device = below;
         (*below).attached_to = Some(above);
@@ -1248,6 +1342,7 @@ pub fn io_stats() -> IoStatsSnapshot {
     }
 }
 
+#[derive(Default)]
 pub struct IoStatsSnapshot {
     pub irps_allocated: u64,
     pub irps_completed: u64,
@@ -1258,58 +1353,45 @@ pub struct IoStatsSnapshot {
     pub writes: u64,
 }
 
-impl Default for IoStatsSnapshot {
-    fn default() -> Self {
-        Self {
-            irps_allocated: 0,
-            irps_completed: 0,
-            irps_cancelled: 0,
-            bytes_read: 0,
-            bytes_written: 0,
-            reads: 0,
-            writes: 0,
-        }
-    }
-}
-
 /// Initialize the I/O manager.
 pub fn init() {
-    {
-        let mut s = IO_STATS.lock();
-        s.irps_allocated = 0;
-        s.irps_completed = 0;
-        s.irps_cancelled = 0;
-        s.bytes_read = 0;
-        s.bytes_written = 0;
-        s.reads = 0;
-        s.writes = 0;
-    }
-    // create NULL device driver for bootstrap
-    let null_driver = allocate_driver(b"\\Driver\\Null");
-    if !null_driver.is_null() {
-        unsafe {
-            // Set up default major function handlers
-            (*null_driver).major_functions[major::IRP_MJ_CREATE as usize] =
-                Some(null_create_dispatch);
-            (*null_driver).major_functions[major::IRP_MJ_CLOSE as usize] =
-                Some(null_close_dispatch);
-            (*null_driver).major_functions[major::IRP_MJ_READ as usize] = Some(null_read_dispatch);
-            (*null_driver).major_functions[major::IRP_MJ_WRITE as usize] =
-                Some(null_write_dispatch);
-
-            // create the NULL device
-            let null_device = create_device(null_driver, DeviceType::Null, b"\\Device\\Null");
-            if !null_device.is_null() {
-                // // kprintln!("      NULL device created");
-            }
+    unsafe {
+        {
+            let mut s = IO_STATS.lock();
+            s.irps_allocated = 0;
+            s.irps_completed = 0;
+            s.irps_cancelled = 0;
+            s.bytes_read = 0;
+            s.bytes_written = 0;
+            s.reads = 0;
+            s.writes = 0;
         }
-        register_driver(null_driver);
-    }
+        // create NULL device driver for bootstrap
+        let null_driver = allocate_driver(b"\\Driver\\Null");
+        if !null_driver.is_null() {
+            unsafe {
+                // Set up default major function handlers
+                (*null_driver).major_functions[major::IRP_MJ_CREATE as usize] =
+                    Some(null_create_dispatch);
+                (*null_driver).major_functions[major::IRP_MJ_CLOSE as usize] =
+                    Some(null_close_dispatch);
+                (*null_driver).major_functions[major::IRP_MJ_READ as usize] =
+                    Some(null_read_dispatch);
+                (*null_driver).major_functions[major::IRP_MJ_WRITE as usize] =
+                    Some(null_write_dispatch);
 
-    // create filesystem device driver (placeholder for FAT32/NTFS)
-    let fs_driver = allocate_driver(b"\\FileSystem\\Ntfs");
-    if !fs_driver.is_null() {
-        unsafe {
+                // create the NULL device
+                let null_device = create_device(null_driver, DeviceType::Null, b"\\Device\\Null");
+                if !null_device.is_null() {
+                    // // kprintln!("      NULL device created");
+                }
+            }
+            register_driver(null_driver);
+        }
+
+        // create filesystem device driver (placeholder for FAT32/NTFS)
+        let fs_driver = allocate_driver(b"\\FileSystem\\Ntfs");
+        if !fs_driver.is_null() {
             // Set up filesystem major function handlers
             (*fs_driver).major_functions[major::IRP_MJ_CREATE as usize] = Some(fs_create_dispatch);
             (*fs_driver).major_functions[major::IRP_MJ_CLOSE as usize] = Some(fs_close_dispatch);
@@ -1327,35 +1409,36 @@ pub fn init() {
             if !fs_device.is_null() {
                 // // kprintln!("      Filesystem device created");
             }
+
+            register_driver(fs_driver);
         }
-        register_driver(fs_driver);
-    }
 
-    // Driver loader registry: give the bootstrap drivers service start
-    // types and run the boot/system loading waves, so `load_driver` and
-    // the `load_*_start_drivers` entry points have a live registry to
-    // work with instead of an empty table.
-    driver_loader::init();
-    if !null_driver.is_null() {
-        driver_loader::register_start_type_driver(
-            null_driver,
-            driver_loader::ServiceStartType::BootStart,
-        );
-    }
-    if !fs_driver.is_null() {
-        driver_loader::register_start_type_driver(
-            fs_driver,
-            driver_loader::ServiceStartType::SystemStart,
-        );
-    }
-    driver_loader::load_boot_start_drivers();
-    driver_loader::load_system_start_drivers();
+        // Driver loader registry: give the bootstrap drivers service start
+        // types and run the boot/system loading waves, so `load_driver` and
+        // the `load_*_start_drivers` entry points have a live registry to
+        // work with instead of an empty table.
+        driver_loader::init();
+        if !null_driver.is_null() {
+            driver_loader::register_start_type_driver(
+                null_driver,
+                driver_loader::ServiceStartType::BootStart,
+            );
+        }
+        if !fs_driver.is_null() {
+            driver_loader::register_start_type_driver(
+                fs_driver,
+                driver_loader::ServiceStartType::SystemStart,
+            );
+        }
+        driver_loader::load_boot_start_drivers();
+        driver_loader::load_system_start_drivers();
 
-    // // kprintln!("    I/O Manager: initialized");
-    // // kprintln!(
-    // //         "      drivers_max={} devices_max={} vpb_max={} irp_pool={}",
-    // //         MAX_DRIVERS, MAX_DEVICES, MAX_VPBS, MAX_IRP_POOL
-    // //     );
+        // // kprintln!("    I/O Manager: initialized");
+        // // kprintln!(
+        // //         "      drivers_max={} devices_max={} vpb_max={} irp_pool={}",
+        // //         MAX_DRIVERS, MAX_DEVICES, MAX_VPBS, MAX_IRP_POOL
+        // //     );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1368,6 +1451,9 @@ use crate::libs::ntdll::status::{
     STATUS_OBJECT_NAME_NOT_FOUND, STATUS_SUCCESS,
 };
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Default NULL device dispatch for IRP_MJ_CREATE
 unsafe extern "C" fn null_create_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
@@ -1378,6 +1464,9 @@ unsafe extern "C" fn null_create_dispatch(_device: *mut DeviceObject, irp: *mut 
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Default NULL device dispatch for IRP_MJ_CLOSE
 unsafe extern "C" fn null_close_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
@@ -1388,6 +1477,9 @@ unsafe extern "C" fn null_close_dispatch(_device: *mut DeviceObject, irp: *mut I
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Default NULL device dispatch for IRP_MJ_READ
 unsafe extern "C" fn null_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
@@ -1399,6 +1491,9 @@ unsafe extern "C" fn null_read_dispatch(_device: *mut DeviceObject, irp: *mut Ir
     STATUS_END_OF_FILE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Default NULL device dispatch for IRP_MJ_WRITE
 unsafe extern "C" fn null_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if !irp.is_null() {
@@ -1424,6 +1519,9 @@ unsafe extern "C" fn null_write_dispatch(_device: *mut DeviceObject, irp: *mut I
 /// coupling work; until then the registry is one entry per open).
 static OPEN_FILE_OBJECTS: Spinlock<Vec<*mut FileObject>> = Spinlock::new(Vec::new());
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_CREATE dispatch for filesystem devices.
 /// Opens or creates a file on the filesystem.
 ///
@@ -1442,7 +1540,7 @@ static OPEN_FILE_OBJECTS: Spinlock<Vec<*mut FileObject>> = Spinlock::new(Vec::ne
 /// create-capable dispositions create the missing file or directory.
 unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     let stack = (*irp).current_stack;
@@ -1477,7 +1575,7 @@ unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp
             (*irp).io_status.status = STATUS_NO_MEMORY as u32;
             (*irp).io_status.information = 0;
             io_complete_request(irp, 0);
-            return STATUS_NO_MEMORY as i32;
+            return STATUS_NO_MEMORY;
         }
         (allocated, false)
     };
@@ -1530,8 +1628,9 @@ unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp
                 });
                 if created.is_some() {
                     information = 0x02; // FILE_CREATED
-                    fcb_handle = crate::fs::ntfs::get_mounted_fs()
-                        .and_then(|filesystem| crate::fs::ntfs::open_file(filesystem, &units, None));
+                    fcb_handle = crate::fs::ntfs::get_mounted_fs().and_then(|filesystem| {
+                        crate::fs::ntfs::open_file(filesystem, &units, None)
+                    });
                 }
             }
             if fcb_handle.is_none() {
@@ -1581,16 +1680,19 @@ unsafe extern "C" fn fs_create_dispatch(device: *mut DeviceObject, irp: *mut Irp
     status as i32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_READ dispatch for filesystem devices.
 /// Reads data from an open file.
 unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     let stack = (*irp).current_stack;
     if stack.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     // Get the file object to access current byte offset. The CREATE
@@ -1609,7 +1711,7 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
         (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
         (*irp).io_status.information = 0;
         io_complete_request(irp, 0);
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     let params = (*stack).parameters.read_write;
@@ -1633,7 +1735,7 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
         io_complete_request(irp, 0);
-        return STATUS_SUCCESS as i32;
+        return STATUS_SUCCESS;
     }
 
     if !(*file_obj).fcb.is_null() {
@@ -1644,25 +1746,21 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
                 (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
                 (*irp).io_status.information = 0;
                 io_complete_request(irp, 0);
-                return STATUS_INVALID_PARAMETER as i32;
+                return STATUS_INVALID_PARAMETER;
             }
-            let staging = pool::allocate(pool::PoolType::NonPaged, length as usize) as *mut u8;
+            let staging = pool::allocate(pool::PoolType::NonPaged, length as usize);
             if staging.is_null() {
                 (*irp).io_status.status = STATUS_NO_MEMORY as u32;
                 (*irp).io_status.information = 0;
                 io_complete_request(irp, 0);
-                return STATUS_NO_MEMORY as i32;
+                return STATUS_NO_MEMORY;
             }
-            let mut kernel_buffer =
+            let kernel_buffer =
                 unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
             bytes_read = crate::fs::ntfs::get_mounted_fs()
                 .and_then(|filesystem| {
-                    crate::fs::ntfs::read_file(
-                        filesystem,
-                        unsafe { &mut *handle },
-                        &mut kernel_buffer,
-                    )
-                    .ok()
+                    crate::fs::ntfs::read_file(filesystem, unsafe { &mut *handle }, kernel_buffer)
+                        .ok()
                 })
                 .unwrap_or(0);
             if bytes_read > 0 {
@@ -1671,16 +1769,11 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
             }
             pool::free(staging);
         } else {
-            let mut kernel_buffer =
-                unsafe { core::slice::from_raw_parts_mut(buffer, length as usize) };
+            let kernel_buffer = unsafe { core::slice::from_raw_parts_mut(buffer, length as usize) };
             bytes_read = crate::fs::ntfs::get_mounted_fs()
                 .and_then(|filesystem| {
-                    crate::fs::ntfs::read_file(
-                        filesystem,
-                        unsafe { &mut *handle },
-                        &mut kernel_buffer,
-                    )
-                    .ok()
+                    crate::fs::ntfs::read_file(filesystem, unsafe { &mut *handle }, kernel_buffer)
+                        .ok()
                 })
                 .unwrap_or(0);
         }
@@ -1703,7 +1796,7 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
         (*irp).io_status.status = status as u32;
         (*irp).io_status.information = bytes_read;
         io_complete_request(irp, 0);
-        return status as i32;
+        return status;
     }
 
     // The read buffer may be a user-mode address; user buffers are never
@@ -1713,18 +1806,17 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
             (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
             (*irp).io_status.information = 0;
             io_complete_request(irp, 0);
-            return STATUS_INVALID_PARAMETER as i32;
+            return STATUS_INVALID_PARAMETER;
         }
-        let staging = pool::allocate(pool::PoolType::NonPaged, length as usize) as *mut u8;
+        let staging = pool::allocate(pool::PoolType::NonPaged, length as usize);
         if staging.is_null() {
             (*irp).io_status.status = STATUS_NO_MEMORY as u32;
             (*irp).io_status.information = 0;
             io_complete_request(irp, 0);
-            return STATUS_NO_MEMORY as i32;
+            return STATUS_NO_MEMORY;
         }
-        let mut kernel_buffer =
-            unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
-        let result = crate::fs::vfs::read_file_sectors_into(0, &mut kernel_buffer, byte_offset);
+        let kernel_buffer = unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
+        let result = crate::fs::vfs::read_file_sectors_into(0, kernel_buffer, byte_offset);
         if result.status == 0 && result.bytes_read > 0 {
             let src = unsafe { core::slice::from_raw_parts(staging, result.bytes_read) };
             let _ = crate::mm::user_copy::copy_to_user(buffer as u64, src);
@@ -1732,8 +1824,8 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
         pool::free(staging);
         result
     } else {
-        let mut kernel_buffer = unsafe { core::slice::from_raw_parts_mut(buffer, length as usize) };
-        crate::fs::vfs::read_file_sectors_into(0, &mut kernel_buffer, byte_offset)
+        let kernel_buffer = unsafe { core::slice::from_raw_parts_mut(buffer, length as usize) };
+        crate::fs::vfs::read_file_sectors_into(0, kernel_buffer, byte_offset)
     };
 
     // Update file position if read succeeded
@@ -1754,16 +1846,19 @@ unsafe extern "C" fn fs_read_dispatch(_device: *mut DeviceObject, irp: *mut Irp)
     result.status as i32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_WRITE dispatch for filesystem devices.
 /// Writes data to an open file.
 unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
     if irp.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     let stack = (*irp).current_stack;
     if stack.is_null() {
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     // Get the file object to access current byte offset. The CREATE
@@ -1782,7 +1877,7 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
         (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
         (*irp).io_status.information = 0;
         io_complete_request(irp, 0);
-        return STATUS_INVALID_PARAMETER as i32;
+        return STATUS_INVALID_PARAMETER;
     }
 
     let params = (*stack).parameters.read_write;
@@ -1806,7 +1901,7 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
         (*irp).io_status.status = STATUS_SUCCESS as u32;
         (*irp).io_status.information = 0;
         io_complete_request(irp, 0);
-        return STATUS_SUCCESS as i32;
+        return STATUS_SUCCESS;
     }
 
     // FCB-backed (NTFS) files are written through the mounted filesystem
@@ -1819,19 +1914,19 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
                 (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
                 (*irp).io_status.information = 0;
                 io_complete_request(irp, 0);
-                return STATUS_INVALID_PARAMETER as i32;
+                return STATUS_INVALID_PARAMETER;
             }
-            let staging = pool::allocate(pool::PoolType::NonPaged, length as usize) as *mut u8;
+            let staging = pool::allocate(pool::PoolType::NonPaged, length as usize);
             if staging.is_null() {
                 (*irp).io_status.status = STATUS_NO_MEMORY as u32;
                 (*irp).io_status.information = 0;
                 io_complete_request(irp, 0);
-                return STATUS_NO_MEMORY as i32;
+                return STATUS_NO_MEMORY;
             }
             {
-                let mut kernel_buffer =
+                let kernel_buffer =
                     unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
-                let _ = crate::mm::user_copy::copy_from_user(&mut kernel_buffer, buffer as u64);
+                let _ = crate::mm::user_copy::copy_from_user(kernel_buffer, buffer as u64);
             }
             let kernel_buffer = unsafe { core::slice::from_raw_parts(staging, length as usize) };
             bytes_written = crate::fs::ntfs::get_mounted_fs()
@@ -1867,7 +1962,7 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
         (*irp).io_status.status = status as u32;
         (*irp).io_status.information = bytes_written;
         io_complete_request(irp, 0);
-        return status as i32;
+        return status;
     }
 
     // The write buffer may be a user-mode address; user buffers are never
@@ -1877,19 +1972,19 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
             (*irp).io_status.status = STATUS_INVALID_PARAMETER as u32;
             (*irp).io_status.information = 0;
             io_complete_request(irp, 0);
-            return STATUS_INVALID_PARAMETER as i32;
+            return STATUS_INVALID_PARAMETER;
         }
-        let staging = pool::allocate(pool::PoolType::NonPaged, length as usize) as *mut u8;
+        let staging = pool::allocate(pool::PoolType::NonPaged, length as usize);
         if staging.is_null() {
             (*irp).io_status.status = STATUS_NO_MEMORY as u32;
             (*irp).io_status.information = 0;
             io_complete_request(irp, 0);
-            return STATUS_NO_MEMORY as i32;
+            return STATUS_NO_MEMORY;
         }
         {
-            let mut kernel_buffer =
+            let kernel_buffer =
                 unsafe { core::slice::from_raw_parts_mut(staging, length as usize) };
-            let _ = crate::mm::user_copy::copy_from_user(&mut kernel_buffer, buffer as u64);
+            let _ = crate::mm::user_copy::copy_from_user(kernel_buffer, buffer as u64);
         }
         let kernel_buffer = unsafe { core::slice::from_raw_parts(staging, length as usize) };
         let result = crate::fs::vfs::write_file_sectors_from(0, kernel_buffer, byte_offset);
@@ -1918,6 +2013,9 @@ unsafe extern "C" fn fs_write_dispatch(_device: *mut DeviceObject, irp: *mut Irp
     result.status as i32
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_CLOSE dispatch for filesystem devices.
 /// Closes a file handle.
 unsafe extern "C" fn fs_close_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
@@ -1935,9 +2033,12 @@ unsafe extern "C" fn fs_close_dispatch(_device: *mut DeviceObject, irp: *mut Irp
         (*irp).io_status.information = 0;
     }
     io_complete_request(irp, 0);
-    STATUS_SUCCESS as i32
+    STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_CLEANUP dispatch for filesystem devices.
 /// Called when the last handle to a file is being closed.
 unsafe extern "C" fn fs_cleanup_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
@@ -1946,9 +2047,12 @@ unsafe extern "C" fn fs_cleanup_dispatch(_device: *mut DeviceObject, irp: *mut I
         (*irp).io_status.information = 0;
     }
     io_complete_request(irp, 0);
-    STATUS_SUCCESS as i32
+    STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_DEVICE_CONTROL dispatch for filesystem devices.
 /// Handles IOCTL requests from user mode.
 unsafe extern "C" fn fs_device_control_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
@@ -1958,9 +2062,12 @@ unsafe extern "C" fn fs_device_control_dispatch(_device: *mut DeviceObject, irp:
         (*irp).io_status.information = 0;
     }
     io_complete_request(irp, 0);
-    STATUS_INVALID_DEVICE_REQUEST as i32
+    STATUS_INVALID_DEVICE_REQUEST
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_PNP dispatch for filesystem devices.
 /// Handles Plug and Play IRPs.
 unsafe extern "C" fn fs_pnp_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
@@ -2004,9 +2111,12 @@ unsafe extern "C" fn fs_pnp_dispatch(_device: *mut DeviceObject, irp: *mut Irp) 
         (*irp).io_status.information = 0;
     }
     io_complete_request(irp, 0);
-    STATUS_SUCCESS as i32
+    STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// IRP_MJ_POWER dispatch for filesystem devices.
 /// Handles power management IRPs with full minor function dispatch.
 unsafe extern "C" fn fs_power_dispatch(_device: *mut DeviceObject, irp: *mut Irp) -> i32 {
@@ -2044,7 +2154,7 @@ unsafe extern "C" fn fs_power_dispatch(_device: *mut DeviceObject, irp: *mut Irp
         (*irp).io_status.information = 0;
     }
     io_complete_request(irp, 0);
-    STATUS_SUCCESS as i32
+    STATUS_SUCCESS
 }
 
 /// Re-export of the I/O system smoke test. The full
@@ -2081,6 +2191,15 @@ impl PnpEnumerationContext {
     }
 }
 
+impl Default for PnpEnumerationContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Enumerate devices on a bus and start them.
 /// This implements the NT PnP device start sequence:
 /// 1. IRP_MN_QUERY_DEVICE_RELATIONS (BusRelations)
@@ -2089,7 +2208,7 @@ impl PnpEnumerationContext {
 ///
 /// For the bootstrap, this simulates bus enumeration and starts
 /// detected devices.
-pub fn pnp_start_device(device: *mut DeviceObject) -> bool {
+pub unsafe fn pnp_start_device(device: *mut DeviceObject) -> bool {
     if device.is_null() {
         return false;
     }
@@ -2145,9 +2264,12 @@ pub fn pnp_query_device_relations(device: *mut DeviceObject) -> u32 {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// handle device removal.
 /// Transitions the device to the appropriate removal state.
-pub fn pnp_remove_device(device: *mut DeviceObject) -> bool {
+pub unsafe fn pnp_remove_device(device: *mut DeviceObject) -> bool {
     if device.is_null() {
         return false;
     }
@@ -2182,8 +2304,11 @@ pub fn pnp_remove_device(device: *mut DeviceObject) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// handle surprise removal of a device.
-pub fn pnp_surprise_removal(device: *mut DeviceObject) -> bool {
+pub unsafe fn pnp_surprise_removal(device: *mut DeviceObject) -> bool {
     if device.is_null() {
         return false;
     }
@@ -2198,8 +2323,11 @@ pub fn pnp_surprise_removal(device: *mut DeviceObject) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Stop a device (for rebalancing or resource reconfiguration).
-pub fn pnp_stop_device(device: *mut DeviceObject) -> bool {
+pub unsafe fn pnp_stop_device(device: *mut DeviceObject) -> bool {
     if device.is_null() {
         return false;
     }
@@ -2289,9 +2417,12 @@ impl DeviceStack {
         })
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Attach a filter device above another device in the stack.
     /// The filter device will receive IRPs before the target device.
-    pub fn attach_filter_device(&mut self, filter: *mut DeviceObject) -> bool {
+    pub unsafe fn attach_filter_device(&mut self, filter: *mut DeviceObject) -> bool {
         if filter.is_null() {
             return false;
         }
@@ -2314,8 +2445,11 @@ impl DeviceStack {
         true
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Detach a filter device from the stack.
-    pub fn detach_filter_device(&mut self, filter: *mut DeviceObject) -> bool {
+    pub unsafe fn detach_filter_device(&mut self, filter: *mut DeviceObject) -> bool {
         if filter.is_null() {
             return false;
         }
@@ -2495,6 +2629,9 @@ impl FastIoDispatch {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Default Fast I/O check handler.
 /// Returns true if fast I/O is possible for the given parameters.
 unsafe extern "C" fn fast_io_check_if_possible_impl(
@@ -2511,6 +2648,9 @@ unsafe extern "C" fn fast_io_check_if_possible_impl(
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Default Fast I/O read handler.
 /// This is a stub that returns false, forcing the IRP path.
 /// Real file systems would implement actual reads here.
@@ -2526,6 +2666,9 @@ unsafe extern "C" fn fast_io_read_impl(
     false
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Default Fast I/O write handler.
 /// This is a stub that returns false, forcing the IRP path.
 unsafe extern "C" fn fast_io_write_impl(
@@ -2539,6 +2682,9 @@ unsafe extern "C" fn fast_io_write_impl(
     false
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Default Fast I/O query basic info handler.
 unsafe extern "C" fn fast_io_query_basic_info_impl(
     _device: *mut DeviceObject,
@@ -2548,6 +2694,9 @@ unsafe extern "C" fn fast_io_query_basic_info_impl(
     false
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Default Fast I/O query standard info handler.
 unsafe extern "C" fn fast_io_query_standard_info_impl(
     _device: *mut DeviceObject,
@@ -2573,9 +2722,12 @@ pub enum IrpCancellationState {
     Completed,
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Cancel an IRP that is queued or in progress.
 /// Returns true if the IRP was successfully cancelled.
-pub fn cancel_irp(irp: *mut Irp) -> bool {
+pub unsafe fn cancel_irp(irp: *mut Irp) -> bool {
     if irp.is_null() {
         return false;
     }
@@ -2608,17 +2760,23 @@ pub fn cancel_irp(irp: *mut Irp) -> bool {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if an IRP has been cancelled.
-pub fn irp_is_cancelled(irp: *mut Irp) -> bool {
+pub unsafe fn irp_is_cancelled(irp: *mut Irp) -> bool {
     if irp.is_null() {
         return true;
     }
     unsafe { ((*irp).flags & IRP_CANCEL_INDICATED) != 0 }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Set cancel routine for an IRP.
 /// This is called by the driver to set up cancellation support.
-pub fn set_irp_cancel_routine(
+pub unsafe fn set_irp_cancel_routine(
     irp: *mut Irp,
     cancel_routine: Option<unsafe extern "C" fn(*mut Irp)>,
 ) {
@@ -2695,8 +2853,11 @@ impl DriverDispatchTable {
         Self::default()
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Install this dispatch table into a driver object.
-    pub fn install(&self, driver: *mut DriverObject) {
+    pub unsafe fn install(&self, driver: *mut DriverObject) {
         if driver.is_null() {
             return;
         }
