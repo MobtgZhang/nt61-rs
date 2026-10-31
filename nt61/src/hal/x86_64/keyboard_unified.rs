@@ -14,9 +14,9 @@
 //!   * the 8042 PS/2 controller (ports 0x60/0x64), or
 //!   * a USB HID keyboard behind an xHCI/EHCI/UHCI host controller.
 //
-//! Both of those transports land on a per-keyboard ring buffer.
-//! This module polls both and pushes decoded ASCII bytes into the
-//! shared keyboard ring buffer in `hal::x86_64::keyboard`.
+//!     Both of those transports land on a per-keyboard ring buffer.
+//!     This module polls both and pushes decoded ASCII bytes into the
+//!     shared keyboard ring buffer in `hal::x86_64::keyboard`.
 //
 //! ## Wire format
 //

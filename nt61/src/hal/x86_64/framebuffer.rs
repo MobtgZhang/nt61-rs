@@ -9,11 +9,11 @@
 //!    (80x25, 16 colours, 2 bytes per cell).
 //! 3. The OVMF BOCHS VBE aperture at 0xE0_0000_0000 (1024x768x32).
 //
-//! `init()` prefers the LFB and falls back to the VGA text
-//! buffer if no framebuffer info is supplied. The cross-arch
-//! LFB writer lives in `hal::common::framebuffer_impl`; this
-//! file mirrors its public API and adds the x86_64-only helpers
-//! (VGA text-mode and BOCHS aperture detection) on top.
+//!    `init()` prefers the LFB and falls back to the VGA text
+//!    buffer if no framebuffer info is supplied. The cross-arch
+//!    LFB writer lives in `hal::common::framebuffer_impl`; this
+//!    file mirrors its public API and adds the x86_64-only helpers
+//!    (VGA text-mode and BOCHS aperture detection) on top.
 
 #![cfg(target_arch = "x86_64")]
 
@@ -225,7 +225,7 @@ pub fn set_pixel(x: u32, y: u32, color: u32) {
                 ptr::write_volatile(p as *mut u16, v);
             }
             24 => {
-                ptr::write_volatile(p, (color >> 0) as u8);
+                ptr::write_volatile(p, color as u8);
                 ptr::write_volatile(p.add(1), (color >> 8) as u8);
                 ptr::write_volatile(p.add(2), (color >> 16) as u8);
             }

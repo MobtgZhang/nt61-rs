@@ -46,8 +46,8 @@ pub mod mode {
     pub const MODE_4: u8 = 0b1000;
     pub const MODE_5: u8 = 0b1010;
     /// BCD / binary.
-    pub const BINARY: u8 = 0b0000_0_0_0;
-    pub const BCD: u8 = 0b0000_0_0_1;
+    pub const BINARY: u8 = 0b000_0000;
+    pub const BCD: u8 = 0b000_0001;
 }
 
 /// 8042 keyboard controller / system command port. The speaker
@@ -180,7 +180,7 @@ fn pit2_program(freq: u32) -> u16 {
 /// Returns `true` if the tone was scheduled, `false` if the
 /// supplied arguments were out of range.
 pub fn hal_make_beep(frequency: u32, duration: u32) -> bool {
-    if frequency < 20 || frequency > 20_000 {
+    if !(20..=20_000).contains(&frequency) {
         return false;
     }
     pit2_program(frequency);

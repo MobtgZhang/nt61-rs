@@ -216,72 +216,70 @@ pub fn hal_get_adapter(interface_type: u32, bus_number: u32) -> Option<AdapterIn
 /// backing store; the returned pointer is identity-mapped (i.e.
 /// the same value in kernel virtual and physical address space).
 pub fn hal_allocate_common_buffer(adapter: &AdapterInfo, len: usize) -> Option<(u64, u64)> {
-    if len == 0 {
-        return None;
-    }
-    let aligned = (len + 4095) & !4095;
-
-    // The pool allocator can run arbitrary kernel code; hold the
-    // slot lock only around the table scan, not across the pool call.
-    for slot_index in 0..MAX_BUFFERS {
-        lock_buffers();
-        let slot_free = unsafe { (*BUFFERS.buffers.get())[slot_index].in_use == false };
-        if !slot_free {
-            unlock_buffers();
-            continue;
-        }
-        // Reserve the slot before dropping the lock so two CPUs
-        // racing on the same free slot cannot both claim it.
-        unsafe {
-            (*BUFFERS.buffers.get())[slot_index].in_use = true;
-        }
-        unlock_buffers();
-
-        // First-fit: allocate from the pool. The pool returns
-        // a virtual address; we re-derive the physical one
-        // through `mm::pfn::pfn_to_phys` of the backing PFN.
-        let va = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, aligned);
-        if va.is_null() {
-            // Give the slot back.
-            lock_buffers();
-            unsafe {
-                (*BUFFERS.buffers.get())[slot_index].in_use = false;
-            }
-            unlock_buffers();
+    unsafe {
+        if len == 0 {
             return None;
         }
-        // Translate the pool virtual address into the physical address
-        // the DMA engine programs. The old code assumed the kernel low
-        // mappings were 1:1 (BSP identity map), which produced wrong bus
-        // addresses on any layout where kernel VA space is not mapped
-        // identity. Translation failure is a hard error: guessing an
-        // address would corrupt memory below the device.
-        let phys = match crate::mm::virt_to_phys(va as u64) {
-            Some(p) => p,
-            None => {
-                // Return the slot and the pool allocation instead of
-                // handing out an untranslatable buffer.
-                crate::mm::pool::free(va);
+        let aligned = (len + 4095) & !4095;
+
+        // The pool allocator can run arbitrary kernel code; hold the
+        // slot lock only around the table scan, not across the pool call.
+        for slot_index in 0..MAX_BUFFERS {
+            lock_buffers();
+            let slot_free = unsafe { !(*BUFFERS.buffers.get())[slot_index].in_use };
+            if !slot_free {
+                unlock_buffers();
+                continue;
+            }
+            // Reserve the slot before dropping the lock so two CPUs
+            // racing on the same free slot cannot both claim it.
+            (*BUFFERS.buffers.get())[slot_index].in_use = true;
+
+            unlock_buffers();
+
+            // First-fit: allocate from the pool. The pool returns
+            // a virtual address; we re-derive the physical one
+            // through `mm::pfn::pfn_to_phys` of the backing PFN.
+            let va = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, aligned);
+            if va.is_null() {
+                // Give the slot back.
                 lock_buffers();
-                unsafe {
-                    (*BUFFERS.buffers.get())[slot_index].in_use = false;
-                }
+                (*BUFFERS.buffers.get())[slot_index].in_use = false;
+
                 unlock_buffers();
                 return None;
             }
-        };
-        lock_buffers();
-        unsafe {
+            // Translate the pool virtual address into the physical address
+            // the DMA engine programs. The old code assumed the kernel low
+            // mappings were 1:1 (BSP identity map), which produced wrong bus
+            // addresses on any layout where kernel VA space is not mapped
+            // identity. Translation failure is a hard error: guessing an
+            // address would corrupt memory below the device.
+            let phys = match crate::mm::virt_to_phys(va as u64) {
+                Some(p) => p,
+                None => {
+                    // Return the slot and the pool allocation instead of
+                    // handing out an untranslatable buffer.
+                    crate::mm::pool::free(va);
+                    lock_buffers();
+                    (*BUFFERS.buffers.get())[slot_index].in_use = false;
+
+                    unlock_buffers();
+                    return None;
+                }
+            };
+            lock_buffers();
             let slot = &mut (*BUFFERS.buffers.get())[slot_index];
             slot.phys = phys;
             slot.virt = va as u64;
             slot.size = aligned;
+
+            unlock_buffers();
+            let _ = adapter;
+            return Some((va as u64, phys));
         }
-        unlock_buffers();
-        let _ = adapter;
-        return Some((va as u64, phys));
+        None
     }
-    None
 }
 
 /// Free a buffer previously allocated by `hal_allocate_common_buffer`.
@@ -297,6 +295,7 @@ pub fn hal_free_common_buffer(_adapter: &AdapterInfo, phys: u64, virt: u64, size
             }
         }
     }
+
     unlock_buffers();
     found
 }

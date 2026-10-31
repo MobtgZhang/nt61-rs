@@ -146,6 +146,9 @@ pub fn put_byte(b: u8) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Commit the half-built line into the ring.
 unsafe fn commit_line() {
     let slot = NEXT.load(Ordering::Acquire);

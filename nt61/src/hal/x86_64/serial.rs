@@ -41,7 +41,7 @@ pub fn init_port(port: u16) {
     outb(port + UART_REG_LCR, 0x80);
 
     // Set divisor (baud rate = 115200 / divisor)
-    outb(port + 0, 0x03); // LSB
+    outb(port, 0x03); // LSB
     outb(port + 1, 0x00); // MSB (divisor 3 = 38400 baud)
 
     // 8 bits, no parity, one stop bit
@@ -57,10 +57,10 @@ pub fn init_port(port: u16) {
     outb(port + UART_REG_MCR, 0x1F);
 
     // Check loopback
-    outb(port + 0, 0xAE);
+    outb(port, 0xAE);
 
     // Verify
-    if inb(port + 0) != 0xAE {
+    if inb(port) != 0xAE {
         // Port not responding
         return;
     }
@@ -219,7 +219,7 @@ pub fn write_usize_hex(val: usize) {
     let hex = b"0123456789ABCDEF";
     let bits = core::mem::size_of::<usize>() * 8;
     for i in (0..bits / 4).rev() {
-        write_char(hex[((val >> (i * 4)) & 0xF) as usize]);
+        write_char(hex[(val >> (i * 4)) & 0xF]);
     }
 }
 
@@ -305,5 +305,11 @@ impl SerialConsole {
 
     pub fn flush(&self) {
         // UART auto-flushes
+    }
+}
+
+impl Default for SerialConsole {
+    fn default() -> Self {
+        Self::new()
     }
 }

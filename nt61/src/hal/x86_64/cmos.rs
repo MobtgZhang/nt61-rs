@@ -323,7 +323,7 @@ pub fn hal_set_real_time_clock(time: &TimeFields) -> bool {
 /// not every 100, but every 400).
 pub fn days_from_1601(time: &TimeFields) -> u64 {
     fn is_leap(y: u16) -> bool {
-        (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
+        (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
     }
 
     let mut days: u64 = 0;

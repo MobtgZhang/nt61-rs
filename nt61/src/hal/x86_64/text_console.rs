@@ -18,11 +18,11 @@
 //!   3. The bootvid LFB — drives QEMU `-display gtk` after the
 //!      firmware is done drawing.
 //
-//! All three sinks are gated by [`VGA_READY`]; the byte is dropped
-//! if [`init`] has not been called yet. This is required because
-//! the very first bytes of kernel output are emitted before the
-//! bootvid backend has finished clearing the OVMF "Loading..."
-//! splash on the LFB.
+//!      All three sinks are gated by [`VGA_READY`]; the byte is dropped
+//!      if [`init`] has not been called yet. This is required because
+//!      the very first bytes of kernel output are emitted before the
+//!      bootvid backend has finished clearing the OVMF "Loading..."
+//!      splash on the LFB.
 //
 //! # Why this lives here
 //
@@ -141,6 +141,9 @@ pub fn init() {
     VGA_READY.store(true, Ordering::Release);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Switch the VGA controller to 80×25 16-colour text mode
 /// (VGA "mode 3"). This puts the legacy VGA controller into
 /// the state expected by every DOS / Windows NT 6.1 text
@@ -545,6 +548,9 @@ pub fn set_attr(attr: u8) {
 
 // ---------- Low-level helpers (private to this module) ----------
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write one 16-bit cell (char + attr) at (x, y).
 unsafe fn write_cell(x: usize, y: usize, ch: u8) {
     let off = (y * VGA_COLS + x) * 2;
@@ -554,6 +560,9 @@ unsafe fn write_cell(x: usize, y: usize, ch: u8) {
     core::ptr::write_volatile(p.add(1), attr);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// read the current cursor position from the legacy CRT
 /// controller. Returns (col, row).
 unsafe fn read_cursor() -> (u16, u16) {
@@ -583,6 +592,9 @@ unsafe fn read_cursor() -> (u16, u16) {
     (col, row)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Programmatically move the hardware cursor.
 unsafe fn set_cursor_raw(x: u16, y: u16) {
     let pos = y * VGA_COLS as u16 + x;
@@ -618,6 +630,9 @@ pub fn set_cursor(x: u8, y: u8) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// write one 16-bit cell (char + attr) at (x, y) without
 /// touching the cursor, AND mirror the same glyph into the
 /// bootvid LFB at the corresponding (x, y). Used by
@@ -673,7 +688,7 @@ unsafe fn write_cell_attr(x: usize, y: usize, ch: u8, attr: u8) {
 /// uses so the kernel-side CMD shell can take over without
 /// repainting):
 ///   * row  0  : white-on-blue title bar
-///               " NT6.1.7601 Safe Mode -- Command Prompt "
+///     " NT6.1.7601 Safe Mode -- Command Prompt "
 ///   * row  1  : "Microsoft Windows [Version 6.1.7601]"
 ///   * row  2  : "(C) Copyright (c) 2009 Microsoft Corporation."
 ///   * row  3  : horizontal divider (light-cyan on black).

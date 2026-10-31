@@ -15,11 +15,11 @@
 // HAL PCI helpers follow the WDK naming convention
 // (`PCI_COMMON_HEADER`, `HalGetBusData`, ...).
 //
-//! On OVMF/q35, the MCFG table maps bus 0 at 0xE0000000 and
-//! enumerating 64 buses covers all PCIe traffic.
+//!   On OVMF/q35, the MCFG table maps bus 0 at 0xE0000000 and
+//!   enumerating 64 buses covers all PCIe traffic.
 //
-//! Clean-room implementation. No code is copied from any
-//! Microsoft or ReactOS source file.
+//!   Clean-room implementation. No code is copied from any
+//!   Microsoft or ReactOS source file.
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -683,7 +683,7 @@ pub fn read_bar(dev: &PciDevice, index: u8) -> u64 {
     if index >= 6 {
         return 0;
     }
-    let off = 0x10 + (index as u8) * 4;
+    let off = 0x10 + index * 4;
     let raw = read_config_dword(dev.bus, dev.device, dev.function, off);
     if raw & 1 == 0 {
         if raw & 0x04 != 0 && index < 5 {

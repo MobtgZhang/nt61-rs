@@ -90,9 +90,9 @@ pub fn init(acpi_hpet_phys: u64) -> bool {
     if period_fs == 0 {
         return false;
     }
-    let hz = 1_000_000_000_000_000u64 / period_fs as u64;
+    let hz = 1_000_000_000_000_000u64 / period_fs;
     HPET_FREQ_HZ.store(hz, Ordering::Release);
-    HPET_PERIOD_FS.store(period_fs as u64, Ordering::Release);
+    HPET_PERIOD_FS.store(period_fs, Ordering::Release);
 
     // Enable timer + legacy replacement routing. The legacy bit
     // is only honoured by hardware that advertises it in CAP.

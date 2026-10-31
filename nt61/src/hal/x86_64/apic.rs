@@ -236,7 +236,7 @@ pub fn set_tpr(tpr: u8) {
     if lapic_va() == 0 {
         return;
     }
-    write_lapic(lapic_reg::TPR, (tpr & 0xFF) as u32);
+    write_lapic(lapic_reg::TPR, tpr as u32);
 }
 
 /// read the LAPIC task-priority register (0 when not mapped).

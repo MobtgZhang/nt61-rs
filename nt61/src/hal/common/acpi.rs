@@ -188,6 +188,9 @@ pub fn find_table(signature: &[u8; 4]) -> Option<*const AcpiTableHeader> {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn read_u32(p: *const u8) -> u32 {
     let b0 = ptr::read_volatile(p) as u32;
     let b1 = ptr::read_volatile(p.add(1)) as u32;
@@ -196,6 +199,9 @@ unsafe fn read_u32(p: *const u8) -> u32 {
     b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn read_u64(p: *const u8) -> u64 {
     (read_u32(p.add(4)) as u64) << 32 | (read_u32(p) as u64)
 }
@@ -409,10 +415,7 @@ pub struct McfgEntry {
 /// Returns `None` if MCFG is not available.
 pub fn get_mcfg_info() -> Option<(u64, u8, u8)> {
     let sig: [u8; 4] = *b"MCFG";
-    let hdr = match find_table(&sig) {
-        Some(h) => h,
-        None => return None,
-    };
+    let hdr = find_table(&sig)?;
     unsafe {
         // MCFG header (44 bytes) + variable entries (16 bytes each).
         let len = read_u32((hdr as *const u8).add(4));
@@ -684,23 +687,21 @@ fn parse_madt_locked(header: *const AcpiTableHeader) -> bool {
                                    _bus, _source, _gsi, _flags);
                     }
                 }
-                MADT_ENTRY_LOCAL_APIC_NMI => {
-                    if info.nmi_source_count < MAX_NMI_SOURCES {
-                        let e: MadtLocalApicNmi =
-                            core::ptr::read_unaligned(entry_va as *const MadtLocalApicNmi);
-                        // Copy fields before moving the struct
-                        let _proc_id = e.processor_id;
-                        let _lint = e.local_apic_lint;
-                        let _flags = e.flags;
-                        info.nmi_sources[info.nmi_source_count] = e;
-                        info.nmi_source_count += 1;
-                        acpi_debug!(
-                            "    [acpi] MADT: local APIC NMI: proc={} lint={} flags=0x{:x}",
-                            _proc_id,
-                            _lint,
-                            _flags
-                        );
-                    }
+                MADT_ENTRY_LOCAL_APIC_NMI if info.nmi_source_count < MAX_NMI_SOURCES => {
+                    let e: MadtLocalApicNmi =
+                        core::ptr::read_unaligned(entry_va as *const MadtLocalApicNmi);
+                    // Copy fields before moving the struct
+                    let _proc_id = e.processor_id;
+                    let _lint = e.local_apic_lint;
+                    let _flags = e.flags;
+                    info.nmi_sources[info.nmi_source_count] = e;
+                    info.nmi_source_count += 1;
+                    acpi_debug!(
+                        "    [acpi] MADT: local APIC NMI: proc={} lint={} flags=0x{:x}",
+                        _proc_id,
+                        _lint,
+                        _flags
+                    );
                 }
                 _ => {
                     acpi_debug!("    [acpi] MADT: unknown entry type {}", entry_type);
@@ -1076,21 +1077,19 @@ pub fn parse_srat() -> bool {
                     }
                 }
             }
-            SRAT_ENTRY_MEMORY => {
-                if entry_len >= 32 && info.memory_count < MAX_SRAT_MEMORY_ENTRIES {
-                    let proximity = fadt_read_u32(entry_va, 2);
-                    let base = fadt_read_u64(entry_va, 10);
-                    let len = fadt_read_u64(entry_va, 18);
-                    let flags = fadt_read_u32(entry_va, 30);
-                    if flags & 1 != 0 {
-                        info.memory[info.memory_count] = SratMemory {
-                            proximity_domain: proximity,
-                            base_address: base,
-                            length: len,
-                            flags,
-                        };
-                        info.memory_count += 1;
-                    }
+            SRAT_ENTRY_MEMORY if entry_len >= 32 && info.memory_count < MAX_SRAT_MEMORY_ENTRIES => {
+                let proximity = fadt_read_u32(entry_va, 2);
+                let base = fadt_read_u64(entry_va, 10);
+                let len = fadt_read_u64(entry_va, 18);
+                let flags = fadt_read_u32(entry_va, 30);
+                if flags & 1 != 0 {
+                    info.memory[info.memory_count] = SratMemory {
+                        proximity_domain: proximity,
+                        base_address: base,
+                        length: len,
+                        flags,
+                    };
+                    info.memory_count += 1;
                 }
             }
             _ => {}

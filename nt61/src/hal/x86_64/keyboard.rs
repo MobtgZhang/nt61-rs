@@ -266,7 +266,7 @@ pub fn scancode_to_ascii(sc: u8, shift: bool, caps: bool) -> Option<u8> {
 /// into the ring buffer.
 pub fn process_scancode(sc: u8) {
     let release = (sc & 0x80) != 0;
-    let code = (sc & 0x7F) as u8;
+    let code = sc & 0x7F;
 
     // Handle the 0xE0 extended prefix (arrow keys, navigation).
     if EXTENDED_PREFIX.load(Ordering::Relaxed) {

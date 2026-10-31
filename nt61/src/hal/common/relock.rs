@@ -46,6 +46,12 @@ impl ReentrantLock {
     }
 }
 
+impl Default for ReentrantLock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Drop for ReentrantGuard<'_> {
     fn drop(&mut self) {
         if self.lock.depth.fetch_sub(1, Ordering::Relaxed) == 1 {

@@ -9,7 +9,7 @@
 //!   (full VGA 80×25 + bootvid LFB mirror).
 //! - **aarch64** → `crate::hal::aarch64::text_console` (log ring
 //!   + serial sink, with an optional framebuffer if the firmware
-//!   reported one).
+//!     reported one).
 //! - **riscv64 / loongarch64** → `crate::hal::riscv64::text_console`
 //!   / `crate::hal::loongarch64::text_console` (log ring + serial).
 //!
@@ -17,6 +17,7 @@
 //! (`init`, `set_attr`, `put_byte`, `clear`, `set_cursor`, ...),
 //! so adding a new architecture only requires writing a backend
 //! with the same function signatures and re-aliasing below.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -93,11 +94,11 @@ pub fn dump_log_to_buffer(out: &mut alloc::vec::Vec<u8>) -> usize {
 /// Returns the number of bytes written on success. Callers normally use
 /// the Windows log path; the HAL does not pick a path because the
 /// filesystem backend is already mounted by the time this is called.
-pub fn dump_log_to_disk(path: &str) -> Result<usize, ()> {
+pub fn dump_log_to_disk(path: &str) -> Result<usize, NTSTATUS> {
     let mut bytes = alloc::vec::Vec::new();
     let written = dump_log_to_buffer(&mut bytes);
     if written == 0 {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     crate::fs::vfs::vfs_write(path, &bytes)
 }

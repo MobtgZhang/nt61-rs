@@ -178,7 +178,7 @@ pub fn set_pixel(x: u32, y: u32, color: u32) {
                 core::ptr::write_volatile(p as *mut u16, v);
             }
             24 => {
-                core::ptr::write_volatile(p, (color >> 0) as u8);
+                core::ptr::write_volatile(p, color as u8);
                 core::ptr::write_volatile(p.add(1), (color >> 8) as u8);
                 core::ptr::write_volatile(p.add(2), (color >> 16) as u8);
             }

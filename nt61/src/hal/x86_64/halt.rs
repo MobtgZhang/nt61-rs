@@ -140,10 +140,7 @@ pub fn bugcheck_screen(code: u32, message: &str) {
         let nibble = ((code >> shift) & 0xF) as usize;
         buf[prefix.len() + i] = hex_chars[nibble];
     }
-    let title = match core::str::from_utf8(&buf[..prefix.len() + 8]) {
-        Ok(s) => s,
-        Err(_) => "*** STOP",
-    };
+    let title = core::str::from_utf8(&buf[..prefix.len() + 8]).unwrap_or("*** STOP");
     framebuffer::bugcheck_screen(title, message);
     halt();
 }
