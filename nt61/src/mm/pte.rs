@@ -18,8 +18,8 @@
 //! 5. **Subsection** — A pointer to a subsection structure inside a
 //!    section object.
 //
-//! Each interpretation lives in its own struct (or a packed union),
-//! and helpers translate between them.
+//!    Each interpretation lives in its own struct (or a packed union),
+//!    and helpers translate between them.
 
 use core::ptr;
 

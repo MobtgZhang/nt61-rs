@@ -22,6 +22,7 @@
 //
 //! All tree operations are protected by a Spinlock (VadLock).
 //! The lock must be held during any modification or concurrent read.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use crate::ke::sync::Spinlock;
 use crate::mm::vm::{MemFlags, PAGE_SIZE};
@@ -162,6 +163,12 @@ impl VadEntry {
     }
 }
 
+impl Default for VadEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// VAD tree root with embedded lock for thread safety.
 pub struct VadTree {
     root: Spinlock<*mut VadEntry>,
@@ -196,7 +203,7 @@ impl VadTree {
     /// T1  T2          T2  T3
     fn rotate_right_locked(&self, y: *mut VadEntry) {
         let mut root_guard = self.root.lock();
-        let root_ptr: &mut *mut VadEntry = &mut *root_guard;
+        let root_ptr: &mut *mut VadEntry = &mut root_guard;
         unsafe {
             let x = (*y).left;
             let _ = &x;
@@ -548,10 +555,10 @@ impl VadTree {
     // =========================================================================
 
     /// Insert a VAD into the tree with AVL rebalancing.
-    /// Returns Ok(()) on success, Err(()) if overlapping VAD exists.
-    pub fn insert(&mut self, vad: &mut VadEntry) -> Result<(), ()> {
+    /// Returns Ok(()) on success, Err(STATUS_UNSUCCESSFUL) if overlapping VAD exists.
+    pub fn insert(&mut self, vad: &mut VadEntry) -> Result<(), NTSTATUS> {
         let mut root_guard = self.root.lock();
-        let root_ptr: &mut *mut VadEntry = &mut *root_guard;
+        let root_ptr: &mut *mut VadEntry = &mut root_guard;
 
         if root_ptr.is_null() {
             *root_ptr = vad;
@@ -571,7 +578,7 @@ impl VadTree {
                 if vad.starting_vpn <= (*current).ending_vpn
                     && vad.ending_vpn >= (*current).starting_vpn
                 {
-                    return Err(()); // Overlapping range
+                    return Err(STATUS_UNSUCCESSFUL); // Overlapping range
                 }
 
                 if vad.starting_vpn < (*current).starting_vpn {
@@ -666,7 +673,7 @@ impl VadTree {
 
     /// Remove a VAD from the tree with AVL rebalancing.
     /// Handles all three BST cases: leaf, one child, two children.
-    pub fn remove(&mut self, vad: &mut VadEntry) -> Result<(), ()> {
+    pub fn remove(&mut self, vad: &mut VadEntry) -> Result<(), NTSTATUS> {
         // Hold the lock for the entire removal: find the node,
         // mutate the tree (remove_node), and rebalance, all in one
         // critical section. Dropping the lock between steps would
@@ -680,7 +687,7 @@ impl VadTree {
         // mutable access to every field while still satisfying
         // the borrow checker.
         let mut root_guard = self.root.lock();
-        let root_ptr: &mut *mut VadEntry = &mut *root_guard;
+        let root_ptr: &mut *mut VadEntry = &mut root_guard;
 
         // Find the node to remove (may be different from vad if not in tree).
         let mut current = *root_ptr;
@@ -695,7 +702,7 @@ impl VadTree {
         }
 
         if current.is_null() {
-            return Err(()); // Not found
+            return Err(STATUS_UNSUCCESSFUL); // Not found
         }
 
         // Now do the actual removal while still holding the lock.
@@ -737,7 +744,7 @@ impl VadTree {
                 } else {
                     (*parent).right = null_mut();
                 }
-                return parent;
+                parent
             } else if has_left && !has_right {
                 // Case 2a: Only left child - replace node with left subtree
                 let parent = (*node).parent;
@@ -759,7 +766,7 @@ impl VadTree {
                 // After deletion: left subtree height decreased
                 // Parent's left subtree is now shorter, so balance factor increases (+1)
                 // This is handled by rebalance_delete_locked in the caller
-                return parent;
+                parent
             } else if !has_left && has_right {
                 // Case 2b: Only right child - replace node with right subtree
                 let parent = (*node).parent;
@@ -781,7 +788,7 @@ impl VadTree {
                 // After deletion: right subtree height decreased
                 // Parent's right subtree is now shorter, so balance factor decreases (-1)
                 // This is handled by rebalance_delete_locked in the caller
-                return parent;
+                parent
             } else {
                 // Case 3: Two children - replace with in-order successor
                 let successor = Self::min_node((*node).right);
@@ -811,7 +818,7 @@ impl VadTree {
                     }
                     // The successor (which was right child) is removed
                     // Right subtree of node is now shorter
-                    return node;
+                    node
                 } else {
                     // Successor is deeper in right subtree
                     if !successor_right.is_null() {
@@ -821,7 +828,7 @@ impl VadTree {
 
                     // The successor (which was in left subtree of its parent) is removed
                     // Left subtree of successor's parent is now shorter
-                    return successor_parent;
+                    successor_parent
                 }
             }
         }
@@ -862,8 +869,10 @@ impl VadTree {
 
     /// Free a VAD back to the kernel pool.
     pub fn free_vad(&self, vad: *mut VadEntry) {
-        if !vad.is_null() {
-            let _ = crate::mm::pool::free(vad as *mut u8);
+        unsafe {
+            if !vad.is_null() {
+                let _ = crate::mm::pool::free(vad as *mut u8);
+            }
         }
     }
 
@@ -871,9 +880,12 @@ impl VadTree {
     // Advanced Operations
     // =========================================================================
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Merge adjacent VADs after a removal or unmap.
     /// Checks if a VAD can be merged with its predecessor or successor.
-    pub fn merge_adjacent(&mut self, mut vad: *mut VadEntry) {
+    pub unsafe fn merge_adjacent(&mut self, mut vad: *mut VadEntry) {
         let mut root_guard = self.root.lock();
         unsafe {
             // Check predecessor (left sibling)
@@ -951,14 +963,14 @@ impl VadTree {
                 if (*current).parent.is_null() {
                     return null_mut(); // No predecessor
                 }
-                return (*current).parent;
+                (*current).parent
             } else {
                 // Rightmost node in left subtree
                 let mut current = (*node).left;
                 while !(*current).right.is_null() {
                     current = (*current).right;
                 }
-                return current;
+                current
             }
         }
     }
@@ -975,14 +987,14 @@ impl VadTree {
                 if (*current).parent.is_null() {
                     return null_mut(); // No successor
                 }
-                return (*current).parent;
+                (*current).parent
             } else {
                 // Leftmost node in right subtree
                 let mut current = (*node).right;
                 while !(*current).left.is_null() {
                     current = (*current).left;
                 }
-                return current;
+                current
             }
         }
     }
@@ -1069,6 +1081,9 @@ impl VadTree {
     // VAD-to-PTE Propagation
     // =========================================================================
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Map all pages described by a VAD into the page table.
     /// This is called during process creation or when committing a VAD.
     ///
@@ -1078,7 +1093,7 @@ impl VadTree {
     ///
     /// # Returns
     /// Number of pages successfully mapped, or 0 on failure.
-    pub fn map_vad_to_ptes(&self, root: u64, vad: *mut VadEntry) -> u64 {
+    pub unsafe fn map_vad_to_ptes(&self, root: u64, vad: *mut VadEntry) -> u64 {
         let _guard = self.root.lock();
         if vad.is_null() {
             return 0;
@@ -1190,6 +1205,12 @@ impl VadTree {
     }
 }
 
+impl Default for VadTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Per-process VAD lock type - processes normally have a single VAD tree
 /// and need exclusive access during fork/exec/unmap operations.
 pub type VadLock = Spinlock<()>;
@@ -1291,6 +1312,9 @@ impl VadTree {
         None
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Collect all gaps between VADs in the tree.
     ///
     /// This is a helper for `find_gap()` that performs an in-order traversal
@@ -1353,6 +1377,9 @@ impl VadTree {
         Some((gap_start, gap_start + aligned_size))
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Find the maximum ending VPN in the tree.
     unsafe fn find_max_ending(&self, node: *mut VadEntry, max_ending: &mut u64) {
         if node.is_null() {

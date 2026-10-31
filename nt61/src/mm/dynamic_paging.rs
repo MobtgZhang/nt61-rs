@@ -171,7 +171,7 @@ pub fn is_canonical(va: u64) -> bool {
     let high_bits = va >> 48;
     let _ = &high_bits;
     let _ = &high_bits;
-    high_bits == sign_bit as u64 || high_bits == !sign_bit as u64
+    high_bits == sign_bit || high_bits == !sign_bit
 }
 
 /// Map a physical address range to a virtual address range
@@ -191,17 +191,17 @@ pub unsafe fn map_physical_to_virtual(
     size: u64,
     flags: u64,
 ) -> Result<(), &'static str> {
-    if phys == 0 || phys % PAGE_SIZE != 0 {
+    if phys == 0 || !phys.is_multiple_of(PAGE_SIZE) {
         return Err("physical address must be 4 KiB aligned");
     }
-    if virt % PAGE_SIZE != 0 {
+    if !virt.is_multiple_of(PAGE_SIZE) {
         return Err("virtual address must be 4 KiB aligned");
     }
     if size == 0 {
         return Ok(());
     }
 
-    let huge_count = if virt % HUGE_PAGE_SIZE == 0 && phys % HUGE_PAGE_SIZE == 0 {
+    let huge_count = if virt.is_multiple_of(HUGE_PAGE_SIZE) && phys.is_multiple_of(HUGE_PAGE_SIZE) {
         size / HUGE_PAGE_SIZE
     } else {
         0
@@ -213,12 +213,13 @@ pub unsafe fn map_physical_to_virtual(
         map_huge_page(pml4, va, pa, flags)?;
     }
 
-    let large_count =
-        if (virt + offset) % LARGE_PAGE_SIZE == 0 && (phys + offset) % LARGE_PAGE_SIZE == 0 {
-            (size - offset) / LARGE_PAGE_SIZE
-        } else {
-            0
-        };
+    let large_count = if (virt + offset).is_multiple_of(LARGE_PAGE_SIZE)
+        && (phys + offset).is_multiple_of(LARGE_PAGE_SIZE)
+    {
+        (size - offset) / LARGE_PAGE_SIZE
+    } else {
+        0
+    };
     for index in 0..large_count {
         let va = virt + offset + index * LARGE_PAGE_SIZE;
         let pa = phys + offset + index * LARGE_PAGE_SIZE;
@@ -227,7 +228,7 @@ pub unsafe fn map_physical_to_virtual(
     offset += large_count * LARGE_PAGE_SIZE;
 
     let tail = size - offset;
-    if tail % PAGE_SIZE != 0 {
+    if !tail.is_multiple_of(PAGE_SIZE) {
         return Err("size must be 4 KiB aligned");
     }
     for index in 0..(tail / PAGE_SIZE) {
@@ -249,7 +250,7 @@ pub unsafe fn map_huge_page(
     phys: u64,
     flags: u64,
 ) -> Result<(), &'static str> {
-    if virt % HUGE_PAGE_SIZE != 0 || phys % HUGE_PAGE_SIZE != 0 {
+    if !virt.is_multiple_of(HUGE_PAGE_SIZE) || !phys.is_multiple_of(HUGE_PAGE_SIZE) {
         return Err("1 GiB mappings require 1 GiB-aligned addresses");
     }
     if flags & PTE_PRESENT == 0 {
@@ -280,7 +281,7 @@ pub unsafe fn map_large_page(
     phys: u64,
     flags: u64,
 ) -> Result<(), &'static str> {
-    if virt % LARGE_PAGE_SIZE != 0 || phys % LARGE_PAGE_SIZE != 0 {
+    if !virt.is_multiple_of(LARGE_PAGE_SIZE) || !phys.is_multiple_of(LARGE_PAGE_SIZE) {
         return Err("2 MiB mappings require 2 MiB-aligned addresses");
     }
     if flags & PTE_PRESENT == 0 {
@@ -315,7 +316,7 @@ pub unsafe fn map_page(
     phys: u64,
     flags: u64,
 ) -> Result<(), &'static str> {
-    if virt % PAGE_SIZE != 0 || phys % PAGE_SIZE != 0 {
+    if !virt.is_multiple_of(PAGE_SIZE) || !phys.is_multiple_of(PAGE_SIZE) {
         return Err("4 KiB mappings require 4 KiB-aligned addresses");
     }
     if flags & PTE_PRESENT == 0 {
@@ -343,12 +344,15 @@ const PHYSICAL_ADDRESS_MASK: u64 = 0x000F_FFFF_FFFF_F000;
 
 /// Resolve a page-table physical address to the kernel direct map.
 fn table_virtual(physical: u64) -> Option<*mut u64> {
-    if physical == 0 || physical % PAGE_SIZE != 0 {
+    if physical == 0 || !physical.is_multiple_of(PAGE_SIZE) {
         return None;
     }
     Some((crate::mm::constants::KERNEL_DIRECT_MAP_BASE + physical) as *mut u64)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Return the child table for an entry, allocating it if required.
 unsafe fn ensure_child_table(entry: u64, flags: u64) -> Result<*mut u64, &'static str> {
     if entry & PTE_PRESENT == 0 {
@@ -393,12 +397,18 @@ pub unsafe fn set_cr3(pml4_phys: u64) {
     crate::arch::load_page_root(pml4_phys >> 12);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Invalidate a single TLB entry
 #[inline]
 pub unsafe fn invlpg(virt: u64) {
     crate::arch::invalidate_tlb(virt);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Invalidate the entire TLB
 #[inline]
 pub unsafe fn invlpg_all() {
@@ -538,14 +548,14 @@ pub fn calculate_page_table_requirements(memory_bytes: u64) -> (u64, u64) {
 
     // Each PT entry covers 4KB
 
-    let pml4_needed = (memory_bytes + PML4_COVERAGE - 1) / PML4_COVERAGE;
+    let pml4_needed = memory_bytes.div_ceil(PML4_COVERAGE);
 
     let _ = &pml4_needed;
     let _ = &pml4_needed;
-    let pdpt_needed = (memory_bytes + PDPT_COVERAGE - 1) / PDPT_COVERAGE;
+    let pdpt_needed = memory_bytes.div_ceil(PDPT_COVERAGE);
     let _ = &pdpt_needed;
     let _ = &pdpt_needed;
-    let pd_needed = (memory_bytes + PD_COVERAGE - 1) / PD_COVERAGE;
+    let pd_needed = memory_bytes.div_ceil(PD_COVERAGE);
     let _ = &pd_needed;
     let _ = &pd_needed;
 

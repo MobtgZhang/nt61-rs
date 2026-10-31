@@ -155,7 +155,7 @@ fn test_vad_tree() -> bool {
     // Insert the VAD
     match tree.insert(&mut vad) {
         Ok(()) => crate::boot_println!("    [VAD] insert OK"),
-        Err(()) => {
+        Err(_) => {
             crate::boot_println!("    [VAD] insert FAILED (overlap?)");
             return false;
         }
@@ -202,7 +202,7 @@ fn test_vad_tree() -> bool {
     // Remove it
     match tree.remove(&mut vad) {
         Ok(()) => crate::boot_println!("    [VAD] remove OK"),
-        Err(()) => {
+        Err(_) => {
             crate::boot_println!("    [VAD] remove FAILED");
             return false;
         }

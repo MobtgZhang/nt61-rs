@@ -185,7 +185,7 @@ fn find_first_zero(word: u64) -> Option<usize> {
 }
 
 fn init_bitmap(state: &mut PagefileState, page_file_idx: usize, page_count: u64) {
-    let bitmap_words_needed = ((page_count as usize) + BITS_PER_WORD - 1) / BITS_PER_WORD;
+    let bitmap_words_needed = (page_count as usize).div_ceil(BITS_PER_WORD);
     for i in 0..BITMAP_WORDS {
         state.allocated[page_file_idx][i] = 0;
     }
@@ -371,7 +371,7 @@ pub fn grow_pagefile(page_file_no: u32, new_size: u64) -> bool {
     state.files[page_file_no as usize]
         .max_size
         .store(new_size, Ordering::SeqCst);
-    let new_bitmap_words = ((new_size as usize) + BITS_PER_WORD - 1) / BITS_PER_WORD;
+    let new_bitmap_words = (new_size as usize).div_ceil(BITS_PER_WORD);
     let old_bitmap_words = state.files[page_file_no as usize].bitmap_words;
     for i in old_bitmap_words..new_bitmap_words.min(BITMAP_WORDS) {
         state.allocated[page_file_no as usize][i] = 0;
@@ -549,7 +549,7 @@ pub fn write_page_to_disk(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
                 offset
             );
         }
-        return success;
+        success
     } else {
         // RAM-backed pagefile: memory-to-memory copy
         let dst_pa = pfn_to_phys(base_pfn + offset as u64);
@@ -572,7 +572,7 @@ pub fn write_page_to_disk(pfn: u64, pagefile_no: u32, offset: u32) -> bool {
             pagefile_no,
             offset
         );
-        return true;
+        true
     }
 }
 
@@ -707,6 +707,12 @@ impl PagefileInfo {
             free_pages: 0,
             enabled: false,
         }
+    }
+}
+
+impl Default for PagefileInfo {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

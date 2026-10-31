@@ -104,6 +104,12 @@ impl HeapControl {
     }
 }
 
+impl Default for HeapControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A bump allocator with free list support for memory reuse.
 /// The base and size are configured by `init()`. Freed blocks
 /// are added to a free list and reused for future allocations.
@@ -174,6 +180,12 @@ impl HeapStats {
     }
 }
 
+impl Default for HeapStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 unsafe impl Send for KernelHeap {}
 unsafe impl Sync for KernelHeap {}
 
@@ -239,6 +251,9 @@ impl KernelHeap {
         ptr_addr >= base && ptr_addr + size <= heap_end
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Add a freed block to the free list with coalescing.
     ///
     /// Walk the intrusive linked list, merge with adjacent blocks
@@ -311,6 +326,9 @@ impl KernelHeap {
         *head_ref = new_block;
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Try to allocate from the free list.
     /// Returns Some(ptr) if a suitable block is found, None otherwise.
     unsafe fn alloc_from_free_list(&self, layout: Layout) -> Option<*mut u8> {
@@ -405,16 +423,25 @@ pub static KERNEL_HEAP: KernelHeap = KernelHeap::new();
 pub struct KernelHeapAllocator;
 
 unsafe impl GlobalAlloc for KernelHeapAllocator {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         KERNEL_HEAP.alloc(layout)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         KERNEL_HEAP.dealloc(ptr, layout)
     }
 }
 
 unsafe impl GlobalAlloc for KernelHeap {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if !self.initialized.load(Ordering::Acquire) {
             return core::ptr::null_mut();
@@ -482,6 +509,9 @@ unsafe impl GlobalAlloc for KernelHeap {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         if !ptr.is_null() && ptr as usize >= AllocationHeader::SIZE {
             let header = (ptr as usize - AllocationHeader::SIZE) as *mut AllocationHeader;
@@ -541,7 +571,7 @@ pub fn init() {
     let (phys, pages) = match frame::allocate_pages(HEAP_PAGES_LARGE) {
         Some(p) => {
             crate::hal::serial::write_string_always("[heap] allocated 64MB at phys=");
-            crate::hal::serial::write_hex_u64(p as u64);
+            crate::hal::serial::write_hex_u64(p);
             crate::hal::serial::write_string("\r\n");
             (p, HEAP_PAGES_LARGE)
         }
@@ -550,7 +580,7 @@ pub fn init() {
             match frame::allocate_pages(HEAP_PAGES_MEDIUM) {
                 Some(p) => {
                     crate::hal::serial::write_string_always("[heap] allocated 32MB at phys=");
-                    crate::hal::serial::write_hex_u64(p as u64);
+                    crate::hal::serial::write_hex_u64(p);
                     crate::hal::serial::write_string("\r\n");
                     (p, HEAP_PAGES_MEDIUM)
                 }
@@ -561,7 +591,7 @@ pub fn init() {
                             crate::hal::serial::write_string_always(
                                 "[heap] allocated 16MB at phys=",
                             );
-                            crate::hal::serial::write_hex_u64(p as u64);
+                            crate::hal::serial::write_hex_u64(p);
                             crate::hal::serial::write_string("\r\n");
                             (p, HEAP_PAGES_SMALL)
                         }
@@ -595,8 +625,7 @@ pub fn init() {
 /// satisfy the full 4 MiB request: we keep retrying at this size
 /// so that the smoke test always gets a heap region even on
 /// memory-constrained configurations. The actual allocated size
-/// is whatever the buddy allocator could find.
-
+/// is whatever the buddy allocator could find.///
 /// Number of bytes currently handed out by the bump allocator.
 pub fn get_allocated() -> usize {
     KERNEL_HEAP.allocated.load(Ordering::Relaxed)

@@ -25,6 +25,7 @@
 //! 4 GiB of physical memory 1:1 (useful for drivers), and a
 //! separately-allocated region for the kernel image itself, the
 //! kernel heap, and the kernel stack per CPU.
+use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
 use crate::ke::sync::Spinlock;
 
@@ -151,6 +152,12 @@ impl VmState {
     }
 }
 
+impl Default for VmState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub(crate) static VM_STATE: Spinlock<VmState> = Spinlock::new(VmState::new());
 
 /// Initialise VM subsystem.
@@ -174,7 +181,7 @@ pub fn allocate_virtual(
     size: u64,
     alloc_type: AllocationType,
     flags: MemFlags,
-) -> Result<u64, ()> {
+) -> Result<u64, NTSTATUS> {
     let aligned_size = (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
     let mut state = VM_STATE.lock();
     let mut addr = if base == 0 {
@@ -188,7 +195,7 @@ pub fn allocate_virtual(
         AllocationType::Commit | AllocationType::Reserve => {
             if addr.checked_add(aligned_size).is_none() || addr + aligned_size > state.kernel_limit
             {
-                return Err(());
+                return Err(STATUS_UNSUCCESSFUL);
             }
             state.next_alloc_base = addr + aligned_size;
             // // kprintln!("      Allocated VA region 0x{:x} + 0x{:x}", addr, aligned_size);
@@ -203,12 +210,12 @@ pub fn allocate_virtual(
 }
 
 /// Reserve virtual memory (no physical backing).
-pub fn reserve(base: u64, size: u64) -> Result<u64, ()> {
+pub fn reserve(base: u64, size: u64) -> Result<u64, NTSTATUS> {
     allocate_virtual(base, size, AllocationType::Reserve, MemFlags::NONE)
 }
 
 /// Commit virtual memory (allocate physical pages and map them in).
-pub fn commit(base: u64, size: u64) -> Result<u64, ()> {
+pub fn commit(base: u64, size: u64) -> Result<u64, NTSTATUS> {
     let aligned_size = (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
     let page_count = aligned_size / PAGE_SIZE;
 
@@ -218,7 +225,7 @@ pub fn commit(base: u64, size: u64) -> Result<u64, ()> {
         // the new PFN database, not the legacy buddy.
         let pfn_no = match crate::mm::pfn::allocate_pfn() {
             Some(p) => p,
-            None => return Err(()),
+            None => return Err(STATUS_UNSUCCESSFUL),
         };
         let pa = crate::mm::pte::pfn_to_phys(pfn_no);
         let bits: u64 = (MemFlags::READ | MemFlags::WRITE).bits() as u64;
@@ -228,7 +235,7 @@ pub fn commit(base: u64, size: u64) -> Result<u64, ()> {
 }
 
 /// Free virtual memory (unmap and release physical pages).
-pub fn free(base: u64, size: u64) -> Result<(), ()> {
+pub fn free(base: u64, size: u64) -> Result<(), NTSTATUS> {
     let aligned_size = (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
     for i in 0..(aligned_size / PAGE_SIZE) {
         let va = base + i * PAGE_SIZE;
@@ -240,7 +247,7 @@ pub fn free(base: u64, size: u64) -> Result<(), ()> {
 }
 
 /// Decommit virtual memory (unmap but keep the VA reservation).
-pub fn decommit(base: u64, size: u64) -> Result<(), ()> {
+pub fn decommit(base: u64, size: u64) -> Result<(), NTSTATUS> {
     let aligned_size = (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
     for i in 0..(aligned_size / PAGE_SIZE) {
         let va = base + i * PAGE_SIZE;
@@ -288,7 +295,7 @@ pub fn get_user_base() -> u64 {
 }
 
 /// Map a physical address into the direct-map region.
-pub fn direct_map_phys(phys: u64, size: u64) -> Result<u64, ()> {
+pub fn direct_map_phys(phys: u64, size: u64) -> Result<u64, NTSTATUS> {
     let aligned_size = (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
     let page_count = aligned_size / PAGE_SIZE;
     // Use the hyperspace temporary-mapping window for direct
@@ -296,7 +303,7 @@ pub fn direct_map_phys(phys: u64, size: u64) -> Result<u64, ()> {
     // PTE allocator, because installing that allocator's page tables
     // may itself need to zero or inspect a newly allocated page.
     if page_count == 0 || page_count > crate::mm::hyperspace::HYPERSPACE_ENTRIES {
-        return Err(());
+        return Err(STATUS_UNSUCCESSFUL);
     }
     let mut va = None;
     for offset in 0..page_count {
@@ -308,13 +315,13 @@ pub fn direct_map_phys(phys: u64, size: u64) -> Result<u64, ()> {
                     crate::mm::hyperspace::unmap_hyperspace(start + rollback * PAGE_SIZE);
                 }
             }
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         if va.is_none() {
             va = Some(mapped);
         }
     }
-    va.ok_or(())
+    va.ok_or(STATUS_UNSUCCESSFUL)
 }
 
 /// Release a direct mapping created by `direct_map_phys`.
@@ -361,10 +368,10 @@ impl Drop for DirectMapGuard {
 }
 
 /// Map a physical address into the direct-map region and return a
-/// guard that unmaps it on drop. Returns `Err(())` with the same
+/// guard that unmaps it on drop. Returns `Err(STATUS_UNSUCCESSFUL)` with the same
 /// conditions as `direct_map_phys` (zero-page or oversized request,
 /// or hyperspace exhaustion); nothing is mapped on `Err`.
-pub fn direct_map_guard(phys: u64, size: u64) -> Result<DirectMapGuard, ()> {
+pub fn direct_map_guard(phys: u64, size: u64) -> Result<DirectMapGuard, NTSTATUS> {
     let va = direct_map_phys(phys, size)?;
     Ok(DirectMapGuard { va, size })
 }

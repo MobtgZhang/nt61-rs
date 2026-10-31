@@ -111,6 +111,12 @@ impl MmWorkingSet {
     }
 }
 
+impl Default for MmWorkingSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Walk the user-half page table of the supplied PML4 and trim the
 /// oldest pages until `target` is reached.
 ///
@@ -318,6 +324,7 @@ pub fn age_working_set(pml4_phys: u64) -> WorkingSetAgingStats {
 /// callers via `NT_QUERY_SYSTEM_INFORMATION`.
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
+#[derive(Default)]
 pub struct WorkingSetAgingStats {
     pub scanned: u64,
     pub aged_pages: u64,
@@ -325,19 +332,6 @@ pub struct WorkingSetAgingStats {
     pub total_pdpt_slots: u32,
     pub total_pd_slots: u32,
     pub total_pt_slots: u32,
-}
-
-impl Default for WorkingSetAgingStats {
-    fn default() -> Self {
-        Self {
-            scanned: 0,
-            aged_pages: 0,
-            total_pml4_slots: 0,
-            total_pdpt_slots: 0,
-            total_pd_slots: 0,
-            total_pt_slots: 0,
-        }
-    }
 }
 
 pub fn init() {

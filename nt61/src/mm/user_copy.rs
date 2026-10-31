@@ -24,10 +24,45 @@ use crate::libs::ntdll::status::STATUS_ACCESS_VIOLATION;
 use crate::libs::ntdll::types::UnicodeString;
 use crate::mm::constants::{KERNEL_BASE, USER_BASE, USER_LIMIT};
 
+#[cfg(not(target_arch = "x86_64"))]
+fn copy_user_by_page(
+    user_va: u64,
+    kernel_data: *mut u8,
+    len: usize,
+    to_user: bool,
+) -> Result<(), i32> {
+    let mut offset = 0usize;
+    while offset < len {
+        let va = user_va + offset as u64;
+        let page_offset = va & 0xFFF;
+        let chunk = (len - offset).min((0x1000 - page_offset) as usize);
+        let physical = crate::arch::translate_virt(va).ok_or(STATUS_ACCESS_VIOLATION)?;
+        let guard = crate::mm::vm::direct_map_guard(physical & !0xFFF, 0x1000)
+            .map_err(|_| STATUS_ACCESS_VIOLATION)?;
+        let alias = (guard.va() + page_offset) as *const u8;
+        let target = if to_user {
+            alias as *mut u8
+        } else {
+            unsafe { kernel_data.add(offset) }
+        };
+        let source = if to_user {
+            unsafe { kernel_data.add(offset) }
+        } else {
+            alias
+        };
+        unsafe {
+            core::ptr::copy_nonoverlapping(source as *const u8, target as *mut u8, chunk);
+        }
+        drop(guard);
+        offset += chunk;
+    }
+    Ok(())
+}
+
 /// True iff `va..va+len` lies entirely inside the user address range
 /// and does not overflow.
 pub fn is_user_range(va: u64, len: usize) -> bool {
-    if va < USER_BASE || va > USER_LIMIT {
+    if !(USER_BASE..=USER_LIMIT).contains(&va) {
         return false;
     }
     let end = match va.checked_add(len as u64) {
@@ -100,9 +135,16 @@ pub fn copy_from_user(dst: &mut [u8], src: u64) -> Result<(), i32> {
         return Ok(());
     }
     probe_user_read(src, len)?;
-    let _guard = crate::arch::common::user_memory::SmapGuard::open();
-    unsafe {
-        core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), len);
+    #[cfg(target_arch = "x86_64")]
+    {
+        let _guard = crate::arch::common::user_memory::SmapGuard::open();
+        unsafe {
+            core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), len);
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        copy_user_by_page(src, dst.as_mut_ptr(), len, false)?;
     }
     Ok(())
 }
@@ -115,9 +157,16 @@ pub fn copy_to_user(dst: u64, src: &[u8]) -> Result<(), i32> {
         return Ok(());
     }
     probe_user_write(dst, len)?;
-    let _guard = crate::arch::common::user_memory::SmapGuard::open();
-    unsafe {
-        core::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut u8, len);
+    #[cfg(target_arch = "x86_64")]
+    {
+        let _guard = crate::arch::common::user_memory::SmapGuard::open();
+        unsafe {
+            core::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut u8, len);
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        copy_user_by_page(dst, src.as_ptr() as *mut u8, len, true)?;
     }
     Ok(())
 }
@@ -161,7 +210,7 @@ pub fn write_user_object<T: Copy>(dst: u64, value: &T) -> Result<(), i32> {
 /// `max_bytes` limits the trusted `length` field before any buffer read.
 pub fn read_user_unicode_string(src: u64, max_bytes: usize) -> Result<alloc::vec::Vec<u16>, i32> {
     let header: UnicodeString = read_user_object(src)?;
-    if header.length == 0 || header.length % 2 != 0 {
+    if header.length == 0 || !header.length.is_multiple_of(2) {
         return Err(STATUS_ACCESS_VIOLATION);
     }
     if header.length as usize > max_bytes || header.buffer.is_null() {

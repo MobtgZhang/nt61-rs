@@ -448,7 +448,7 @@ fn test_heap_alignment() -> bool {
         }
 
         // Check alignment
-        if (ptr as usize) % align != 0 {
+        if !(ptr as usize).is_multiple_of(align) {
             unsafe {
                 KERNEL_HEAP.dealloc(ptr, layout);
             }
@@ -542,16 +542,18 @@ fn test_pool_nonpaged() -> bool {
 }
 
 fn test_pool_tag_tracking() -> bool {
-    // Pool tag tracking is internal, just verify allocation works
-    use crate::mm::pool::{self, PoolType};
+    unsafe {
+        // Pool tag tracking is internal, just verify allocation works
+        use crate::mm::pool::{self, PoolType};
 
-    let ptr = pool::allocate(PoolType::NonPaged, 128);
-    if ptr.is_null() {
-        return false;
+        let ptr = pool::allocate(PoolType::NonPaged, 128);
+        if ptr.is_null() {
+            return false;
+        }
+
+        pool::free(ptr);
+        true
     }
-
-    pool::free(ptr);
-    true
 }
 
 // =============================================================================

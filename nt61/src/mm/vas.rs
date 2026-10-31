@@ -41,8 +41,7 @@ pub use crate::mm::constants::*;
 pub const MI_SELF_MAP_INDEX: usize = 0x1ED;
 
 /// Self-map addresses (imported from `crate::mm::constants` via
-/// `pub use crate::mm::constants::*`).
-
+/// `pub use crate::mm::constants::*`).///
 /// Self-map derived addresses for a given virtual address.
 ///
 /// The offset must preserve the complete 48-bit linear page number.
@@ -110,6 +109,12 @@ impl MmSystemAddressSpace {
             pml4_virt: 0,
             initialized: false,
         }
+    }
+}
+
+impl Default for MmSystemAddressSpace {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -249,6 +254,12 @@ impl MmVirtualAddressSpace {
         allocator.next_va = USER_BASE;
         allocator.end_va = 0x0000_7FFF_FFFF_F000; // Windows 7 x64 user limit
         allocator.allocations = [const { None }; MAX_USER_VA_ALLOCATIONS];
+    }
+}
+
+impl Default for MmVirtualAddressSpace {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -456,11 +467,11 @@ pub fn refresh_kernel_mappings(pml4_phys: u64) {
         // Map both tables explicitly through the hyperspace window.
         let system_guard = match crate::mm::vm::direct_map_guard(system_phys, 4096) {
             Ok(guard) => guard,
-            Err(()) => return,
+            Err(_) => return,
         };
         let process_guard = match crate::mm::vm::direct_map_guard(pml4_phys, 4096) {
             Ok(guard) => guard,
-            Err(()) => return,
+            Err(_) => return,
         };
         let system = system_guard.va() as *const MMPTE;
         let process = process_guard.va() as *mut MMPTE;
@@ -518,11 +529,11 @@ pub fn refresh_kernel_mappings(pml4_phys: u64) {
         // physical addresses are dereferenceable.
         let system_guard = match crate::mm::vm::direct_map_guard(system_phys, 4096) {
             Ok(guard) => guard,
-            Err(()) => return,
+            Err(_) => return,
         };
         let process_guard = match crate::mm::vm::direct_map_guard(pml4_phys, 4096) {
             Ok(guard) => guard,
-            Err(()) => return,
+            Err(_) => return,
         };
         let system = system_guard.va() as *const MMPTE;
         let process = process_guard.va() as *mut MMPTE;
@@ -607,8 +618,7 @@ pub fn detach_process(prev: u64) {
 /// `P = 1<<0` always.
 ///
 /// All PTE_* constants and INT_PTE_BITS are now imported from
-/// `crate::mm::constants` via `pub use crate::mm::constants::*`.
-
+/// `crate::mm::constants` via `pub use crate::mm::constants::*`.///
 /// Allocate a fresh page, zero it, and return its physical address.
 fn alloc_zeroed_page() -> Option<u64> {
     let pfn = crate::mm::pfn::allocate_pfn()?;
@@ -635,6 +645,9 @@ pub fn alloc_zeroed_page_for_vas() -> Option<u64> {
 #[cfg(target_arch = "x86_64")]
 const PS_BIT: u64 = 1 << 7;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Deep-copy an x86_64 page-table subtree rooted at `table_phys`.
 ///
 /// `level` is the level of the table itself: 3 = PDPT (direct child
@@ -724,6 +737,9 @@ fn copy_system_root_for_process(dst: *mut MMPTE, system: *const MMPTE) -> bool {
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Merge kernel mappings that were installed in the system's low
 /// identity chain after a process PML4 snapshot into that process's
 /// private copy of the chain.
@@ -778,6 +794,9 @@ unsafe fn sync_identity_chain(sys_phys: u64, proc_phys: u64, level: u8) -> bool 
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Read a PTE from a table addressed by its physical address.
 ///
 /// Per-process page-table pages are not guaranteed to be in the
@@ -788,45 +807,54 @@ unsafe fn pml4e(pml4_phys: u64, idx: usize) -> u64 {
     let mapped = crate::mm::vm::direct_map_phys(pml4_phys, 4096);
     let va = match mapped {
         Ok(va) => va,
-        Err(()) => return 0,
+        Err(_) => return 0,
     };
     let value = core::ptr::read_volatile((va as *const u64).add(idx));
     crate::mm::vm::direct_unmap_va(va, 4096);
     value
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Write a PTE in a user PML4 at the given PML4 index.
 #[inline]
 unsafe fn set_pml4e(pml4_phys: u64, idx: usize, val: u64) {
     let mapped = crate::mm::vm::direct_map_phys(pml4_phys, 4096);
     let va = match mapped {
         Ok(va) => va,
-        Err(()) => return,
+        Err(_) => return,
     };
     core::ptr::write_volatile((va as *mut u64).add(idx), val);
     crate::mm::vm::direct_unmap_va(va, 4096);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Read a PTE from an intermediate page table.
 #[inline]
 unsafe fn pte_read(table_phys: u64, idx: usize) -> u64 {
     let mapped = crate::mm::vm::direct_map_phys(table_phys, 4096);
     let va = match mapped {
         Ok(va) => va,
-        Err(()) => return 0,
+        Err(_) => return 0,
     };
     let value = core::ptr::read_volatile((va as *const u64).add(idx));
     crate::mm::vm::direct_unmap_va(va, 4096);
     value
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Write a PTE to an intermediate page table.
 #[inline]
 unsafe fn pte_write(table_phys: u64, idx: usize, val: u64) {
     let mapped = crate::mm::vm::direct_map_phys(table_phys, 4096);
     let va = match mapped {
         Ok(va) => va,
-        Err(()) => return,
+        Err(_) => return,
     };
     core::ptr::write_volatile((va as *mut u64).add(idx), val);
     crate::mm::vm::direct_unmap_va(va, 4096);
@@ -1248,6 +1276,12 @@ impl UserVaAllocator {
     }
 }
 
+impl Default for UserVaAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A live user VA allocation.
 #[derive(Clone, Copy)]
 pub struct VaAllocation {
@@ -1497,7 +1531,6 @@ const _: () = {
 ///
 /// Reference: geoffchappell.com studies/windows/km/ntoskrnl/inc/ntos/
 /// TEB_BASE and TEB_SIZE are imported from `crate::mm::constants`.
-
 static CURRENT_ROOT: AtomicU64 = AtomicU64::new(0);
 
 pub fn current_root() -> u64 {
@@ -1740,6 +1773,9 @@ pub fn get_self_map_status() -> &'static str {
     SelfMapStatus::from_u64(status)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Reserve every intermediate page-table page reachable from the
 /// system root. The PFN allocator is initialized after the bootstrap
 /// identity map, so it cannot know which pages already hold PML4,

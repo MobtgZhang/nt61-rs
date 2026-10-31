@@ -73,7 +73,7 @@ pub fn map_hyperspace(pfn: u64) -> u64 {
         return 0;
     }
     unsafe {
-        let pte = pte_ptr as *mut MMPTE;
+        let pte = pte_ptr;
         (*pte).set_hardware(pfn << 12, 0x1 | 0x2 | 0x4 | 0x20 | 0x40);
     }
     crate::mm::vas::invalidate_tlb(va);
@@ -96,7 +96,7 @@ pub fn map_hyperspace(pfn: u64) -> u64 {
 /// this the slot can be reused.
 #[cfg(target_arch = "x86_64")]
 pub fn unmap_hyperspace(va: u64) {
-    if va < HYPERSPACE_BASE || va >= HYPERSPACE_END {
+    if !(HYPERSPACE_BASE..HYPERSPACE_END).contains(&va) {
         return;
     }
     let slot = (va - HYPERSPACE_BASE) / 4096;
@@ -105,7 +105,7 @@ pub fn unmap_hyperspace(va: u64) {
         return;
     }
     unsafe {
-        let pte = pte_ptr as *mut MMPTE;
+        let pte = pte_ptr;
         (*pte).clear();
         crate::mm::vas::invalidate_tlb(va);
     }
@@ -117,7 +117,7 @@ pub fn unmap_hyperspace(_va: u64) {}
 /// Translate a VA in the current address space to the hyperspace
 /// window — used by debug helpers.
 pub fn hyperspace_pointer(va: u64) -> *mut u8 {
-    if va >= HYPERSPACE_BASE && va < HYPERSPACE_END {
+    if (HYPERSPACE_BASE..HYPERSPACE_END).contains(&va) {
         va as *mut u8
     } else {
         ptr::null_mut()

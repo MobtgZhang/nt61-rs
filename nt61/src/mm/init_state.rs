@@ -217,6 +217,9 @@ fn enter_state_invalid(new: u8, operation: &str) -> ! {
     );
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[cfg(test)]
 pub unsafe fn reset_for_test() {
     MM_INIT_STATE.store(STATE_UNINITIALIZED, Ordering::Release);

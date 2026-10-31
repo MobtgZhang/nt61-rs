@@ -12,8 +12,8 @@
 //!    physical memory, the share count drops to zero and the page is
 //!    freed. Otherwise the share count decrements.
 //
-//! The prototype PTE for a section is the canonical source of truth;
-//! per-process PTEs are checked against it.
+//!    The prototype PTE for a section is the canonical source of truth;
+//!    per-process PTEs are checked against it.
 
 use crate::mm::pfn;
 use crate::mm::pte::MMPTE;
@@ -45,7 +45,7 @@ fn get_pte_ptr(va: u64) -> Option<*mut MMPTE> {
         if !pde.is_hardware() || pde.large() {
             return None;
         }
-        return Some(crate::mm::vas::pte_address_of(va));
+        Some(crate::mm::vas::pte_address_of(va))
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
@@ -128,11 +128,11 @@ pub fn perform_cow(va: u64) -> Result<(), u64> {
     const PAGE_SIZE: usize = 4096;
     let src_va = match crate::mm::vm::direct_map_phys(old_pa, PAGE_SIZE as u64) {
         Ok(va) => va,
-        Err(()) => return Err(0xC0000017), /* STATUS_NO_MEMORY */
+        Err(_) => return Err(0xC0000017), /* STATUS_NO_MEMORY */
     };
     let dst_va = match crate::mm::vm::direct_map_phys(new_pa, PAGE_SIZE as u64) {
         Ok(va) => va,
-        Err(()) => {
+        Err(_) => {
             crate::mm::vm::direct_unmap_va(src_va, PAGE_SIZE as u64);
             return Err(0xC0000017); /* STATUS_NO_MEMORY */
         }

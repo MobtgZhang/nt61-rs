@@ -32,7 +32,7 @@ static ZERO_THREAD_RUNNING: AtomicBool = AtomicBool::new(true);
 /// This event is signaled when:
 /// - request_zeroed_pages() is called and more zeroed pages are needed
 /// - The zeroed page count drops below ZEROED_TARGET
-/// Uses a Spinlock to prevent the race between is_none() check and set.
+///   Uses a Spinlock to prevent the race between is_none() check and set.
 static ZERO_PAGE_EVENT_STORAGE: Spinlock<Option<Event>> = Spinlock::new(None);
 
 /// Statistics for zero page thread operation

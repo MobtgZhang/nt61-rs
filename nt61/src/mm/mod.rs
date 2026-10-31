@@ -132,6 +132,12 @@ impl FrameDatabase {
     }
 }
 
+impl Default for FrameDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Default boot RAM base. The kernel image is loaded at 1 MiB by
 /// both grub (multiboot) and the UEFI stub.
 pub const BOOT_RAM_BASE: u64 = 0x0010_0000; // 1 MiB

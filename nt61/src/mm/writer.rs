@@ -9,11 +9,11 @@
 //!   that are part of mapped sections (i.e. share an underlying
 //!   file) to that file.
 //
-//! After a page is written it transitions to the standby list. We
-//! model the writer as a periodic function that runs on the
-//! `BalanceSetManager` tick (one second). In the bootstrap the
-//! `BalanceSetManager` is the same thread that runs zero-page
-//! work, so we just expose a `tick()` function.
+//!   After a page is written it transitions to the standby list. We
+//!   model the writer as a periodic function that runs on the
+//!   `BalanceSetManager` tick (one second). In the bootstrap the
+//!   `BalanceSetManager` is the same thread that runs zero-page
+//!   work, so we just expose a `tick()` function.
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -252,6 +252,12 @@ impl MiMappedPageWriter {
     /// Get total pages written by mapped page writer.
     pub fn total_written() -> u64 {
         MPW_MAPPED_TOTAL_WRITTEN.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for MiMappedPageWriter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

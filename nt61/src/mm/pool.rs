@@ -10,8 +10,8 @@
 //!     fault cannot deadlock a non-paged caller
 //!   * Free list with coalescing for memory efficiency
 //
-//! The actual back-end is a bump-allocator that pulls from the global
-//! non-paged pool region set up by `mm::heap::init`.
+//!     The actual back-end is a bump-allocator that pulls from the global
+//!     non-paged pool region set up by `mm::heap::init`.
 
 extern crate alloc;
 
@@ -428,11 +428,13 @@ pub fn allocate_aligned(pool_type: PoolType, size: usize, alignment: usize) -> *
 /// # Safety
 /// `ptr` must have been returned by `allocate_aligned` with the same alignment.
 pub fn free_aligned(ptr: *mut u8) -> *mut u8 {
-    if ptr.is_null() {
-        return core::ptr::null_mut();
+    unsafe {
+        if ptr.is_null() {
+            return core::ptr::null_mut();
+        }
+        let original = unsafe { *((ptr as *mut *mut u8).sub(1)) };
+        free(original)
     }
-    let original = unsafe { *((ptr as *mut *mut u8).sub(1)) };
-    free(original)
 }
 
 /// Free a previous pool allocation and return null.
@@ -453,7 +455,7 @@ pub fn free_aligned(ptr: *mut u8) -> *mut u8 {
 /// // use ptr...
 /// ptr = pool::free(ptr);  // Now ptr is null
 /// ```
-pub fn free(ptr: *mut u8) -> *mut u8 {
+pub unsafe fn free(ptr: *mut u8) -> *mut u8 {
     if ptr.is_null() {
         return core::ptr::null_mut();
     }
@@ -485,9 +487,9 @@ pub fn free(ptr: *mut u8) -> *mut u8 {
         // Mark block as freed to prevent double-free
         header.mark_freed();
 
-        let total = (*header).block_size as usize;
+        let total = header.block_size as usize;
 
-        let pool_type_val = (*header).pool_type;
+        let pool_type_val = header.pool_type;
 
         // Convert pool type byte back to PoolType enum
         let pool_type = match pool_type_val {
@@ -540,16 +542,19 @@ macro_rules! FREE_NULL {
     ($ptr:expr) => {{
         let ptr = $ptr;
         if !ptr.is_null() {
-            crate::mm::pool::free(ptr)
+            $crate::mm::pool::free(ptr)
         } else {
             core::ptr::null_mut()
         }
     }};
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Free with tag (for tracking purposes).
 /// Returns null like `free()`.
-pub fn free_with_tag(ptr: *mut u8, tag: u32) -> *mut u8 {
+pub unsafe fn free_with_tag(ptr: *mut u8, tag: u32) -> *mut u8 {
     // Verify tag matches if possible (for debugging builds)
     if !ptr.is_null() {
         unsafe {
@@ -670,6 +675,12 @@ impl PoolState {
     }
 }
 
+impl Default for PoolState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Pool state with free lists (lazily initialized)
 static POOL_STATE: Spinlock<Option<PoolState>> = Spinlock::new(None);
 
@@ -747,7 +758,7 @@ pub fn allocate_from_freelist(pool_type: PoolType, size: usize) -> Option<*mut u
 
                 if remaining_size >= MIN_FREE_BLOCK_SIZE {
                     // Split: create new free block for remainder
-                    let new_block_ptr = block_ptr.add(size) as *mut FreeBlock;
+                    let new_block_ptr = block_ptr.add(size);
                     (*new_block_ptr) = FreeBlock::new(remaining_size, pool_type);
                     freelist[i] = new_block_ptr;
                 } else {
@@ -904,8 +915,12 @@ mod tests {
         ensure_test_heap();
         let ptr = allocate_tagged(PoolType::NonPaged, 32, tags::MM);
         assert!(!ptr.is_null());
-        free(ptr);
-        free(ptr);
+        unsafe {
+            free(ptr);
+        }
+        unsafe {
+            free(ptr);
+        }
     }
 
     #[test]
@@ -914,6 +929,8 @@ mod tests {
         ensure_test_heap();
         let ptr = allocate_tagged(PoolType::NonPaged, 32, tags::PROCESS);
         assert!(!ptr.is_null());
-        free_with_tag(ptr, tags::THREAD);
+        unsafe {
+            free_with_tag(ptr, tags::THREAD);
+        }
     }
 }

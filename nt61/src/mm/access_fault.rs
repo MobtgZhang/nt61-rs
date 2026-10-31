@@ -18,9 +18,9 @@
 //!    page, resolves a prototype PTE, etc.) and updates the PTE.
 //! 4. Returns to the trap handler which `iret`s / `eret`s.
 //
-//! If the fault is unresolvable, returns the appropriate NTSTATUS.
-//! The trap handler then turns that into a status code in the
-//! saved `rax` and dispatches to the user-mode exception dispatcher.
+//!    If the fault is unresolvable, returns the appropriate NTSTATUS.
+//!    The trap handler then turns that into a status code in the
+//!    saved `rax` and dispatches to the user-mode exception dispatcher.
 
 use crate::ke::scheduler;
 use crate::mm::cow;
@@ -130,10 +130,7 @@ fn walk_user_page_table(va: u64) -> Option<*mut MMPTE> {
     // PDPT - allocate if missing
     let pdpt_phys = if !pml4e.is_hardware() {
         // Allocate a new PDPT page
-        let pdpt_pfn = match pfn::allocate_pfn() {
-            Some(p) => p,
-            None => return None,
-        };
+        let pdpt_pfn = pfn::allocate_pfn()?;
         let phys = crate::mm::pte::pfn_to_phys(pdpt_pfn);
         // Zero the new PDPT
         unsafe {
@@ -218,7 +215,7 @@ fn resolve_pte(pte: MMPTE, va: u64, pte_ptr: *mut MMPTE, access: AccessFlags) ->
         return resolve_demand_zero(va, pte_ptr, access);
     }
     // Has some bits set: page-file PTE
-    return resolve_page_file(va, pte_ptr, access);
+    resolve_page_file(va, pte_ptr, access)
 }
 
 fn resolve_hardware(pte: MMPTE, va: u64, pte_ptr: *mut MMPTE, access: AccessFlags) -> FaultStatus {

@@ -87,7 +87,7 @@ pub fn should_log(level: LogLevel) -> bool {
 macro_rules! kprintln_mm {
     ($level:expr, $($arg:tt)*) => {
         if $level as u8
-            <= crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed)
+            <= $crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed)
         {}
     };
 }
@@ -98,7 +98,7 @@ macro_rules! kprintln_mm {
 macro_rules! kprintln_mm_color {
     ($level:expr, $($arg:tt)*) => {
         if $level as u8
-            <= crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed)
+            <= $crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed)
         {}
     };
 }
@@ -109,7 +109,7 @@ macro_rules! kprintln_mm_color {
 macro_rules! mm_log {
     ($level:expr, $subsystem:expr, $($arg:tt)*) => {
         if $level as u8
-            <= crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed)
+            <= $crate::mm::logging::MM_LOG_LEVEL.load(core::sync::atomic::Ordering::Relaxed)
         {
             // // crate::kprintln!(concat!("[", $subsystem, "] ", $($arg)*));
         }

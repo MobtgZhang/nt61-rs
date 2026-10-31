@@ -53,7 +53,7 @@ pub fn reserve_system_ptes(count: u64) -> Option<u64> {
         return None;
     }
     let _g = SYSTEM_PTE_LOCK.lock();
-    let regions = (count + SYSTEM_PTE_REGION_PAGES - 1) / SYSTEM_PTE_REGION_PAGES;
+    let regions = count.div_ceil(SYSTEM_PTE_REGION_PAGES);
     if regions > 512 {
         return None;
     }
@@ -108,12 +108,12 @@ pub fn reserve_system_ptes(_count: u64) -> Option<u64> {
 /// This function properly unmaps all PTE entries and invalidates TLB.
 #[cfg(target_arch = "x86_64")]
 pub fn release_system_ptes(va: u64, count: u64) {
-    if va < SYSTEM_PTE_BASE || va >= SYSTEM_PTE_END {
+    if !(SYSTEM_PTE_BASE..SYSTEM_PTE_END).contains(&va) {
         return;
     }
     let _g = SYSTEM_PTE_LOCK.lock();
     let start_region = ((va - SYSTEM_PTE_BASE) / SYSTEM_PTE_REGION_BYTES) as usize;
-    let regions = ((count + SYSTEM_PTE_REGION_PAGES - 1) / SYSTEM_PTE_REGION_PAGES) as usize;
+    let regions = count.div_ceil(SYSTEM_PTE_REGION_PAGES) as usize;
     for region in start_region..start_region + regions {
         let bit = region;
         let word = bit / 64;

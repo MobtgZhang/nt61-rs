@@ -21,7 +21,7 @@
 //! * `pfn_database_index` — index back into this database (used to
 //!   recover the PFN from a pointer to an `_MMPFN`).
 //
-//! Pages are bucketed into state lists:
+//!   Pages are bucketed into state lists:
 //
 //! * Active (valid) — not on any list, the owning PTE points to us.
 //! * Standby 0..7 — 8 priority buckets for clean-but-evicted pages.
@@ -33,8 +33,8 @@
 //! * Zeroed — pages that have been zeroed and are ready to hand out.
 //! * Bad — pages the firmware reported as broken.
 //
-//! The free / zeroed / standby / modified lists are protected by
-//! `PFN_LOCK` (the outermost lock in the system per NT conventions).
+//!   The free / zeroed / standby / modified lists are protected by
+//!   `PFN_LOCK` (the outermost lock in the system per NT conventions).
 
 use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -313,6 +313,9 @@ impl PfnDatabase {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Initialise the database with a contiguous storage region
     /// (`storage` of `storage_entries * core::mem::size_of::<MMPFN>()`)
     /// covering PFNs `[base_pfn, base_pfn + pfn_count)`.
@@ -320,7 +323,7 @@ impl PfnDatabase {
     /// All PFNs start in the Active state with the supplied `state`
     /// for the first pass. `mark_active` puts a page in the free
     /// list; `mark_zeroed` puts it in the zeroed list.
-    pub fn init(
+    pub unsafe fn init(
         &mut self,
         storage: *mut u8,
         storage_bytes: usize,
@@ -367,7 +370,7 @@ impl PfnDatabase {
         self.pfn_array = storage as *mut MMPFN;
         self.pfn_count = usable_pfns as u64;
         self.lowest_pfn = base_pfn;
-        self.highest_pfn = base_pfn.checked_add(usable_pfns as u64).unwrap_or(u64::MAX);
+        self.highest_pfn = base_pfn.saturating_add(usable_pfns as u64);
         self.initialized = true;
         // Inline verification — read back immediately.
         crate::hal::serial::write_string_always("[mm] init verify: self=0x");
@@ -410,7 +413,7 @@ impl PfnDatabase {
             return None;
         }
         let off = (entry as usize) - (self.pfn_array as usize);
-        if off % core::mem::size_of::<MMPFN>() != 0 {
+        if !off.is_multiple_of(core::mem::size_of::<MMPFN>()) {
             return None;
         }
         let idx = off / core::mem::size_of::<MMPFN>();
@@ -446,6 +449,9 @@ impl PfnDatabase {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn insert_head_entry(&mut self, entry: *mut MMPFN, pfn: PfnNumber) {
         let state = (*entry).state();
         let list_idx = Self::list_index_for(state, (*entry).standby_priority());
@@ -478,6 +484,9 @@ impl PfnDatabase {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     pub unsafe fn unlink_entry(&mut self, entry: *mut MMPFN, _pfn: PfnNumber) {
         let state = (*entry).state();
         let list_idx = Self::list_index_for(state, (*entry).standby_priority());
@@ -597,6 +606,9 @@ impl PfnDatabase {
         self.lists[PFNL_MODIFIED].head == 0 && self.lists[PFNL_FREE].head == 0
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Iterator over a list starting at `head`.
     pub unsafe fn iter_list(&self, head: PfnNumber, mut cb: impl FnMut(PfnNumber)) {
         let mut current = head;
@@ -797,6 +809,12 @@ impl PfnDatabase {
     }
 }
 
+impl Default for PfnDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Global singleton and accessors
 // ---------------------------------------------------------------------------
@@ -839,7 +857,7 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
         PFN_COUNT = pfn_count;
         PFN_BASE = base_pfn;
         // Try to allocate the full-size storage from the buddy.
-        let pages = (bytes_needed + 4095) / 4096;
+        let pages = bytes_needed.div_ceil(4096);
         if cfg!(target_arch = "loongarch64") {
             crate::hal::serial::write_string("[mm] pfn::init: using bootstrap storage\r\n");
             PFN_STORAGE_PTR = (*core::ptr::addr_of_mut!(PFN_STORAGE_BOOTSTRAP)).as_mut_ptr();
@@ -937,7 +955,7 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
         while zero_base < usable_bytes {
             storage_local.add(zero_base).write_volatile(0);
             zero_base += 1;
-            if zero_base % (64 * 1024) == 0 {
+            if zero_base.is_multiple_of(64 * 1024) {
                 crate::hal::serial::write_string_always("[mm] zero@");
                 crate::mm::write_decimal_u64(zero_base as u64);
                 crate::hal::serial::write_string_always("\r\n");
@@ -947,7 +965,7 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
         (*db_raw).pfn_array = PFN_STORAGE_PTR as *mut MMPFN;
         (*db_raw).pfn_count = usable_pfns as u64;
         (*db_raw).lowest_pfn = base_pfn;
-        (*db_raw).highest_pfn = base_pfn.checked_add(usable_pfns as u64).unwrap_or(u64::MAX);
+        (*db_raw).highest_pfn = base_pfn.saturating_add(usable_pfns as u64);
         (*db_raw).initialized = true;
         crate::hal::serial::write_string_always("[mm] raw_init done\r\n");
         crate::hal::serial::write_string_always("[mm] pfn::init: db init done\r\n");
@@ -978,10 +996,10 @@ pub fn init(base_pfn: PfnNumber, pfn_count: PfnNumber) {
     if let Some((base, size)) = crate::mm::heap::KERNEL_HEAP.configured_region() {
         let heap_base_pfn = (base as u64).div_ceil(4096);
         let heap_end_pfn = (base as u64 + size as u64) / 4096;
-        if heap_end_pfn > heap_base_pfn {
-            if !crate::mm::pfn::reserve_pfn_range(heap_base_pfn, heap_end_pfn - heap_base_pfn) {
-                crate::hal::serial::write_string_always("[mm] WARN: heap pfn reserve failed\r\n");
-            }
+        if heap_end_pfn > heap_base_pfn
+            && !crate::mm::pfn::reserve_pfn_range(heap_base_pfn, heap_end_pfn - heap_base_pfn)
+        {
+            crate::hal::serial::write_string_always("[mm] WARN: heap pfn reserve failed\r\n");
         }
     }
 
@@ -1023,7 +1041,7 @@ pub fn allocate_pfn() -> Option<PfnNumber> {
     crate::hal::serial::write_string_always("[PFN] OUT_OF_PFNS: self-heal free_in_db=0x");
     crate::hal::serial::write_hex_u64(free_count);
     crate::hal::serial::write_string_always(" free_list_count=0x");
-    crate::hal::serial::write_hex_u64(db.lists[PFNL_FREE].count as u64);
+    crate::hal::serial::write_hex_u64(db.lists[PFNL_FREE].count);
     crate::hal::serial::write_string_always("\r\n");
     if free_count > 0 {
         // Try to repair the list by re-inserting all free entries.
@@ -1044,7 +1062,7 @@ pub fn allocate_pfn() -> Option<PfnNumber> {
         crate::hal::serial::write_string_always("[PFN] self-heal: rebuilt free list, head=0x");
         crate::hal::serial::write_hex_u64(db.lists[PFNL_FREE].head);
         crate::hal::serial::write_string_always(" count=0x");
-        crate::hal::serial::write_hex_u64(db.lists[PFNL_FREE].count as u64);
+        crate::hal::serial::write_hex_u64(db.lists[PFNL_FREE].count);
         crate::hal::serial::write_string_always("\r\n");
         // Retry the allocation.
         if let Some(pfn) = db.pop_free() {
@@ -1319,7 +1337,7 @@ pub fn get_free_pfns() -> u64 {
 
 pub fn get_free_list_stats() -> (u64, u64) {
     let db = PFN_DB.lock();
-    (db.lists[PFNL_FREE].head, db.lists[PFNL_FREE].count as u64)
+    (db.lists[PFNL_FREE].head, db.lists[PFNL_FREE].count)
 }
 
 /// Lookup a PFN entry pointer from a physical address.
@@ -1386,7 +1404,9 @@ mod tests {
         // Track 1500 PFNs (range 1000..2500) so that tests which
         // exercise PFNs beyond 2000 still find them in range.
         let storage = alloc::vec::Vec::leak(vec![0u8; 16 * 16 * 4096]);
-        db.init(storage.as_mut_ptr(), storage.len(), 1000, 1500);
+        unsafe {
+            db.init(storage.as_mut_ptr(), storage.len(), 1000, 1500);
+        }
         db.seed_free(1000, 1500);
         db
     }

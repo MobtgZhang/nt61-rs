@@ -138,13 +138,16 @@ impl BuddyAllocator {
         }
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// Hand the allocator a contiguous region of physical memory. The
     /// region is described by a slice of (base, length) pairs.
     ///
     /// For the bootstrap we accept a single region - the QEMU virt
     /// machine reports a single contiguous block of usable memory so
     /// this is sufficient.
-    pub fn init(
+    pub unsafe fn init(
         &mut self,
         region_base: u64,
         region_size: u64,
@@ -355,7 +358,7 @@ impl BuddyAllocator {
         if !self.initialised || phys_addr < self.base_address {
             return;
         }
-        let frame = ((phys_addr - self.base_address) / 4096) as u64;
+        let frame = (phys_addr - self.base_address) / 4096;
         let order = order_of(count).min(MAX_BUDDY_ORDER - 1);
         let block_pages = 1u64 << order;
         if frame >= self.num_frames || frame.saturating_add(block_pages) > self.num_frames {
@@ -411,6 +414,12 @@ impl BuddyAllocator {
     /// Total frame count.
     pub fn total_count(&self) -> u64 {
         self.num_frames
+    }
+}
+
+impl Default for BuddyAllocator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -545,7 +554,7 @@ fn legacy_init(region_base: u64, region_size: u64) {
     crate::hal::serial::write_string("LI_INIT_RNG_OK\r\n");
 
     unsafe {
-        let table_ptr = (*core::ptr::addr_of_mut!(FRAME_TABLE)).as_mut_ptr() as *mut u8;
+        let table_ptr = (*core::ptr::addr_of_mut!(FRAME_TABLE)).as_mut_ptr();
         crate::hal::serial::write_string("LI2\r\n");
 
         let mut alloc = BUDDY_ALLOCATOR.lock();

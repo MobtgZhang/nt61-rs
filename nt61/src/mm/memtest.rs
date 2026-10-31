@@ -4,7 +4,7 @@
 //! Tests physical memory using various patterns to detect faulty RAM.
 
 /// Memory test signature
-pub const MEMTEST_SIGNATURE: u32 = 0x4D_5445_53; // "MTES"
+pub const MEMTEST_SIGNATURE: u32 = 0x4D54_4553; // "MTES"
 
 /// Memory test status
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -109,7 +109,7 @@ impl MemTestContext {
         }
 
         self.data.test_end_time = get_time_ticks();
-        &self.data
+        self.data
     }
 
     /// Run a single pattern test

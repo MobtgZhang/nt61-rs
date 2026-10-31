@@ -95,7 +95,7 @@ pub struct HibernateHeader {
 impl Default for HibernateHeader {
     fn default() -> Self {
         Self {
-            signature: [b'H', b'I', b'B', b'R'],
+            signature: *b"HIBR",
             version: HIBER_VERSION,
             header_size: core::mem::size_of::<HibernateHeader>() as u32,
             image_size: 0,
@@ -1044,7 +1044,7 @@ fn compute_header_checksum(header: &HibernateHeader) -> u32 {
     };
     let checksum_offset = core::mem::offset_of!(HibernateHeader, checksum);
     let mut sum: u32 = 0;
-    for (i, word) in header_bytes.chunks_exact(4).enumerate() {
+    for (i, word) in header_bytes.as_chunks::<4>().0.iter().enumerate() {
         if i * 4 == checksum_offset {
             continue;
         }

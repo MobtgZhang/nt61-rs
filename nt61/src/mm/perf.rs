@@ -136,6 +136,12 @@ impl PerfCounters {
     }
 }
 
+impl Default for PerfCounters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Global performance counter instance
 pub static PERF: PerfCounters = PerfCounters::new();
 

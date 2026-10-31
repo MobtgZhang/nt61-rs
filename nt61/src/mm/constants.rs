@@ -57,7 +57,7 @@ pub const KERNEL_LIMIT: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 pub const KERNEL_DIRECT_MAP_BASE: u64 = 0xFFFF_8800_0000_0000;
 
 /// Kernel image base for PE loader.
-pub const KERNEL_IMAGE_BASE: u64 = 0xFFFF8000_0000_0000;
+pub const KERNEL_IMAGE_BASE: u64 = 0xFFFF_8000_0000_0000;
 
 // ============================================================================
 // User Address Space

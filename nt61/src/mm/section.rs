@@ -53,6 +53,12 @@ impl Section {
     }
 }
 
+impl Default for Section {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 pub struct ControlArea {
     pub file_pointer: u64,
@@ -76,6 +82,12 @@ impl ControlArea {
     }
 }
 
+impl Default for ControlArea {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 pub struct Segment {
     pub control_area: *mut ControlArea,
@@ -94,6 +106,12 @@ impl Segment {
             size_of_segment: 0,
             protection_mask: 0,
         }
+    }
+}
+
+impl Default for Segment {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -143,68 +161,64 @@ pub fn create_section(
     section_attributes: u32,
     file_handle: u64,
 ) -> Result<usize, i32> {
-    let section_ptr = pool::allocate_tagged(
-        PoolType::NonPaged,
-        core::mem::size_of::<Section>(),
-        u32::from_le_bytes(*b"Sect"),
-    ) as *mut Section;
-
-    if section_ptr.is_null() {
-        return Err(0xC000_0017u32 as i32); // STATUS_NO_MEMORY
-    }
-
     unsafe {
-        ptr::write(section_ptr, Section::new());
-        (*section_ptr).size = size;
-        (*section_ptr).max_protection = max_protection;
-        (*section_ptr).section_attributes = section_attributes;
-    }
+        let section_ptr = pool::allocate_tagged(
+            PoolType::NonPaged,
+            core::mem::size_of::<Section>(),
+            u32::from_le_bytes(*b"Sect"),
+        ) as *mut Section;
 
-    let control_area_ptr = pool::allocate_tagged(
-        PoolType::NonPaged,
-        core::mem::size_of::<ControlArea>(),
-        u32::from_le_bytes(*b"Ctrl"),
-    ) as *mut ControlArea;
+        if section_ptr.is_null() {
+            return Err(0xC000_0017u32 as i32); // STATUS_NO_MEMORY
+        }
 
-    if control_area_ptr.is_null() {
-        pool::free(section_ptr as *mut u8);
-        return Err(0xC000_0017u32 as i32);
-    }
+        unsafe {
+            ptr::write(section_ptr, Section::new());
+            (*section_ptr).size = size;
+            (*section_ptr).max_protection = max_protection;
+            (*section_ptr).section_attributes = section_attributes;
+        }
 
-    unsafe {
+        let control_area_ptr = pool::allocate_tagged(
+            PoolType::NonPaged,
+            core::mem::size_of::<ControlArea>(),
+            u32::from_le_bytes(*b"Ctrl"),
+        ) as *mut ControlArea;
+
+        if control_area_ptr.is_null() {
+            pool::free(section_ptr as *mut u8);
+            return Err(0xC000_0017u32 as i32);
+        }
         ptr::write(control_area_ptr, ControlArea::new());
         (*control_area_ptr).file_pointer = file_handle;
-        (*control_area_ptr).number_of_pages = ((size + 0xFFF) / 0x1000) as u32;
+        (*control_area_ptr).number_of_pages = size.div_ceil(0x1000) as u32;
         (*section_ptr).control_area = control_area_ptr;
-    }
 
-    let segment_ptr = pool::allocate_tagged(
-        PoolType::NonPaged,
-        core::mem::size_of::<Segment>(),
-        u32::from_le_bytes(*b"Segm"),
-    ) as *mut Segment;
+        let segment_ptr = pool::allocate_tagged(
+            PoolType::NonPaged,
+            core::mem::size_of::<Segment>(),
+            u32::from_le_bytes(*b"Segm"),
+        ) as *mut Segment;
 
-    if segment_ptr.is_null() {
-        pool::free(control_area_ptr as *mut u8);
-        pool::free(section_ptr as *mut u8);
-        return Err(0xC000_0017u32 as i32);
-    }
-
-    unsafe {
+        if segment_ptr.is_null() {
+            pool::free(control_area_ptr as *mut u8);
+            pool::free(section_ptr as *mut u8);
+            return Err(0xC000_0017u32 as i32);
+        }
         ptr::write(segment_ptr, Segment::new());
         (*segment_ptr).control_area = control_area_ptr;
         (*segment_ptr).size_of_segment = size;
         (*segment_ptr).protection_mask = max_protection;
         (*section_ptr).segment = segment_ptr;
-    }
 
-    match alloc_section_slot(section_ptr) {
-        Some(index) => Ok(index),
-        None => {
-            pool::free(segment_ptr as *mut u8);
-            pool::free(control_area_ptr as *mut u8);
-            pool::free(section_ptr as *mut u8);
-            Err(0xC000_0017u32 as i32)
+        match alloc_section_slot(section_ptr) {
+            Some(index) => Ok(index),
+            None => {
+                pool::free(segment_ptr as *mut u8);
+                pool::free(control_area_ptr as *mut u8);
+                pool::free(section_ptr as *mut u8);
+                Err(0xC000_0017u32 as i32)
+            }
         }
     }
 }
@@ -214,7 +228,6 @@ pub fn destroy_section(section_index: usize) -> Result<(), i32> {
         Some(ptr) => ptr,
         None => return Err(0xC000_0008u32 as i32), // STATUS_INVALID_HANDLE
     };
-
     unsafe {
         let section = &mut *section_ptr;
 
@@ -281,7 +294,7 @@ pub fn map_view(
             (*section.control_area).number_of_mapped_views += 1;
         }
 
-        Ok(base_address as u64)
+        Ok(base_address)
     }
 }
 

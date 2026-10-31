@@ -261,6 +261,12 @@ impl PageCacheStats {
     }
 }
 
+impl Default for PageCacheStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Page cache implementation
 pub struct PageCache {
     /// All cached pages
