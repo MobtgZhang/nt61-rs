@@ -96,7 +96,6 @@ fn cube(x: f64) -> f64 {
 /// Compute the cubic function:
 ///   `W(t) = C * (t - K)³ + W_max`
 /// where `K = cbrt(W_max * (1 - beta) / C)`.
-
 fn cubic_window(t_ms: f64, w_max: u32, epoch_ms: f64) -> u32 {
     if w_max == 0 {
         return INITIAL_CWND;
@@ -108,7 +107,7 @@ fn cubic_window(t_ms: f64, w_max: u32, epoch_ms: f64) -> u32 {
     let t = t_ms - epoch_ms;
     let raw = CUBIC_C * cube(t - k) + w_max_f;
     if raw < INITIAL_CWND as f64 {
-        INITIAL_CWND as u32
+        INITIAL_CWND
     } else {
         raw as u32
     }
@@ -269,6 +268,12 @@ impl CongestionControl {
     }
 }
 
+impl Default for CongestionControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // =============================================================================
 // Retransmission timer (RFC 6298)
 // =============================================================================
@@ -328,6 +333,12 @@ impl RetransmissionTimeout {
 
     pub fn clear_karn_skip(&mut self) {
         self.karn_skip = false;
+    }
+}
+
+impl Default for RetransmissionTimeout {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

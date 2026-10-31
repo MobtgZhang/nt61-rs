@@ -103,7 +103,7 @@ impl TcpHeader {
     /// below 5 (20 bytes) is illegal and must be rejected.
     pub fn validate(&self, data: &[u8]) -> bool {
         let hdr = self.header_length();
-        if hdr < TCP_HDR_SIZE || hdr > Self::MAX_HDR_SIZE {
+        if !(TCP_HDR_SIZE..=Self::MAX_HDR_SIZE).contains(&hdr) {
             return false;
         }
         data.len() >= hdr
@@ -234,7 +234,7 @@ impl TcpControlBlock {
             congestion_state: CongestionState::SlowStart,
             recover: 0,
             retransmit_count: 0,
-            last_send_time: pit::get_system_time_ms() as u64,
+            last_send_time: pit::get_system_time_ms(),
             in_retransmit: false,
             listen_socket_id: 0,
         }
@@ -248,11 +248,7 @@ impl TcpControlBlock {
             self.rttvar = measured_rtt / 2;
         } else {
             // Update RTTVAR
-            let delta = if measured_rtt > self.srtt {
-                measured_rtt - self.srtt
-            } else {
-                self.srtt - measured_rtt
-            };
+            let delta = measured_rtt.abs_diff(self.srtt);
             self.rttvar = (3 * self.rttvar + delta) / 4;
 
             // Update SRTT
@@ -261,7 +257,7 @@ impl TcpControlBlock {
 
         // Calculate RTO with minimum 1 second and maximum 60 seconds
         let rto_calc = self.srtt + 4 * self.rttvar;
-        self.rto = rto_calc.max(1000).min(60000);
+        self.rto = rto_calc.clamp(1000, 60000);
     }
 
     /// handle duplicate ACK for fast retransmit
@@ -394,6 +390,12 @@ impl TcpControlBlock {
     /// wrap-safe sequence arithmetic.
     pub fn flight_size(&self) -> u32 {
         self.snd_nxt.wrapping_sub(self.snd_una)
+    }
+}
+
+impl Default for TcpControlBlock {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -899,7 +901,7 @@ fn generate_isn() -> u32 {
     }
     // Fallback only: mix the tick through a splitmix64 finalizer so the
     // ISN is not simply the tick value.
-    let mut z = pit::get_system_time_ms() as u64 ^ 0x9E37_79B9_7F4A_7C15;
+    let mut z = pit::get_system_time_ms() ^ 0x9E37_79B9_7F4A_7C15;
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     (z ^ (z >> 31)) as u32
@@ -1060,13 +1062,9 @@ pub fn close(socket_id: u32) -> bool {
 pub fn send(socket_id: u32, data: &[u8]) -> Option<usize> {
     let mut connections = TCP_CONNECTIONS.lock();
 
-    let idx = match connections
+    let idx = connections
         .iter()
-        .position(|tcb| tcb.socket_id == socket_id)
-    {
-        Some(i) => i,
-        None => return None,
-    };
+        .position(|tcb| tcb.socket_id == socket_id)?;
     let tcb = &mut connections[idx];
 
     if tcb.state != TcpState::Established {
@@ -1087,7 +1085,7 @@ pub fn send(socket_id: u32, data: &[u8]) -> Option<usize> {
 
     // Make a contiguous copy of the buffered data so we can pass a
     // &[u8] slice to send_segment while still holding the &mut tcb.
-    let tx_snapshot: alloc::vec::Vec<u8> = tcb.tx_buf.iter().copied().collect();
+    let tx_snapshot: alloc::vec::Vec<u8> = tcb.tx_buf.to_vec();
     send_segment(
         tcb,
         tcp_flags::PSH | tcp_flags::ACK,
@@ -1130,13 +1128,13 @@ pub fn receive(socket_id: u32, buffer: &mut [u8]) -> Option<usize> {
         // Remove received data from buffer
         tcb.rx_buf.drain(..copy_len);
 
-        return Some(copy_len);
+        Some(copy_len)
     }
 }
 
 /// Get TCP statistics
 pub fn get_stats() -> TcpStats {
-    let mut stats = (*TCP_STATS.lock()).clone();
+    let mut stats = *TCP_STATS.lock();
     stats.segs_sent = TCP_SEGMENTS_SENT.load(Ordering::Relaxed);
     stats.segs_retrans = TCP_SEGMENTS_RETRANSMITTED.load(Ordering::Relaxed);
     stats
@@ -1146,7 +1144,7 @@ pub fn get_stats() -> TcpStats {
 /// This should be called periodically by the network stack
 pub fn check_retransmit_timers() {
     use crate::hal::common::pit;
-    let now = pit::get_system_time_ms() as u64;
+    let now = pit::get_system_time_ms();
 
     let mut connections = TCP_CONNECTIONS.lock();
 
@@ -1203,7 +1201,7 @@ pub fn check_retransmit_timers() {
             };
             send_segment(tcb, flags, tcb.snd_una, tcb.rcv_nxt, payload_opt);
 
-            tcb.last_send_time = pit::get_system_time_ms() as u64;
+            tcb.last_send_time = pit::get_system_time_ms();
             tcb.in_retransmit = true;
 
             // handle timeout

@@ -85,7 +85,7 @@ impl Ipv4Header {
 
     /// Version nibble (must be 4 for this header type).
     pub fn version(&self) -> u8 {
-        (self.version_ihl >> 4) as u8
+        self.version_ihl >> 4
     }
 
     /// Validate that `data` is a self-consistent IPv4 packet.
@@ -96,7 +96,7 @@ impl Ipv4Header {
     /// `total_length` must be >= IHL and must not exceed the buffer.
     pub fn validate(&self, data: &[u8]) -> bool {
         let ihl = self.header_length();
-        if ihl < IPV4_MIN_SIZE || ihl > IPV4_MAX_HDR_SIZE {
+        if !(IPV4_MIN_SIZE..=IPV4_MAX_HDR_SIZE).contains(&ihl) {
             return false;
         }
         if data.len() < ihl {
@@ -379,7 +379,7 @@ pub fn forward_ipv4(header: &Ipv4Header, payload: &[u8]) -> bool {
                 header.dst_ip,
                 header.src_ip,
                 crate::netstack::icmp::DestinationUnreachableCode::NetworkUnreachable,
-                &quote_original(&header, payload),
+                &quote_original(header, payload),
             );
         }
         return false;
@@ -391,7 +391,7 @@ pub fn forward_ipv4(header: &Ipv4Header, payload: &[u8]) -> bool {
                 crate::netstack::icmp::send_time_exceeded(
                     header.dst_ip,
                     header.src_ip,
-                    &quote_original(&header, payload),
+                    &quote_original(header, payload),
                 );
             }
             return false;
@@ -466,7 +466,7 @@ pub fn ipv4_input(header: &Ipv4Header, payload: &[u8], nic_type: NicType, nic_in
 
     // Check if the packet is for us
     let our_ips = ipif::get_our_ip_addresses();
-    let is_for_us = our_ips.iter().any(|&ip| ip == header.dst_ip);
+    let is_for_us = our_ips.contains(&header.dst_ip);
 
     // Also check for broadcast
     let is_broadcast = header.dst_ip == 0xFFFFFFFF || is_broadcast_ip(header.dst_ip);
@@ -482,7 +482,7 @@ pub fn ipv4_input(header: &Ipv4Header, payload: &[u8], nic_type: NicType, nic_in
             crate::netstack::icmp::send_time_exceeded(
                 header.dst_ip,
                 header.src_ip,
-                &quote_original(&header, payload),
+                &quote_original(header, payload),
             );
         }
         return;
@@ -716,7 +716,7 @@ pub fn send_ipv4(src_ip: u32, dst_ip: u32, protocol: u8, payload: &[u8]) -> bool
         } else {
             build_ipv4_packet(src_ip, dst_ip, protocol, 64, fragment_payload)
         };
-        offset_units += ((fragment_payload.len() as u16) + 7) / 8;
+        offset_units += (fragment_payload.len() as u16).div_ceil(8);
 
         let frame = eth::build_ethernet_frame(&dst_mac, &src_mac, ETHER_TYPE_IPV4, &packet);
         let sent = crate::drivers::net::send_to_nic(nic_type, nic_idx, &frame);

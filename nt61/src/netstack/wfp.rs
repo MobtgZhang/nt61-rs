@@ -127,7 +127,7 @@ impl FilterEngine {
         let filter_id = filter.id;
         self.filters.push(filter);
 
-        self.filters.sort_by(|a, b| b.weight.cmp(&a.weight));
+        self.filters.sort_by_key(|a| core::cmp::Reverse(a.weight));
 
         filter_id
     }

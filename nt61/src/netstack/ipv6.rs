@@ -7,7 +7,7 @@
 //! - ICMPv6 (including NDP and Echo)
 //! - Address auto-configuration (SLAAC)
 //
-//! Clean-room implementation based on RFC 8200, RFC 4861, RFC 4862.
+//!   Clean-room implementation based on RFC 8200, RFC 4861, RFC 4862.
 
 use alloc::format;
 use alloc::string::String;
@@ -122,7 +122,7 @@ impl IPv6Header {
 
     /// Get traffic class
     pub fn traffic_class(&self) -> u8 {
-        self.version_class & 0xFF
+        self.version_class
     }
 
     /// Get flow label
@@ -546,7 +546,7 @@ fn handle_router_solicitation(src: &[u8; 16]) {
     drop(stats);
 
     // Record router solicitation statistics
-    let now = pit::get_system_time_ms() as u64;
+    let now = pit::get_system_time_ms();
 
     // Add or update NDP cache entry for this router
     let mut cache = NDP_CACHE.lock();
@@ -589,9 +589,9 @@ fn handle_router_advertisement(data: &[u8]) {
                     let _router_mac = &data[offset + 2..offset + 8];
                 }
             }
-            3 => {
+            3
                 // Prefix information
-                if opt_len >= 5 && offset + 32 <= data.len() {
+                if opt_len >= 5 && offset + 32 <= data.len() => {
                     let prefix_len = data[offset + 2];
                     let valid_lifetime = u32::from_be_bytes([
                         data[offset + 4],
@@ -607,11 +607,10 @@ fn handle_router_advertisement(data: &[u8]) {
                     ]);
                     prefix_info_holder = Some((prefix_len, valid_lifetime, preferred_lifetime));
                 }
-            }
             _ => {}
         }
 
-        offset += (opt_len * 8) as usize;
+        offset += opt_len * 8;
     }
 
     // Use parsed information for SLAAC address configuration
@@ -639,7 +638,7 @@ fn handle_neighbor_solicitation(src: &[u8; 16], dst: &[u8; 16], data: &[u8]) {
 
     // Update NDP cache for the source
     let mut cache = NDP_CACHE.lock();
-    let now = pit::get_system_time_ms() as u64;
+    let now = pit::get_system_time_ms();
 
     // Update or add entry for the soliciting node
     if let Some(entry) = cache.iter_mut().find(|e| e.ipv6_addr == *src) {
@@ -678,12 +677,12 @@ fn handle_neighbor_advertisement(_src: &[u8; 16], data: &[u8]) {
             break;
         }
 
-        offset += (opt_len * 8) as usize;
+        offset += opt_len * 8;
     }
 
     // Update NDP cache
     let mut cache = NDP_CACHE.lock();
-    let now = pit::get_system_time_ms() as u64;
+    let now = pit::get_system_time_ms();
 
     if let Some(addr) = ll_addr {
         if let Some(entry) = cache.iter_mut().find(|e| e.ipv6_addr == target) {
@@ -795,7 +794,7 @@ fn send_echo_reply(dst: &[u8; 16], data: &[u8]) {
 
 /// Get IPv6 statistics
 pub fn get_stats() -> Ipv6Stats {
-    (*IPV6_STATS.lock()).clone()
+    *IPV6_STATS.lock()
 }
 
 /// Lookup neighbor in NDP cache
@@ -811,7 +810,7 @@ pub fn lookup_neighbor(ipv6: &[u8; 16]) -> Option<[u8; 6]> {
 pub fn add_neighbor(ipv6: &[u8; 16], mac: &[u8; 6]) {
     use crate::hal::common::pit;
     let mut cache = NDP_CACHE.lock();
-    let now = pit::get_system_time_ms() as u64;
+    let now = pit::get_system_time_ms();
 
     if let Some(entry) = cache.iter_mut().find(|e| e.ipv6_addr == *ipv6) {
         entry.link_addr = *mac;

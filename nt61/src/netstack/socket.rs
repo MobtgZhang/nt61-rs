@@ -476,9 +476,7 @@ pub fn send(socket_id: u32, data: &[u8]) -> Result<usize, SocketError> {
             SocketType::Stream => {
                 if let Some(tcp_id) = s.tcp_socket_id {
                     drop(sockets);
-                    tcp::send(tcp_id, data)
-                        .map(|n| n as usize)
-                        .ok_or(SocketError::ConnectionReset)
+                    tcp::send(tcp_id, data).ok_or(SocketError::ConnectionReset)
                 } else {
                     Err(SocketError::NotConnected)
                 }
@@ -488,7 +486,6 @@ pub fn send(socket_id: u32, data: &[u8]) -> Result<usize, SocketError> {
                     if let Some(remote) = s.remote_addr {
                         drop(sockets);
                         udp::send(udp_idx, remote.ip(), remote.port, data)
-                            .map(|n| n as usize)
                             .ok_or(SocketError::WouldBlock)
                     } else {
                         Err(SocketError::NotConnected)
@@ -515,9 +512,7 @@ pub fn recv(socket_id: u32, buffer: &mut [u8]) -> Result<usize, SocketError> {
             SocketType::Stream => {
                 if let Some(tcp_id) = s.tcp_socket_id {
                     drop(sockets);
-                    tcp::receive(tcp_id, buffer)
-                        .map(|n| n as usize)
-                        .ok_or(SocketError::WouldBlock)
+                    tcp::receive(tcp_id, buffer).ok_or(SocketError::WouldBlock)
                 } else {
                     Err(SocketError::NotConnected)
                 }
@@ -557,18 +552,14 @@ pub fn sendto(socket_id: u32, data: &[u8], addr: &SockAddr) -> Result<usize, Soc
         SocketType::Stream => {
             let tcp_id = s.tcp_socket_id.ok_or(SocketError::NotConnected)?;
             drop(sockets);
-            tcp::send(tcp_id, data)
-                .map(|n| n as usize)
-                .ok_or(SocketError::ConnectionReset)
+            tcp::send(tcp_id, data).ok_or(SocketError::ConnectionReset)
         }
         SocketType::Dgram => {
             let udp_idx = s.udp_socket_idx.ok_or(SocketError::NotConnected)?;
             let dst_ip = addr.ip();
             let dst_port = u16::from_be(addr.port);
             drop(sockets);
-            udp::send(udp_idx, dst_ip, dst_port, data)
-                .map(|n| n as usize)
-                .ok_or(SocketError::WouldBlock)
+            udp::send(udp_idx, dst_ip, dst_port, data).ok_or(SocketError::WouldBlock)
         }
         _ => Err(SocketError::InvalidArgument),
     }
@@ -593,9 +584,7 @@ pub fn recvfrom(socket_id: u32, buffer: &mut [u8]) -> Result<(usize, SockAddr), 
             let tcp_id = s.tcp_socket_id.ok_or(SocketError::NotConnected)?;
             let peer = s.remote_addr.ok_or(SocketError::NotConnected)?;
             drop(sockets);
-            let n = tcp::receive(tcp_id, buffer)
-                .map(|n| n as usize)
-                .ok_or(SocketError::WouldBlock)?;
+            let n = tcp::receive(tcp_id, buffer).ok_or(SocketError::WouldBlock)?;
             Ok((n, peer))
         }
         _ => Err(SocketError::InvalidArgument),

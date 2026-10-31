@@ -47,7 +47,7 @@ impl ReassemblyBuffer {
             identification,
             fragments: BTreeMap::new(),
             total_length: None,
-            first_arrival: crate::hal::common::pit::get_system_time_ms() as u64,
+            first_arrival: crate::hal::common::pit::get_system_time_ms(),
         }
     }
 
@@ -56,7 +56,7 @@ impl ReassemblyBuffer {
             return false;
         }
 
-        let timestamp = crate::hal::common::pit::get_system_time_ms() as u64;
+        let timestamp = crate::hal::common::pit::get_system_time_ms();
 
         if is_last {
             self.total_length = Some(offset + data.len());
@@ -136,6 +136,12 @@ impl FragmentStats {
             reassembly_timeouts: 0,
             reassembly_failures: 0,
         }
+    }
+}
+
+impl Default for FragmentStats {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -228,7 +234,7 @@ fn cleanup_expired_buffers(
     buffers: &mut BTreeMap<ReassemblyKey, ReassemblyBuffer>,
     stats: &mut FragmentStats,
 ) {
-    let now = crate::hal::common::pit::get_system_time_ms() as u64;
+    let now = crate::hal::common::pit::get_system_time_ms();
     let expired: Vec<ReassemblyKey> = buffers
         .iter()
         .filter(|(_, buf)| buf.is_expired(now))

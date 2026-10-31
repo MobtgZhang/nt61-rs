@@ -62,11 +62,7 @@ impl EthernetHeader {
 
     /// Get the payload length
     pub fn payload_length(&self, total_len: usize) -> usize {
-        if total_len < ETHER_HDR_SIZE {
-            0
-        } else {
-            total_len - ETHER_HDR_SIZE
-        }
+        total_len.saturating_sub(ETHER_HDR_SIZE)
     }
 }
 

@@ -303,7 +303,7 @@ impl DhcpLease {
 
     pub fn remaining_time(&self) -> u64 {
         use crate::hal::common::pit;
-        let now = pit::get_system_time_ms() as u64;
+        let now = pit::get_system_time_ms();
         let elapsed = now.saturating_sub(self.lease_start);
         let lease_ms = (self.lease_time as u64).saturating_mul(1000);
         lease_ms.saturating_sub(elapsed)
@@ -311,7 +311,7 @@ impl DhcpLease {
 
     pub fn time_until_renewal(&self) -> i64 {
         use crate::hal::common::pit;
-        let now = pit::get_system_time_ms() as u64;
+        let now = pit::get_system_time_ms();
         let elapsed = now.saturating_sub(self.lease_start);
         let renewal_ms = (self.renewal_time as u64).saturating_mul(1000);
         renewal_ms as i64 - elapsed as i64
@@ -565,7 +565,7 @@ impl DhcpClient {
             offered_server: 0,
             offered_ip: 0,
             retransmit_count: 0,
-            state_start_time: pit::get_system_time_ms() as u64,
+            state_start_time: pit::get_system_time_ms(),
             requested_ip: 0,
         }
     }
@@ -578,7 +578,7 @@ impl DhcpClient {
     pub fn start_discovery(&mut self, chaddr: &[u8; 6]) -> Vec<u8> {
         self.state = DhcpState::Selecting;
         self.new_xid();
-        self.state_start_time = crate::hal::common::pit::get_system_time_ms() as u64;
+        self.state_start_time = crate::hal::common::pit::get_system_time_ms();
         self.build_discover(chaddr)
     }
 
@@ -701,7 +701,7 @@ impl DhcpClient {
                     self.offered_server = options.server_id.unwrap_or(0);
                     self.state = DhcpState::Requesting;
                     self.new_xid();
-                    self.state_start_time = crate::hal::common::pit::get_system_time_ms() as u64;
+                    self.state_start_time = crate::hal::common::pit::get_system_time_ms();
                     true
                 } else {
                     false
@@ -752,7 +752,7 @@ impl DhcpClient {
                     }
 
                     self.lease
-                        .set_lease_start(crate::hal::common::pit::get_system_time_ms() as u64);
+                        .set_lease_start(crate::hal::common::pit::get_system_time_ms());
 
                     // Publish the default gateway into the routing
                     // table so cross-subnet traffic is routable.
@@ -775,17 +775,14 @@ impl DhcpClient {
                     false
                 }
             }
-            Some(DhcpMessageType::Nak) => {
-                if self.state == DhcpState::Requesting
+            Some(DhcpMessageType::Nak)
+                if (self.state == DhcpState::Requesting
                     || self.state == DhcpState::Renewing
-                    || self.state == DhcpState::Rebinding
-                {
-                    self.state = DhcpState::Init;
-                    self.new_xid();
-                    true
-                } else {
-                    false
-                }
+                    || self.state == DhcpState::Rebinding) =>
+            {
+                self.state = DhcpState::Init;
+                self.new_xid();
+                true
             }
             _ => false,
         }
@@ -830,7 +827,7 @@ impl DhcpClient {
             return;
         }
 
-        let now = pit::get_system_time_ms() as u64;
+        let now = pit::get_system_time_ms();
         let elapsed = now - self.lease.lease_start;
 
         if elapsed > (self.lease.renewal_time as u64 * 1000) {
@@ -850,7 +847,7 @@ impl DhcpClient {
 
     pub fn time_since_state_start(&self) -> u64 {
         use crate::hal::common::pit;
-        let now = pit::get_system_time_ms() as u64;
+        let now = pit::get_system_time_ms();
         now.saturating_sub(self.state_start_time)
     }
 
@@ -861,7 +858,7 @@ impl DhcpClient {
 
     pub fn increment_retransmit(&mut self) {
         self.retransmit_count += 1;
-        self.state_start_time = crate::hal::common::pit::get_system_time_ms() as u64;
+        self.state_start_time = crate::hal::common::pit::get_system_time_ms();
     }
 
     pub fn get_retransmit_count(&self) -> u8 {
@@ -874,6 +871,12 @@ impl DhcpClient {
 
     pub fn get_offered_server(&self) -> u32 {
         self.offered_server
+    }
+}
+
+impl Default for DhcpClient {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

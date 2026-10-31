@@ -10,8 +10,7 @@ use crate::ke::sync::Spinlock;
 use alloc::format;
 use alloc::vec::Vec;
 
-/// Maximum number of Ethernet interfaces
-
+/// Maximum number of Ethernet interfaces///
 /// Ethernet interface state
 #[derive(Clone)]
 pub struct EthInterface {

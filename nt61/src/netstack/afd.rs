@@ -14,7 +14,7 @@
 //!   - `IOCTL_AFD_BIND`     — bind socket to local addr/port
 //!   - `IOCTL_AFD_LISTEN`   — start listening
 //!   - `IOCTL_AFD_ACCEPT`   — return a child socket for a
-//!                            completed 3-way handshake
+//!     completed 3-way handshake
 //!   - `IOCTL_AFD_CONNECT`  — initiate client-side connect
 //!   - `IOCTL_AFD_SEND`     — send data
 //!   - `IOCTL_AFD_RECV`     — receive data
@@ -66,7 +66,7 @@ impl AfdAddress {
             family,
             port,
             addr: [
-                (ip >> 0) as u8,
+                ip as u8,
                 (ip >> 8) as u8,
                 (ip >> 16) as u8,
                 (ip >> 24) as u8,
@@ -174,9 +174,7 @@ fn destroy(handle: u64) {
 /// sent; `output` is the buffer the caller wants results in.
 /// Returns the NTSTATUS.
 pub fn dispatch(handle: u64, ioctl: u32, input: &[u8], output: &mut [u8]) -> i32 {
-    let Some(ep) = (match ioctl {
-        _ => with_endpoint(handle, |e| e.socket_id),
-    }) else {
+    let Some(ep) = with_endpoint(handle, |e| e.socket_id) else {
         return -1; // STATUS_INVALID_HANDLE
     };
     match ioctl {

@@ -209,7 +209,7 @@ pub fn add_route(dest: u32, netmask: u32, gateway: u32, if_index: u32, metric: u
     routes.push(entry);
 
     // Sort by prefix length (longest match first)
-    routes.sort_by(|a, b| b.prefix_len().cmp(&a.prefix_len()));
+    routes.sort_by_key(|a| core::cmp::Reverse(a.prefix_len()));
 
     // `ipif` is the source of interface-derived routes, while
     // `routing` is the single lookup table used by forwarding. Keep

@@ -427,7 +427,7 @@ pub fn close_socket(socket_idx: usize) {
 
 /// Get UDP statistics
 pub fn get_stats() -> UdpStats {
-    (*UDP_STATS.lock()).clone()
+    *UDP_STATS.lock()
 }
 
 #[cfg(test)]

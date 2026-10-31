@@ -45,7 +45,7 @@ impl NatConnection {
         nat_src_port: u16,
         protocol: u8,
     ) -> Self {
-        let now = crate::hal::common::pit::get_system_time_ms() as u64;
+        let now = crate::hal::common::pit::get_system_time_ms();
         Self {
             orig_src_ip,
             orig_src_port,
@@ -61,11 +61,11 @@ impl NatConnection {
     }
 
     fn touch(&mut self) {
-        self.last_activity = crate::hal::common::pit::get_system_time_ms() as u64;
+        self.last_activity = crate::hal::common::pit::get_system_time_ms();
     }
 
     fn is_expired(&self, timeout_ms: u64) -> bool {
-        let now = crate::hal::common::pit::get_system_time_ms() as u64;
+        let now = crate::hal::common::pit::get_system_time_ms();
         now.saturating_sub(self.last_activity) > timeout_ms
     }
 }
@@ -114,7 +114,7 @@ impl NatStateInternal {
         let start = self.next_port;
         loop {
             let port = self.next_port;
-            self.next_port = if self.next_port >= 65535 {
+            self.next_port = if self.next_port == u16::MAX {
                 49152
             } else {
                 self.next_port + 1
@@ -165,7 +165,7 @@ struct NatConfig {
 
 static NAT_CONFIG: Spinlock<Option<NatConfig>> = Spinlock::new(None);
 
-const TCP_TIMEOUT_MS: u64 = 7200_000; // 2 hours
+const TCP_TIMEOUT_MS: u64 = 7_200_000; // 2 hours
 const UDP_TIMEOUT_MS: u64 = 300_000; // 5 minutes
 const ICMP_TIMEOUT_MS: u64 = 60_000; // 1 minute
 

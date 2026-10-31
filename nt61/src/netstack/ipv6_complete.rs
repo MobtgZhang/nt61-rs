@@ -162,16 +162,15 @@ impl Ipv6RoutingTable {
 
     pub fn add_route(&mut self, route: Ipv6Route) {
         self.routes.push(route);
-        self.routes.sort_by(|a, b| b.prefix_len.cmp(&a.prefix_len));
+        self.routes
+            .sort_by_key(|a| core::cmp::Reverse(a.prefix_len));
     }
 
     pub fn lookup_route(&self, dest: &Ipv6Addr) -> Option<&Ipv6Route> {
-        for route in &self.routes {
-            if Self::matches_prefix(dest, &route.destination, route.prefix_len) {
-                return Some(route);
-            }
-        }
-        None
+        self.routes
+            .iter()
+            .find(|&route| Self::matches_prefix(dest, &route.destination, route.prefix_len))
+            .map(|v| v as _)
     }
 
     pub fn delete_route(&mut self, dest: &Ipv6Addr, prefix_len: u8) -> bool {
@@ -197,6 +196,12 @@ impl Ipv6RoutingTable {
         }
 
         true
+    }
+}
+
+impl Default for Ipv6RoutingTable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

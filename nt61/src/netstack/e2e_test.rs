@@ -166,7 +166,7 @@ pub fn run_e2e_test() -> bool {
     );
 
     // --- Stage 4: TCP connection establishment.
-    let _ = dns::set_dns_server(BRIDGE_DNS);
+    dns::set_dns_server(BRIDGE_DNS);
     let sock = socket::socket_auto(socket::SocketType::Stream);
     let tcp_ok = if let Some(sid) = sock {
         let addr = socket::SockAddr::new(2, TCP_TEST_PORT, TCP_TEST_IP);
@@ -182,7 +182,7 @@ pub fn run_e2e_test() -> bool {
     );
 
     // --- Stage 5: DNS resolution.
-    let dns_ok = matches!(dns::resolve("example.com"), Ok(_));
+    let dns_ok = dns::resolve("example.com").is_ok();
     crate::kprintln_info!(
         "NET-E2E",
         "DNS resolve example.com: {}",

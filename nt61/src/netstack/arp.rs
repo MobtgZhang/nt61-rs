@@ -294,7 +294,7 @@ pub fn send_request_with_source(
         sender_mac: src_mac,
         sender_ip: source_ip,
         target_mac: [0, 0, 0, 0, 0, 0],
-        target_ip: target_ip,
+        target_ip,
     };
 
     let mut packet = vec![0u8; 28];

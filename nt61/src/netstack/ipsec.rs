@@ -63,12 +63,12 @@ impl SecurityAssociation {
             seq_num: 0,
             replay_window: 0,
             lifetime_sec: 3600,
-            created_at: crate::hal::common::pit::get_system_time_ms() as u64,
+            created_at: crate::hal::common::pit::get_system_time_ms(),
         }
     }
 
     pub fn is_expired(&self) -> bool {
-        let now = crate::hal::common::pit::get_system_time_ms() as u64;
+        let now = crate::hal::common::pit::get_system_time_ms();
         let age_sec = (now - self.created_at) / 1000;
         age_sec > self.lifetime_sec
     }

@@ -240,7 +240,7 @@ pub fn icmp_input(src_ip: u32, dst_ip: u32, data: &[u8]) {
         None => return,
     };
 
-    let icmp_type = header.icmp_type as u8;
+    let icmp_type = header.icmp_type;
     {
         let mut stats = ICMP_STATS.lock();
         stats.msg_in += 1;
@@ -489,7 +489,7 @@ pub fn send_time_exceeded(src_ip: u32, dst_ip: u32, original_packet: &[u8]) {
 
 /// Get ICMP statistics
 pub fn get_stats() -> IcmpStats {
-    (*ICMP_STATS.lock()).clone()
+    *ICMP_STATS.lock()
 }
 
 #[cfg(test)]

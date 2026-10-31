@@ -38,7 +38,7 @@ pub struct TcpTimer {
 
 impl TcpTimer {
     pub fn new(socket_id: u32, timer_type: TcpTimerType, timeout_ms: u32) -> Self {
-        let now = pit::get_system_time_ms() as u64;
+        let now = pit::get_system_time_ms();
         Self {
             socket_id,
             timer_type,
@@ -54,9 +54,8 @@ impl TcpTimer {
     }
 
     /// Reset the timer with a new timeout
-
     pub fn reset(&mut self, timeout_ms: u32) {
-        let now = pit::get_system_time_ms() as u64;
+        let now = pit::get_system_time_ms();
         self.next_fire = now + timeout_ms as u64;
         self.interval = timeout_ms;
         self.active = true;
@@ -112,7 +111,7 @@ impl TcpTimerManager {
 
     /// Check for expired timers and return them
     pub fn check_timers(&self) -> alloc::vec::Vec<(u32, TcpTimerType)> {
-        let current_time = pit::get_system_time_ms() as u64;
+        let current_time = pit::get_system_time_ms();
         let mut expired = alloc::vec::Vec::new();
 
         let timers = self.timers.lock();
@@ -127,7 +126,7 @@ impl TcpTimerManager {
 
     /// Get time until next timer expiry (for sleep/poll optimization)
     pub fn next_expiry(&self) -> Option<u64> {
-        let current_time = pit::get_system_time_ms() as u64;
+        let current_time = pit::get_system_time_ms();
         let timers = self.timers.lock();
 
         timers
@@ -135,6 +134,12 @@ impl TcpTimerManager {
             .filter(|t| t.active)
             .map(|t| t.next_fire.saturating_sub(current_time))
             .min()
+    }
+}
+
+impl Default for TcpTimerManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

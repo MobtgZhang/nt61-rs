@@ -217,7 +217,7 @@ pub fn resolve_af(name: &str, family: u16) -> Result<u32, DnsError> {
     {
         let cache = CACHE.lock();
         if let Some(rec) = cache.get(&key) {
-            let now = crate::hal::common::pit::get_system_time_ms() as u64;
+            let now = crate::hal::common::pit::get_system_time_ms();
             if rec.expires_at_ms > now {
                 return Ok(rec.addr);
             }
@@ -258,10 +258,10 @@ pub fn resolve_af(name: &str, family: u16) -> Result<u32, DnsError> {
     udp::send(sock, server, server_port, &datagram).ok_or(DnsError::Other)?;
 
     // Block up to 2 seconds for a reply.
-    let deadline = crate::hal::common::pit::get_system_time_ms() as u64 + 2000;
+    let deadline = crate::hal::common::pit::get_system_time_ms() + 2000;
     let mut buf = [0u8; 512];
     loop {
-        let now = crate::hal::common::pit::get_system_time_ms() as u64;
+        let now = crate::hal::common::pit::get_system_time_ms();
         if now >= deadline {
             udp::close_socket(sock);
             return Err(DnsError::Timeout);
@@ -288,7 +288,7 @@ pub fn resolve_af(name: &str, family: u16) -> Result<u32, DnsError> {
 /// Insert a record into the cache, evicting the oldest entry if
 /// we are at capacity.
 fn cache_insert(name: &str, family: u16, addr: u32, ttl_ms: u64) {
-    let expires_at_ms = crate::hal::common::pit::get_system_time_ms() as u64 + ttl_ms;
+    let expires_at_ms = crate::hal::common::pit::get_system_time_ms() + ttl_ms;
     let mut cache = CACHE.lock();
     if cache.len() >= MAX_CACHE {
         // Drop the entry with the earliest expiry.
