@@ -17,6 +17,9 @@ pub fn write_com1_marker(bytes: &[u8]) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Write the architecture's halt loop immediately below `stack_top`.
 pub unsafe fn write_halt_stub(stack_top: u64) -> u64 {
     let halt_addr = stack_top - 8;
@@ -27,6 +30,9 @@ pub unsafe fn write_halt_stub(stack_top: u64) -> u64 {
     halt_addr
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Load `efiapi` argument registers and jump to the target image
 /// with a private stack. The target is expected not to return.
 ///

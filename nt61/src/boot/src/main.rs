@@ -33,10 +33,16 @@ static BOOTMGR_ALLOCATOR: BootmgrAllocator = BootmgrAllocator;
 
 #[cfg(not(test))]
 unsafe impl core::alloc::GlobalAlloc for BootmgrAllocator {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
         uefi::allocator::Allocator.alloc(layout)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
         uefi::allocator::Allocator.dealloc(ptr, layout)
     }
@@ -1802,6 +1808,9 @@ extern "efiapi" fn bootmgr_load_file_callback(
     uefi::Status::SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Capture the boot manager's own PE image bytes into a boot-services
 /// pool buffer and install the EFI_LOAD_FILE_PROTOCOL on a fresh
 /// handle. Returns the new handle on success. Safe to skip: the direct

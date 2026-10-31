@@ -29,6 +29,9 @@ struct ExKeyData {
 #[repr(C)]
 struct SimpleTextInputExProtocol {
     reset: unsafe extern "efiapi" fn(this: *mut Self, extended_verification: bool) -> uefi::Status,
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     read_key_stroke_ex:
         unsafe extern "efiapi" fn(this: *mut Self, key: *mut ExKeyData) -> uefi::Status,
     wait_for_key_ex: Event,

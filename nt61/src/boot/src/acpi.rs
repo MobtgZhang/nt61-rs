@@ -39,6 +39,9 @@ fn checksum(data: &[u8], checksum: u8) -> bool {
     data.iter().fold(0u8, |sum, byte| sum.wrapping_add(*byte)) == checksum.wrapping_neg()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn table_header(address: u64) -> Option<Header> {
     if address == 0 || address & 3 != 0 {
         return None;
@@ -57,6 +60,9 @@ unsafe fn table_header(address: u64) -> Option<Header> {
     Some(Header { signature, length })
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn root_table_addresses(rsdp_address: u64) -> Option<alloc::vec::Vec<u64>> {
     let base = rsdp_address as *const u8;
     if rsdp_address == 0 || rsdp_address & 7 != 0 {
@@ -91,14 +97,23 @@ unsafe fn root_table_addresses(rsdp_address: u64) -> Option<alloc::vec::Vec<u64>
     unsafe { child_table_addresses64(xsdt) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn child_table_addresses32(root_address: u64) -> Option<alloc::vec::Vec<u64>> {
     unsafe { child_table_addresses(root_address, 4) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn child_table_addresses64(root_address: u64) -> Option<alloc::vec::Vec<u64>> {
     unsafe { child_table_addresses(root_address, 8) }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn child_table_addresses(
     root_address: u64,
     pointer_size: usize,
@@ -124,6 +139,9 @@ unsafe fn child_table_addresses(
     Some(addresses)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn summary_from_tables(
     rsdp_address: u64,
     children: &[u64],
@@ -171,6 +189,9 @@ pub fn find_rsdp_address() -> Option<u64> {
     })
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn parse_rsdp(rsdp_address: u64) -> Result<AcpiSummary, AcpiError> {
     let children =
         unsafe { root_table_addresses(rsdp_address).ok_or(AcpiError("invalid ACPI root table"))? };

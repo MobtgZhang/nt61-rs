@@ -18,6 +18,9 @@ pub fn write_com1_marker(bytes: &[u8]) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Write the architecture's halt loop immediately below `stack_top`.
 ///
 /// AArch64 branch-to-self encoding is `0x14000000` (branch +26-bit
@@ -29,6 +32,9 @@ pub unsafe fn write_halt_stub(stack_top: u64) -> u64 {
     halt_addr
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Load `efiapi` argument registers and branch to the target image
 /// with a private stack. The target is expected not to return.
 ///

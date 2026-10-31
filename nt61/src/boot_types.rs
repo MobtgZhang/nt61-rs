@@ -23,9 +23,9 @@
 //!   * 2026-07-02: System partition mirror added.
 //!   * 2026-07-02: Memory-diagnostic block added for Phase 1a.
 //
-//! No new field may be appended at the *end* of the struct without
-//! a bump to `BootInfo::MAGIC` — that gives the loader a chance to
-//! reject kernels compiled against an older contract.
+//!     No new field may be appended at the *end* of the struct without
+//!     a bump to `BootInfo::MAGIC` — that gives the loader a chance to
+//!     reject kernels compiled against an older contract.
 
 /// Boot mode selected by `bootmgr` and forwarded to the kernel via
 /// `BootInfo.boot_mode`. The kernel uses this to gate certain

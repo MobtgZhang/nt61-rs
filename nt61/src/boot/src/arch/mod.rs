@@ -1,5 +1,8 @@
 //! Architecture policy for the boot manager.
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Probe a physical page by writing and reading a marker through
 /// volatile memory. Returns the read-back byte so the caller can
 /// reject firmware allocations that are not actually mapped.
