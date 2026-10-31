@@ -4,8 +4,91 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+nt61 = { path = "../..", default-features = false, features = ["binary_panic", "alloc"] }
+
+[features]
+default = ["driver-x86_64"]
+driver-x86_64 = ["nt61/x86_64"]
+driver-aarch64 = ["nt61/aarch64"]
+driver-riscv64 = ["nt61/riscv64"]
+driver-loongarch64 = ["nt61/loongarch64"]
 
 [[bin]]
 name = "nt61-driver"
 path = "src/main.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-disk"
+path = "src/bin/disk.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-classpnp"
+path = "src/bin/classpnp.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-partmgr"
+path = "src/bin/partmgr.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-volmgr"
+path = "src/bin/volmgr.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-storahci"
+path = "src/bin/storahci.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-iastor"
+path = "src/bin/iastor.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-stornvme"
+path = "src/bin/stornvme.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-pci"
+path = "src/bin/pci.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-acpi"
+path = "src/bin/acpi.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-intelppm"
+path = "src/bin/intelppm.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-mssmbios"
+path = "src/bin/mssmbios.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-hpet"
+path = "src/bin/hpet.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-vga"
+path = "src/bin/vga.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-vgapnp"
+path = "src/bin/vgapnp.rs"
+test = false
+
+[[bin]]
+name = "nt61-driver-videoprt"
+path = "src/bin/videoprt.rs"
 test = false
