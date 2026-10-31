@@ -352,35 +352,37 @@ fn test_privilege_luid_consistency() -> bool {
 }
 
 fn test_access_check_allow() -> bool {
-    use crate::se::{seaccess, token};
+    unsafe {
+        use crate::se::{seaccess, token};
 
-    let token_ptr = token::create_system_token();
-    if token_ptr.is_null() {
-        return false;
-    }
-
-    // create security descriptor with NULL DACL (allow all)
-    let sd = seaccess::create_null_dacl_sd();
-    if sd.is_null() {
-        return false;
-    }
-
-    // Perform access check
-    let (result, _granted) = seaccess::se_access_check(
-        seaccess::ObTypeIndex::Process,
-        sd,
-        0x001F01FF, // GENERIC_ALL
-        token_ptr,
-    );
-
-    match result {
-        seaccess::AccessCheckResult::Allowed => {
-            crate::boot_println!("    Access check: ALLOWED");
-            true
+        let token_ptr = token::create_system_token();
+        if token_ptr.is_null() {
+            return false;
         }
-        seaccess::AccessCheckResult::Denied => {
-            crate::boot_println!("    Access check: DENIED (unexpected)");
-            false
+
+        // create security descriptor with NULL DACL (allow all)
+        let sd = seaccess::create_null_dacl_sd();
+        if sd.is_null() {
+            return false;
+        }
+
+        // Perform access check
+        let (result, _granted) = seaccess::se_access_check(
+            seaccess::ObTypeIndex::Process,
+            sd,
+            0x001F01FF, // GENERIC_ALL
+            token_ptr,
+        );
+
+        match result {
+            seaccess::AccessCheckResult::Allowed => {
+                crate::boot_println!("    Access check: ALLOWED");
+                true
+            }
+            seaccess::AccessCheckResult::Denied => {
+                crate::boot_println!("    Access check: DENIED (unexpected)");
+                false
+            }
         }
     }
 }

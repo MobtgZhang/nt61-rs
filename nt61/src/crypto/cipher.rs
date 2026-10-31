@@ -320,7 +320,7 @@ pub fn tdes_cbc_encrypt(
     iv: &[u8; 8],
     input: &[u8],
 ) -> Result<Vec<u8>, &'static str> {
-    if input.len() % 8 != 0 {
+    if !input.len().is_multiple_of(8) {
         return Err("3DES-CBC input must be a multiple of the 8-byte block size");
     }
     let cipher = TripleDes::new(key)?;
@@ -346,7 +346,7 @@ pub fn tdes_cbc_decrypt(
     iv: &[u8; 8],
     input: &[u8],
 ) -> Result<Vec<u8>, &'static str> {
-    if input.len() % 8 != 0 {
+    if !input.len().is_multiple_of(8) {
         return Err("3DES-CBC input must be a multiple of the 8-byte block size");
     }
     let cipher = TripleDes::new(key)?;
@@ -414,11 +414,10 @@ impl Ecb<Aes128> {
     /// be a multiple of the AES block size. A shorter tail is rejected
     /// instead of being silently zero-padded into the ciphertext.
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
-        if plaintext.len() % AES_BLOCK_SIZE != 0 {
+        if !plaintext.len().is_multiple_of(AES_BLOCK_SIZE) {
             return Err("ECB input must be a multiple of the 16-byte AES block size");
         }
-        let mut output = Vec::new();
-        output.reserve(plaintext.len());
+        let mut output = Vec::with_capacity(plaintext.len());
         for chunk in plaintext.chunks(AES_BLOCK_SIZE) {
             let mut block = [0u8; AES_BLOCK_SIZE];
             block.copy_from_slice(chunk);
@@ -429,11 +428,10 @@ impl Ecb<Aes128> {
     }
 
     pub fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
-        if ciphertext.len() % AES_BLOCK_SIZE != 0 {
+        if !ciphertext.len().is_multiple_of(AES_BLOCK_SIZE) {
             return Err("ECB input must be a multiple of the 16-byte AES block size");
         }
-        let mut output = Vec::new();
-        output.reserve(ciphertext.len());
+        let mut output = Vec::with_capacity(ciphertext.len());
         for chunk in ciphertext.chunks(AES_BLOCK_SIZE) {
             let mut block = [0u8; AES_BLOCK_SIZE];
             block.copy_from_slice(chunk);
@@ -462,7 +460,7 @@ impl Cbc<Aes128> {
     /// zero-padded, and decryption rejects misaligned input outright
     /// (it previously panicked on the partial final block).
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
-        if plaintext.len() % AES_BLOCK_SIZE != 0 {
+        if !plaintext.len().is_multiple_of(AES_BLOCK_SIZE) {
             return Err("CBC input must be a multiple of the 16-byte AES block size");
         }
         let mut output = Vec::with_capacity(plaintext.len());
@@ -485,7 +483,7 @@ impl Cbc<Aes128> {
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
-        if ciphertext.len() % AES_BLOCK_SIZE != 0 {
+        if !ciphertext.len().is_multiple_of(AES_BLOCK_SIZE) {
             return Err("CBC input must be a multiple of the 16-byte AES block size");
         }
         let mut output = Vec::with_capacity(ciphertext.len());
@@ -525,7 +523,7 @@ impl Cbc<Aes256> {
     /// rejects misaligned input outright (it previously panicked on the
     /// partial final block).
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
-        if plaintext.len() % AES_BLOCK_SIZE != 0 {
+        if !plaintext.len().is_multiple_of(AES_BLOCK_SIZE) {
             return Err("CBC input must be a multiple of the 16-byte AES block size");
         }
         let mut output = Vec::with_capacity(plaintext.len());
@@ -548,7 +546,7 @@ impl Cbc<Aes256> {
     }
 
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
-        if ciphertext.len() % AES_BLOCK_SIZE != 0 {
+        if !ciphertext.len().is_multiple_of(AES_BLOCK_SIZE) {
             return Err("CBC input must be a multiple of the 16-byte AES block size");
         }
         let mut output = Vec::with_capacity(ciphertext.len());

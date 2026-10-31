@@ -58,15 +58,11 @@ pub const TOKEN_IS_APP_CONTAINER: u32 = 29;
 /// Token types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum TokenTypeEnum {
+    #[default]
     TokenPrimary = 1,
     TokenImpersonation = 2,
-}
-
-impl Default for TokenTypeEnum {
-    fn default() -> Self {
-        Self::TokenPrimary
-    }
 }
 
 /// Token group attributes.
@@ -87,19 +83,10 @@ pub const SE_PRIVILEGE_USED_FOR_ACCESS: u32 = 0x80000000;
 
 /// LUID (Locally Unique ID) — a 64-bit identifier.
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct luid {
     pub low_part: u32,
     pub high_part: i32,
-}
-
-impl Default for luid {
-    fn default() -> Self {
-        Self {
-            low_part: 0,
-            high_part: 0,
-        }
-    }
 }
 
 impl luid {
@@ -234,17 +221,13 @@ impl TOKEN_SOURCE {
 /// SECURITY_IMPERSONATION_LEVEL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
+#[derive(Default)]
 pub enum ImpersonationLevel {
     SecurityAnonymous = 0,
+    #[default]
     SecurityIdentification = 1,
     SecurityImpersonation = 2,
     SecurityDelegation = 3,
-}
-
-impl Default for ImpersonationLevel {
-    fn default() -> Self {
-        Self::SecurityIdentification
-    }
 }
 
 /// TOKEN_CONTROL — unique identifier for a token.
@@ -412,6 +395,12 @@ impl Token {
             self.refcount -= 1;
         }
         self.refcount
+    }
+}
+
+impl Default for Token {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

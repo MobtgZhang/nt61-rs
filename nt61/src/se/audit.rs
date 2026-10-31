@@ -104,7 +104,7 @@ pub fn se_audit_logon(outcome: AuditEventOutcome, user_sid: &sid, logon_type: u3
     };
 
     let success = matches!(outcome, AuditEventOutcome::Success);
-    let mut record = AuditRecord::new(event_id, AuditCategory::Logon, success, user_sid.clone());
+    let mut record = AuditRecord::new(event_id, AuditCategory::Logon, success, *user_sid);
 
     let details = alloc::format!(
         "Logon Type: {}, Logon ID: 0x{:016X}",
@@ -126,7 +126,7 @@ pub fn se_audit_logoff(user_sid: &sid, logon_id: u64) {
         4634, // Logoff event
         AuditCategory::Logon,
         true,
-        user_sid.clone(),
+        *user_sid,
     );
 
     let details = alloc::format!("Logon ID: 0x{:016X}", logon_id);
@@ -153,12 +153,7 @@ pub fn se_audit_object_access(
     };
 
     let success = matches!(outcome, AuditEventOutcome::Success);
-    let mut record = AuditRecord::new(
-        event_id,
-        AuditCategory::ObjectAccess,
-        success,
-        token.user.clone(),
-    );
+    let mut record = AuditRecord::new(event_id, AuditCategory::ObjectAccess, success, token.user);
 
     record.set_object_info(object_name.to_string(), access_mask);
 
@@ -187,7 +182,7 @@ pub fn se_audit_privilege_use(
         4673, // Privilege use
         AuditCategory::PrivilegeUse,
         success,
-        token.user.clone(),
+        token.user,
     );
 
     let privilege_name = privilege_luid_to_name(privilege_luid);
@@ -211,7 +206,7 @@ pub fn se_audit_policy_change(token: &Token, change_type: &str) {
         4719, // Policy change
         AuditCategory::PolicyChange,
         true,
-        token.user.clone(),
+        token.user,
     );
 
     let details = alloc::format!("Policy Change: {}", change_type);
@@ -236,7 +231,7 @@ pub fn se_audit_account_management(
         4720, // Account management
         AuditCategory::AccountManagement,
         success,
-        token.user.clone(),
+        token.user,
     );
 
     let details = alloc::format!(
@@ -265,7 +260,7 @@ pub fn se_audit_process_creation(
         4688, // Process created
         AuditCategory::DetailedTracking,
         true,
-        token.user.clone(),
+        token.user,
     );
 
     record.set_process_info(process_id, 0);
@@ -287,7 +282,7 @@ pub fn se_audit_process_termination(token: &Token, process_id: u64, exit_code: i
         4689, // Process terminated
         AuditCategory::DetailedTracking,
         true,
-        token.user.clone(),
+        token.user,
     );
 
     record.set_process_info(process_id, 0);
@@ -312,8 +307,11 @@ pub fn se_audit_system_event(event_id: u16, description: &str) {
     write_audit_record(record);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Open object audit alarm (compatibility wrapper)
-pub fn se_open_object_audit_alarm(
+pub unsafe fn se_open_object_audit_alarm(
     object_type_name: &str,
     object_name: Option<&str>,
     _security_descriptor: *const super::seaccess::SecurityDescriptor,
@@ -561,7 +559,7 @@ pub fn test_audit_policy_changes() {
     se_audit_logon(AuditEventOutcome::Success, &sid, 2, 0x5678);
     se_audit_object_access(
         AuditEventOutcome::Success,
-        &token,
+        token,
         "File",
         "test2.txt",
         0x001F01FF,

@@ -49,12 +49,17 @@ pub fn allocate_and_initialize_sid(
 }
 
 pub fn free_sid(sid: *mut sid) {
-    if !sid.is_null() {
-        crate::mm::pool::free(sid as *mut u8);
+    unsafe {
+        if !sid.is_null() {
+            crate::mm::pool::free(sid as *mut u8);
+        }
     }
 }
 
-pub fn copy_sid(destination: *mut sid, source: *const sid) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn copy_sid(destination: *mut sid, source: *const sid) -> bool {
     if destination.is_null() || source.is_null() {
         return false;
     }
@@ -66,7 +71,10 @@ pub fn copy_sid(destination: *mut sid, source: *const sid) -> bool {
     true
 }
 
-pub fn equal_sid(sid1: *const sid, sid2: *const sid) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn equal_sid(sid1: *const sid, sid2: *const sid) -> bool {
     if sid1.is_null() || sid2.is_null() {
         return false;
     }
@@ -74,7 +82,10 @@ pub fn equal_sid(sid1: *const sid, sid2: *const sid) -> bool {
     unsafe { (*sid1).equals(&*sid2) }
 }
 
-pub fn valid_sid(sid: *const sid) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn valid_sid(sid: *const sid) -> bool {
     if sid.is_null() {
         return false;
     }
@@ -94,7 +105,10 @@ pub fn valid_sid(sid: *const sid) -> bool {
     }
 }
 
-pub fn length_sid(sid: *const sid) -> u32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn length_sid(sid: *const sid) -> u32 {
     if sid.is_null() {
         return 0;
     }
@@ -102,7 +116,10 @@ pub fn length_sid(sid: *const sid) -> u32 {
     unsafe { (*sid).size() as u32 }
 }
 
-pub fn identifier_authority_sid(sid: *const sid) -> u64 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn identifier_authority_sid(sid: *const sid) -> u64 {
     if sid.is_null() {
         return 0;
     }
@@ -110,7 +127,10 @@ pub fn identifier_authority_sid(sid: *const sid) -> u64 {
     unsafe { (*sid).identifier_authority() }
 }
 
-pub fn sub_authority_count_sid(sid: *const sid) -> u8 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn sub_authority_count_sid(sid: *const sid) -> u8 {
     if sid.is_null() {
         return 0;
     }
@@ -118,7 +138,10 @@ pub fn sub_authority_count_sid(sid: *const sid) -> u8 {
     unsafe { (*sid).sub_authority_count }
 }
 
-pub fn sub_authority_sid(sid: *mut sid, sub_authority_index: u32) -> *mut u32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn sub_authority_sid(sid: *mut sid, sub_authority_index: u32) -> *mut u32 {
     if sid.is_null() {
         return core::ptr::null_mut();
     }
@@ -132,12 +155,15 @@ pub fn sub_authority_sid(sid: *mut sid, sub_authority_index: u32) -> *mut u32 {
     }
 }
 
-pub fn convert_sid_to_unicode_string(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn convert_sid_to_unicode_string(
     sid: *const sid,
     output: &mut [u16],
     max_length: usize,
 ) -> bool {
-    if sid.is_null() || output.len() == 0 {
+    if sid.is_null() || output.is_empty() {
         return false;
     }
 
@@ -178,7 +204,10 @@ pub fn allocate_well_known_sid(which: WellKnownSid) -> *mut sid {
     sid_ptr
 }
 
-pub fn create_security_descriptor_for_sid(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn create_security_descriptor_for_sid(
     owner: *const sid,
     group: *const sid,
 ) -> *mut super::seaccess::SecurityDescriptor {
@@ -251,7 +280,10 @@ pub fn parse_sid_string(sid_string: &str) -> Option<sid> {
     ))
 }
 
-pub fn is_well_known_sid(sid: *const sid, which: WellKnownSid) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn is_well_known_sid(sid: *const sid, which: WellKnownSid) -> bool {
     if sid.is_null() {
         return false;
     }
@@ -260,7 +292,10 @@ pub fn is_well_known_sid(sid: *const sid, which: WellKnownSid) -> bool {
     unsafe { (*sid).equals(&well_known) }
 }
 
-pub fn get_sid_rid(sid: *const sid) -> u32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn get_sid_rid(sid: *const sid) -> u32 {
     if sid.is_null() {
         return 0;
     }
@@ -274,7 +309,10 @@ pub fn get_sid_rid(sid: *const sid) -> u32 {
     }
 }
 
-pub fn sid_in_domain(sid: *const sid, domain_sid: *const sid) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn sid_in_domain(sid: *const sid, domain_sid: *const sid) -> bool {
     if sid.is_null() || domain_sid.is_null() {
         return false;
     }
@@ -301,7 +339,10 @@ pub fn sid_in_domain(sid: *const sid, domain_sid: *const sid) -> bool {
     }
 }
 
-pub fn create_domain_sid(domain_sid: *const sid, rid: u32) -> *mut sid {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn create_domain_sid(domain_sid: *const sid, rid: u32) -> *mut sid {
     if domain_sid.is_null() {
         return core::ptr::null_mut();
     }

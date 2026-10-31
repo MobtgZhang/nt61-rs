@@ -62,6 +62,12 @@ impl LogonSession {
     }
 }
 
+impl Default for LogonSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 const MAX_LOGON_SESSIONS: usize = 64;
 
 struct LogonSessionTable {
@@ -81,7 +87,10 @@ static LOGON_SESSIONS: Lazy<Mutex<LogonSessionTable>> =
     Lazy::new(|| Mutex::new(LogonSessionTable::new()));
 static NEXT_LOGON_ID: AtomicU64 = AtomicU64::new(1000);
 
-pub fn se_create_logon_session(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_create_logon_session(
     logon_id: *mut luid,
     user_sid: &sid,
     logon_type: LogonType,
@@ -176,12 +185,14 @@ fn get_system_time() -> u64 {
 }
 
 pub fn init_system_logon_session() -> luid {
-    let system_sid = super::sid::sid::well_known(super::sid::WellKnownSid::LocalSystem);
-    let mut logon_id = luid::new();
+    unsafe {
+        let system_sid = super::sid::sid::well_known(super::sid::WellKnownSid::LocalSystem);
+        let mut logon_id = luid::new();
 
-    se_create_logon_session(&mut logon_id, &system_sid, LogonType::Service, 0);
+        se_create_logon_session(&mut logon_id, &system_sid, LogonType::Service, 0);
 
-    logon_id
+        logon_id
+    }
 }
 
 pub fn init() {

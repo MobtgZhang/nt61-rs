@@ -71,14 +71,10 @@ pub fn se_create_token(
         token.refcount = 1;
 
         // Capacity was verified above, so every entry fits.
-        for i in 0..groups.len() {
-            token.groups[i] = groups[i];
-        }
+        token.groups[..groups.len()].copy_from_slice(groups);
         token.group_count = groups.len();
 
-        for i in 0..privileges.len() {
-            token.privileges[i] = privileges[i];
-        }
+        token.privileges[..privileges.len()].copy_from_slice(privileges);
         token.privilege_count = privileges.len();
 
         token.primary_group = super::sid::SID_USERS;
@@ -93,7 +89,10 @@ pub fn se_create_token(
     token_ptr
 }
 
-pub fn se_duplicate_token(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_duplicate_token(
     existing_token: *const Token,
     impersonation_level: ImpersonationLevel,
     token_type: TokenTypeEnum,
@@ -131,7 +130,10 @@ pub fn se_duplicate_token(
     new_token_ptr
 }
 
-pub fn se_filter_token(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_filter_token(
     existing_token: *const Token,
     _flags: u32,
     sids_to_disable: &[sid],
@@ -188,14 +190,20 @@ pub fn se_filter_token(
     new_token
 }
 
-pub fn se_token_is_restricted(token: *const Token) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_token_is_restricted(token: *const Token) -> bool {
     if token.is_null() {
         return false;
     }
     unsafe { ((*token).flags & super::token::TOKEN_WRITE_RESTRICTED) != 0 }
 }
 
-pub fn se_adjust_privileges_token(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_adjust_privileges_token(
     token: *mut Token,
     disable_all_privileges: bool,
     new_state: &[TokenPrivilege],
@@ -253,7 +261,10 @@ pub fn se_adjust_privileges_token(
     }
 }
 
-pub fn se_adjust_groups_token(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_adjust_groups_token(
     token: *mut Token,
     reset_to_default: bool,
     new_state: &[TokenGroup],
@@ -314,7 +325,10 @@ pub fn se_adjust_groups_token(
     }
 }
 
-pub fn se_query_information_token(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_query_information_token(
     token: *const Token,
     info_class: u32,
     buffer: *mut u8,
@@ -408,7 +422,10 @@ pub fn se_query_information_token(
     }
 }
 
-pub fn se_set_information_token(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_set_information_token(
     token: *mut Token,
     info_class: u32,
     buffer: *const u8,
@@ -441,14 +458,20 @@ pub fn se_set_information_token(
     }
 }
 
-pub fn se_token_type(token: *const Token) -> TokenTypeEnum {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_token_type(token: *const Token) -> TokenTypeEnum {
     if token.is_null() {
         return TokenTypeEnum::TokenPrimary;
     }
     unsafe { (*token).token_type }
 }
 
-pub fn se_token_impersonation_level(token: *const Token) -> ImpersonationLevel {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_token_impersonation_level(token: *const Token) -> ImpersonationLevel {
     if token.is_null() {
         return ImpersonationLevel::SecurityAnonymous;
     }
@@ -541,7 +564,7 @@ mod token_capacity_tests {
             luid: luid::from_u64(2),
             attributes: SE_PRIVILEGE_ENABLED,
         }];
-        assert!(se_adjust_privileges_token(token, false, &added, None));
+        assert!(unsafe { se_adjust_privileges_token(token, false, &added, None) });
         unsafe {
             assert_eq!((*token).privilege_count, 2);
             assert!((*token).privileges[1].luid.equals(&added[0].luid));
@@ -564,7 +587,7 @@ mod token_capacity_tests {
             luid: luid::from_u64(999),
             attributes: SE_PRIVILEGE_ENABLED,
         }];
-        assert!(!se_adjust_privileges_token(token, false, &overflow, None));
+        assert!(!unsafe { se_adjust_privileges_token(token, false, &overflow, None) });
         unsafe {
             assert_eq!((*token).privilege_count, TOKEN_MAX_PRIVILEGES);
         }
@@ -580,7 +603,7 @@ mod token_capacity_tests {
             sid: sid::well_known(WellKnownSid::Administrators),
             attributes: SE_GROUP_ENABLED,
         }];
-        assert!(se_adjust_groups_token(token, false, &added, None));
+        assert!(unsafe { se_adjust_groups_token(token, false, &added, None) });
         unsafe {
             assert_eq!((*token).group_count, 1);
             assert!((*token).groups[0].sid.equals(&added[0].sid));

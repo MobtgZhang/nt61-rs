@@ -27,21 +27,15 @@ pub struct RsaPrivateKey {
 
 impl RsaPrivateKey {
     pub fn generate(bits: usize) -> Option<Self> {
-        if !(512..=4096).contains(&bits) || bits % 2 != 0 {
+        if !(512..=4096).contains(&bits) || !bits.is_multiple_of(2) {
             return None;
         }
 
         let e = BigUint::from(65537u32); // Standard public exponent
 
         let prime_bits = bits / 2;
-        let p = match generate_prime(prime_bits) {
-            Some(value) => value,
-            None => return None,
-        };
-        let q = match generate_prime(prime_bits) {
-            Some(value) => value,
-            None => return None,
-        };
+        let p = generate_prime(prime_bits)?;
+        let q = generate_prime(prime_bits)?;
 
         let n = p.mul(&q);
 
@@ -344,7 +338,7 @@ fn pss_verify(
     }
     let mut em = vec![0u8; key_len];
     em[key_len - recovered.len()..].copy_from_slice(recovered);
-    let em_bits = modulus_bits.checked_sub(1).unwrap_or(0);
+    let em_bits = modulus_bits.saturating_sub(1);
     let padding_bits = (key_len * 8).saturating_sub(em_bits);
     let padding_mask = 0xffu8.checked_shr(padding_bits as u32).unwrap_or(0);
     if em[0] & !padding_mask != 0 || em[key_len - 1] != 0xbc {
@@ -424,7 +418,7 @@ impl BigUint {
         let limb_bytes = if top_limb == 0 {
             1
         } else {
-            (64 - top_limb.leading_zeros() + 7) / 8
+            (64 - top_limb.leading_zeros()).div_ceil(8)
         };
         (self.limbs.len() - 1) * 8 + limb_bytes as usize
     }
@@ -594,7 +588,7 @@ impl BigUint {
         }
 
         let limb_shift = (bits / 64) as usize;
-        let bit_shift = (bits % 64) as u32;
+        let bit_shift = bits % 64;
 
         if limb_shift >= self.limbs.len() {
             return BigUint::from(0);
@@ -653,7 +647,7 @@ impl BigUint {
     fn bit(&self, index: usize) -> bool {
         self.limbs
             .get(index / 64)
-            .map_or(false, |limb| (limb >> (index % 64)) & 1 == 1)
+            .is_some_and(|limb| (limb >> (index % 64)) & 1 == 1)
     }
 
     /// Shift left by one bit position (used by the division loop).
@@ -662,7 +656,7 @@ impl BigUint {
             return self.clone();
         }
         let limb_shift = (bits / 64) as usize;
-        let bit_shift = (bits % 64) as u32;
+        let bit_shift = bits % 64;
         let mut result = vec![0u64; self.limbs.len() + limb_shift + 1];
         for (i, &limb) in self.limbs.iter().enumerate() {
             let idx = i + limb_shift;
@@ -695,7 +689,7 @@ fn generate_random_odd(bits: usize) -> BigUint {
         return BigUint::from(0);
     }
 
-    let bytes = (bits + 7) / 8;
+    let bytes = bits.div_ceil(8);
     let mut data = vec![0u8; bytes];
     crate::crypto::csprng::fill(&mut data);
 

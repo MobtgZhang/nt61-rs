@@ -94,6 +94,9 @@ static PROVIDERS: Spinlock<Vec<(usize, AlgorithmProvider)>> = Spinlock::new(Vec:
 static HASHES: Spinlock<Vec<(usize, HashContext)>> = Spinlock::new(Vec::new());
 static KEYS: Spinlock<Vec<(usize, KeyContext)>> = Spinlock::new(Vec::new());
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_open_algorithm_provider(
     alg_handle: *mut usize,
     alg_id: *const u16,
@@ -138,6 +141,9 @@ pub unsafe extern "C" fn bcrypt_open_algorithm_provider(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_close_algorithm_provider(alg_handle: usize, _flags: u32) -> i32 {
     if alg_handle == 0 {
         return STATUS_INVALID_HANDLE;
@@ -146,6 +152,9 @@ pub unsafe extern "C" fn bcrypt_close_algorithm_provider(alg_handle: usize, _fla
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_get_property(
     object_handle: usize,
     property: *const u16,
@@ -194,6 +203,9 @@ pub unsafe extern "C" fn bcrypt_get_property(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_set_property(
     _object_handle: usize,
     property: *const u16,
@@ -216,6 +228,9 @@ pub unsafe extern "C" fn bcrypt_set_property(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_create_hash(
     alg_handle: usize,
     hash_handle: *mut usize,
@@ -252,6 +267,9 @@ pub unsafe extern "C" fn bcrypt_create_hash(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_hash_data(
     hash_handle: usize,
     input: *const u8,
@@ -277,6 +295,9 @@ pub unsafe extern "C" fn bcrypt_hash_data(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_finish_hash(
     hash_handle: usize,
     output: *mut u8,
@@ -306,6 +327,9 @@ pub unsafe extern "C" fn bcrypt_finish_hash(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_destroy_hash(hash_handle: usize) -> i32 {
     if hash_handle == 0 {
         return STATUS_INVALID_HANDLE;
@@ -314,6 +338,9 @@ pub unsafe extern "C" fn bcrypt_destroy_hash(hash_handle: usize) -> i32 {
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_generate_symmetric_key(
     alg_handle: usize,
     key_handle: *mut usize,
@@ -354,6 +381,9 @@ pub unsafe extern "C" fn bcrypt_generate_symmetric_key(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_encrypt(
     key_handle: usize,
     input: *const u8,
@@ -376,7 +406,7 @@ pub unsafe extern "C" fn bcrypt_encrypt(
     };
     let is_3des = context.algorithm == algorithm::DES3;
     let block_size = if is_3des { 8 } else { 16 };
-    if output.is_null() || output_len < input_len || input_len % block_size != 0 {
+    if output.is_null() || output_len < input_len || !input_len.is_multiple_of(block_size) {
         return STATUS_INVALID_PARAMETER;
     }
     let output_slice = core::slice::from_raw_parts_mut(output, output_len as usize);
@@ -412,6 +442,9 @@ pub unsafe extern "C" fn bcrypt_encrypt(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_decrypt(
     key_handle: usize,
     input: *const u8,
@@ -434,7 +467,7 @@ pub unsafe extern "C" fn bcrypt_decrypt(
     };
     let is_3des = context.algorithm == algorithm::DES3;
     let block_size = if is_3des { 8 } else { 16 };
-    if output.is_null() || output_len < input_len || input_len % block_size != 0 {
+    if output.is_null() || output_len < input_len || !input_len.is_multiple_of(block_size) {
         return STATUS_INVALID_PARAMETER;
     }
     let output_slice = core::slice::from_raw_parts_mut(output, output_len as usize);
@@ -470,6 +503,9 @@ pub unsafe extern "C" fn bcrypt_decrypt(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_destroy_key(key_handle: usize) -> i32 {
     if key_handle == 0 {
         return STATUS_INVALID_HANDLE;
@@ -478,6 +514,9 @@ pub unsafe extern "C" fn bcrypt_destroy_key(key_handle: usize) -> i32 {
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_generate_key_pair(
     alg_handle: usize,
     key_handle: *mut usize,
@@ -516,6 +555,9 @@ pub unsafe extern "C" fn bcrypt_generate_key_pair(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_finalize_key_pair(key_handle: usize, _flags: u32) -> i32 {
     if key_handle == 0 {
         return STATUS_INVALID_HANDLE;
@@ -524,6 +566,9 @@ pub unsafe extern "C" fn bcrypt_finalize_key_pair(key_handle: usize, _flags: u32
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_export_key(
     key_handle: usize,
     _export_key_handle: usize,
@@ -540,6 +585,9 @@ pub unsafe extern "C" fn bcrypt_export_key(
     STATUS_NOT_SUPPORTED
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_import_key(
     _alg_handle: usize,
     _import_key_handle: usize,
@@ -558,6 +606,9 @@ pub unsafe extern "C" fn bcrypt_import_key(
     STATUS_NOT_SUPPORTED
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_sign_hash(
     key_handle: usize,
     _padding_info: *const core::ffi::c_void,
@@ -597,6 +648,9 @@ pub unsafe extern "C" fn bcrypt_sign_hash(
     STATUS_SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_verify_signature(
     key_handle: usize,
     _padding_info: *const core::ffi::c_void,
@@ -628,6 +682,9 @@ pub unsafe extern "C" fn bcrypt_verify_signature(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn bcrypt_gen_random(
     _alg_handle: usize,
     buffer: *mut u8,
@@ -735,7 +792,7 @@ fn cbc_transform<T, C>(
 where
     C: Fn(&T, &mut [u8; 16]),
 {
-    if input.len() != output.len() || input.len() % 16 != 0 {
+    if input.len() != output.len() || !input.len().is_multiple_of(16) {
         return false;
     }
     let mut feedback = *iv;
@@ -760,6 +817,9 @@ where
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn read_wide_string(ptr: *const u16) -> Option<String> {
     let mut len = 0;
     while *ptr.add(len) != 0 {

@@ -34,7 +34,6 @@ pub mod capabilities {
     pub const CAPABILITY_DOCUMENTS_LIBRARY: u32 = 0x00000007;
     pub const CAPABILITY_ENTERPRISE_AUTHENTICATION: u32 = 0x00000008;
     /// Shared user certificates capability
-
     pub const CAPABILITY_SHARED_USER_CERTIFICATES: u32 = 0x00000009;
     pub const CAPABILITY_REMOVABLE_STORAGE: u32 = 0x0000000A;
     pub const CAPABILITY_APPOINTMENTS: u32 = 0x0000000B;
@@ -60,14 +59,20 @@ fn simple_string_hash(s: &str) -> u32 {
     hash
 }
 
-pub fn se_token_is_app_container(token: *const Token) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_token_is_app_container(token: *const Token) -> bool {
     if token.is_null() {
         return false;
     }
     unsafe { ((*token).flags & TOKEN_IS_APP_CONTAINER) != 0 }
 }
 
-pub fn se_create_app_container_token(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_create_app_container_token(
     parent_token: *const Token,
     package_sid: &sid,
     capabilities: &[u32],
@@ -110,7 +115,10 @@ pub fn se_create_app_container_token(
     new_token
 }
 
-pub fn se_query_app_container_info(token: *const Token) -> Option<(sid, Vec<sid>)> {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_query_app_container_info(token: *const Token) -> Option<(sid, Vec<sid>)> {
     if !se_token_is_app_container(token) {
         return None;
     }
@@ -134,7 +142,10 @@ pub fn se_query_app_container_info(token: *const Token) -> Option<(sid, Vec<sid>
     }
 }
 
-pub fn se_token_has_capability(token: *const Token, capability_rid: u32) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_token_has_capability(token: *const Token, capability_rid: u32) -> bool {
     if !se_token_is_app_container(token) {
         return false;
     }
@@ -155,32 +166,41 @@ pub fn se_token_has_capability(token: *const Token, capability_rid: u32) -> bool
     false
 }
 
-pub fn se_app_container_access_check(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_app_container_access_check(
     token: *const Token,
     _desired_access: u32,
     resource_type: AppContainerResourceType,
 ) -> bool {
-    if !se_token_is_app_container(token) {
-        // Not an AppContainer, use normal access check
-        return true;
+    unsafe {
+        if !se_token_is_app_container(token) {
+            // Not an AppContainer, use normal access check
+            return true;
+        }
+
+        let required_capability = match resource_type {
+            AppContainerResourceType::Network => capabilities::CAPABILITY_INTERNET_CLIENT,
+            AppContainerResourceType::PrivateNetwork => {
+                capabilities::CAPABILITY_PRIVATE_NETWORK_CLIENT_SERVER
+            }
+            AppContainerResourceType::PicturesLibrary => capabilities::CAPABILITY_PICTURES_LIBRARY,
+            AppContainerResourceType::VideosLibrary => capabilities::CAPABILITY_VIDEOS_LIBRARY,
+            AppContainerResourceType::MusicLibrary => capabilities::CAPABILITY_MUSIC_LIBRARY,
+            AppContainerResourceType::DocumentsLibrary => {
+                capabilities::CAPABILITY_DOCUMENTS_LIBRARY
+            }
+            AppContainerResourceType::RemovableStorage => {
+                capabilities::CAPABILITY_REMOVABLE_STORAGE
+            }
+            AppContainerResourceType::EnterpriseAuth => {
+                capabilities::CAPABILITY_ENTERPRISE_AUTHENTICATION
+            }
+        };
+
+        se_token_has_capability(token, required_capability)
     }
-
-    let required_capability = match resource_type {
-        AppContainerResourceType::Network => capabilities::CAPABILITY_INTERNET_CLIENT,
-        AppContainerResourceType::PrivateNetwork => {
-            capabilities::CAPABILITY_PRIVATE_NETWORK_CLIENT_SERVER
-        }
-        AppContainerResourceType::PicturesLibrary => capabilities::CAPABILITY_PICTURES_LIBRARY,
-        AppContainerResourceType::VideosLibrary => capabilities::CAPABILITY_VIDEOS_LIBRARY,
-        AppContainerResourceType::MusicLibrary => capabilities::CAPABILITY_MUSIC_LIBRARY,
-        AppContainerResourceType::DocumentsLibrary => capabilities::CAPABILITY_DOCUMENTS_LIBRARY,
-        AppContainerResourceType::RemovableStorage => capabilities::CAPABILITY_REMOVABLE_STORAGE,
-        AppContainerResourceType::EnterpriseAuth => {
-            capabilities::CAPABILITY_ENTERPRISE_AUTHENTICATION
-        }
-    };
-
-    se_token_has_capability(token, required_capability)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,6 +254,12 @@ impl SecurityAttributes {
         self.capabilities[self.capability_count] = create_capability_sid(capability_rid);
         self.capability_count += 1;
         true
+    }
+}
+
+impl Default for SecurityAttributes {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

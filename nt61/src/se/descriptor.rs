@@ -157,6 +157,12 @@ impl SecurityDescriptor {
     }
 }
 
+impl Default for SecurityDescriptor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[repr(C)]
 pub struct SecurityDescriptorRelative {
     pub revision: u8,
@@ -168,7 +174,10 @@ pub struct SecurityDescriptorRelative {
     pub dacl_offset: u32,
 }
 
-pub fn create_security_descriptor(sd: *mut SecurityDescriptor, revision: u8) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn create_security_descriptor(sd: *mut SecurityDescriptor, revision: u8) -> bool {
     if sd.is_null() {
         return false;
     }
@@ -181,14 +190,20 @@ pub fn create_security_descriptor(sd: *mut SecurityDescriptor, revision: u8) -> 
     true
 }
 
-pub fn valid_security_descriptor(sd: *const SecurityDescriptor) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn valid_security_descriptor(sd: *const SecurityDescriptor) -> bool {
     if sd.is_null() {
         return false;
     }
     unsafe { (*sd).is_valid() }
 }
 
-pub fn set_owner_security_descriptor(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn set_owner_security_descriptor(
     sd: *mut SecurityDescriptor,
     owner: *mut sid,
     owner_defaulted: bool,
@@ -202,7 +217,10 @@ pub fn set_owner_security_descriptor(
     true
 }
 
-pub fn set_group_security_descriptor(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn set_group_security_descriptor(
     sd: *mut SecurityDescriptor,
     group: *mut sid,
     group_defaulted: bool,
@@ -216,7 +234,10 @@ pub fn set_group_security_descriptor(
     true
 }
 
-pub fn set_dacl_security_descriptor(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn set_dacl_security_descriptor(
     sd: *mut SecurityDescriptor,
     dacl_present: bool,
     dacl: *mut Acl,
@@ -231,7 +252,10 @@ pub fn set_dacl_security_descriptor(
     true
 }
 
-pub fn set_sacl_security_descriptor(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn set_sacl_security_descriptor(
     sd: *mut SecurityDescriptor,
     sacl_present: bool,
     sacl: *mut Acl,

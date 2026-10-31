@@ -95,7 +95,16 @@ impl SecuritySubjectContext {
     }
 }
 
-pub fn se_access_check_with_context(
+impl Default for SecuritySubjectContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_access_check_with_context(
     security_descriptor: *const SecurityDescriptor,
     subject_context: &SecuritySubjectContext,
     desired_access: u32,
@@ -133,7 +142,10 @@ pub fn se_access_check_with_context(
     (result, granted)
 }
 
-pub fn se_valid_security_descriptor(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_valid_security_descriptor(
     _length: u32,
     security_descriptor: *const SecurityDescriptor,
 ) -> bool {
@@ -167,7 +179,10 @@ fn copy_dacl(dacl: *const super::acl::Acl) -> *mut super::acl::Acl {
     copy
 }
 
-pub fn se_assign_security(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_assign_security(
     parent_descriptor: *const SecurityDescriptor,
     explicit_descriptor: *const SecurityDescriptor,
     is_directory: bool,
@@ -232,8 +247,7 @@ pub fn se_assign_security(
         // Attach a mandatory label SACL from the creator token's integrity
         // level so new objects carry an object-side integrity level.
         if !token.is_null() {
-            let level =
-                super::integrity::se_token_integrity_level(token as *const super::token::Token);
+            let level = super::integrity::se_token_integrity_level(token);
             super::integrity::se_set_object_integrity_level(
                 new_sd,
                 level,
@@ -245,7 +259,10 @@ pub fn se_assign_security(
     new_sd
 }
 
-pub fn se_deassign_security(security_descriptor: *mut *mut SecurityDescriptor) {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_deassign_security(security_descriptor: *mut *mut SecurityDescriptor) {
     if security_descriptor.is_null() {
         return;
     }
@@ -259,7 +276,10 @@ pub fn se_deassign_security(security_descriptor: *mut *mut SecurityDescriptor) {
     }
 }
 
-pub fn se_query_security_descriptor_info(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_query_security_descriptor_info(
     security_information: u32,
     security_descriptor: *const SecurityDescriptor,
     output_buffer: *mut u8,
@@ -302,7 +322,10 @@ pub fn se_query_security_descriptor_info(
     }
 }
 
-pub fn se_set_security_descriptor_info(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_set_security_descriptor_info(
     _object: *mut core::ffi::c_void,
     security_information: u32,
     modification: *const SecurityDescriptor,
@@ -362,10 +385,13 @@ pub fn se_set_security_descriptor_info(
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Audit an object-access event. Delegates to the SE audit subsystem,
 /// which writes to the event log buffer if auditing is enabled for the
 /// ObjectAccess category.
-pub fn audit_event(
+pub unsafe fn audit_event(
     object_type: &str,
     object_name: Option<&str>,
     security_descriptor: *const SecurityDescriptor,
@@ -374,50 +400,57 @@ pub fn audit_event(
     granted_access: u32,
     access_granted: bool,
 ) {
-    super::audit::se_open_object_audit_alarm(
-        object_type,
-        object_name,
-        security_descriptor,
-        token,
-        desired_access,
-        granted_access,
-        access_granted,
-    );
+    unsafe {
+        super::audit::se_open_object_audit_alarm(
+            object_type,
+            object_name,
+            security_descriptor,
+            token,
+            desired_access,
+            granted_access,
+            access_granted,
+        );
+    }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Full access check with audit: captures the subject context, performs
 /// the access check against a security descriptor, and generates an
 /// audit event for the outcome. Returns (result, granted_access).
-pub fn check_access(
+pub unsafe fn check_access(
     security_descriptor: *const SecurityDescriptor,
     desired_access: u32,
     generic_mapping: &GenericMapping,
     object_type: &str,
     object_name: Option<&str>,
 ) -> (AccessCheckResult, u32) {
-    let subject = SecuritySubjectContext::capture();
-    let token = subject.effective_token();
+    unsafe {
+        let subject = SecuritySubjectContext::capture();
+        let token = subject.effective_token();
 
-    let (result, granted) = se_access_check_with_context(
-        security_descriptor,
-        &subject,
-        desired_access,
-        generic_mapping,
-        0,
-    );
+        let (result, granted) = se_access_check_with_context(
+            security_descriptor,
+            &subject,
+            desired_access,
+            generic_mapping,
+            0,
+        );
 
-    // Audit the outcome (no-op if auditing is disabled or token is null).
-    audit_event(
-        object_type,
-        object_name,
-        security_descriptor,
-        token,
-        desired_access,
-        granted,
-        matches!(result, AccessCheckResult::Allowed),
-    );
+        // Audit the outcome (no-op if auditing is disabled or token is null).
+        audit_event(
+            object_type,
+            object_name,
+            security_descriptor,
+            token,
+            desired_access,
+            granted,
+            matches!(result, AccessCheckResult::Allowed),
+        );
 
-    (result, granted)
+        (result, granted)
+    }
 }
 
 pub fn init() {

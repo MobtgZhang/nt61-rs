@@ -36,14 +36,20 @@ pub fn create_integrity_level_sid(level_rid: u32) -> sid {
     sid::with_authority_and_subs_arr(ia, 1, level_rid, 0, 0, 0, 0, 0, 0, 0)
 }
 
-pub fn se_token_integrity_level(token: *const Token) -> u32 {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_token_integrity_level(token: *const Token) -> u32 {
     if token.is_null() {
         return SECURITY_MANDATORY_MEDIUM_RID;
     }
     unsafe { (*token).integrity_level_rid }
 }
 
-pub fn se_set_token_integrity_level(token: *mut Token, level_rid: u32) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_set_token_integrity_level(token: *mut Token, level_rid: u32) -> bool {
     if token.is_null() {
         return false;
     }
@@ -76,18 +82,22 @@ pub fn se_set_token_integrity_level(token: *mut Token, level_rid: u32) -> bool {
     true
 }
 
-pub fn se_check_mandatory_integrity(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_check_mandatory_integrity(
     subject_token: *const Token,
     object_integrity: u32,
     desired_access: u32,
 ) -> bool {
-    if subject_token.is_null() {
-        return false;
-    }
+    unsafe {
+        if subject_token.is_null() {
+            return false;
+        }
 
-    let subject_level = se_token_integrity_level(subject_token);
+        let subject_level = se_token_integrity_level(subject_token);
 
-    const WRITE_ACCESS_MASK: u32 = 0x00000002 // FILE_WRITE_DATA
+        const WRITE_ACCESS_MASK: u32 = 0x00000002 // FILE_WRITE_DATA
         | 0x00000004 // FILE_APPEND_DATA
         | 0x00000010 // FILE_WRITE_EA
         | 0x00000100 // FILE_WRITE_ATTRIBUTES
@@ -96,16 +106,18 @@ pub fn se_check_mandatory_integrity(
         | super::seaccess::ACCESS_WRITE_DAC
         | super::seaccess::ACCESS_WRITE_OWNER;
 
-    if (desired_access & WRITE_ACCESS_MASK) != 0 {
-        if subject_level < object_integrity {
+        if (desired_access & WRITE_ACCESS_MASK) != 0 && subject_level < object_integrity {
             return false;
         }
-    }
 
-    true
+        true
+    }
 }
 
-pub fn se_get_object_integrity_level(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_get_object_integrity_level(
     security_descriptor: *const super::seaccess::SecurityDescriptor,
 ) -> u32 {
     if security_descriptor.is_null() {
@@ -157,7 +169,10 @@ fn read_sid_from_acl_data(data: &[u8]) -> Option<sid> {
     sid::from_bytes(data)
 }
 
-pub fn se_set_object_integrity_level(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_set_object_integrity_level(
     security_descriptor: *mut super::seaccess::SecurityDescriptor,
     level_rid: u32,
     policy: u32,
@@ -226,25 +241,39 @@ pub fn integrity_level_name(level_rid: u32) -> &'static str {
     }
 }
 
-pub fn se_token_is_low_integrity(token: *const Token) -> bool {
-    se_token_integrity_level(token) <= SECURITY_MANDATORY_LOW_RID
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_token_is_low_integrity(token: *const Token) -> bool {
+    unsafe { se_token_integrity_level(token) <= SECURITY_MANDATORY_LOW_RID }
 }
 
-pub fn se_token_is_elevated(token: *const Token) -> bool {
-    se_token_integrity_level(token) >= SECURITY_MANDATORY_HIGH_RID
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_token_is_elevated(token: *const Token) -> bool {
+    unsafe { se_token_integrity_level(token) >= SECURITY_MANDATORY_HIGH_RID }
 }
 
-pub fn se_lower_token_integrity(token: *mut Token, new_level: u32) -> bool {
-    let current_level = se_token_integrity_level(token);
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_lower_token_integrity(token: *mut Token, new_level: u32) -> bool {
+    unsafe {
+        let current_level = se_token_integrity_level(token);
 
-    if new_level >= current_level {
-        return false;
+        if new_level >= current_level {
+            return false;
+        }
+
+        se_set_token_integrity_level(token, new_level)
     }
-
-    se_set_token_integrity_level(token, new_level)
 }
 
-pub fn se_create_low_integrity_token(existing_token: *const Token) -> *mut Token {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_create_low_integrity_token(existing_token: *const Token) -> *mut Token {
     if existing_token.is_null() {
         return core::ptr::null_mut();
     }
@@ -271,13 +300,18 @@ pub fn se_create_low_integrity_token(existing_token: *const Token) -> *mut Token
     new_token
 }
 
-pub fn se_integrity_access_check(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn se_integrity_access_check(
     subject_token: *const Token,
     object_sd: *const super::seaccess::SecurityDescriptor,
     desired_access: u32,
 ) -> bool {
-    let object_integrity = se_get_object_integrity_level(object_sd);
-    se_check_mandatory_integrity(subject_token, object_integrity, desired_access)
+    unsafe {
+        let object_integrity = se_get_object_integrity_level(object_sd);
+        se_check_mandatory_integrity(subject_token, object_integrity, desired_access)
+    }
 }
 
 pub fn init() {}

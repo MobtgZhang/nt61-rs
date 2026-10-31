@@ -54,7 +54,6 @@ impl AuditRecord {
     }
 
     /// Set process and thread IDs
-
     pub fn set_process_info(&mut self, process_id: u64, thread_id: u64) {
         self.process_id = process_id;
         self.thread_id = thread_id;
@@ -377,6 +376,7 @@ pub mod encryption {
     use crate::crypto::csprng;
     use crate::crypto::hash::sha256;
     use crate::ke::sync::Spinlock;
+    use crate::libs::ntdll::{status::STATUS_UNSUCCESSFUL, types::NTSTATUS};
 
     const AES_KEY_SIZE: usize = 32;
     const AES_BLOCK_SIZE: usize = 16;
@@ -387,7 +387,7 @@ pub mod encryption {
     /// seed or domain string is retained.
     static AUDIT_KEY: Spinlock<Option<[u8; AES_KEY_SIZE]>> = Spinlock::new(None);
 
-    fn audit_key() -> Result<[u8; AES_KEY_SIZE], ()> {
+    fn audit_key() -> Result<[u8; AES_KEY_SIZE], NTSTATUS> {
         let mut key = AUDIT_KEY.lock();
         if let Some(key) = *key {
             return Ok(key);
@@ -395,7 +395,7 @@ pub mod encryption {
 
         let mut generated = [0u8; AES_KEY_SIZE];
         if !csprng::fill(&mut generated) {
-            return Err(());
+            return Err(STATUS_UNSUCCESSFUL);
         }
         *key = Some(generated);
         Ok(generated)
@@ -432,7 +432,8 @@ pub mod encryption {
     /// any plaintext is returned, including before PKCS#7 padding is used.
     pub fn decrypt_record(data: &[u8]) -> Option<alloc::vec::Vec<u8>> {
         let key = audit_key().ok()?;
-        if data.len() < 2 * AES_BLOCK_SIZE + 32 || (data.len() - 32) % AES_BLOCK_SIZE != 0 {
+        if data.len() < 2 * AES_BLOCK_SIZE + 32 || !(data.len() - 32).is_multiple_of(AES_BLOCK_SIZE)
+        {
             return None;
         }
 

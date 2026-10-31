@@ -351,6 +351,12 @@ impl EntropyPool {
     }
 }
 
+impl Default for EntropyPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub mod hwrng {
     pub fn has_rdrand() -> bool {
         crate::arch::hardware_random_u64().is_some()

@@ -8,7 +8,10 @@
 use super::acl::{AceFlags, AceHeader, AceType, Acl, ACL_REVISION};
 use super::sid::sid;
 
-pub fn create_acl(acl: *mut Acl, acl_length: u32, acl_revision: u8) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn create_acl(acl: *mut Acl, acl_length: u32, acl_revision: u8) -> bool {
     if acl.is_null() {
         return false;
     }
@@ -33,7 +36,10 @@ pub fn create_acl(acl: *mut Acl, acl_length: u32, acl_revision: u8) -> bool {
     true
 }
 
-pub fn add_access_allowed_ace(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn add_access_allowed_ace(
     acl: *mut Acl,
     ace_revision: u8,
     access_mask: u32,
@@ -51,7 +57,10 @@ pub fn add_access_allowed_ace(
     }
 }
 
-pub fn add_access_allowed_ace_ex(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn add_access_allowed_ace_ex(
     acl: *mut Acl,
     ace_revision: u8,
     ace_flags: AceFlags,
@@ -70,7 +79,15 @@ pub fn add_access_allowed_ace_ex(
     }
 }
 
-pub fn add_access_denied_ace(acl: *mut Acl, ace_revision: u8, access_mask: u32, sid: &sid) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn add_access_denied_ace(
+    acl: *mut Acl,
+    ace_revision: u8,
+    access_mask: u32,
+    sid: &sid,
+) -> bool {
     if acl.is_null() {
         return false;
     }
@@ -83,7 +100,10 @@ pub fn add_access_denied_ace(acl: *mut Acl, ace_revision: u8, access_mask: u32, 
     }
 }
 
-pub fn add_access_denied_ace_ex(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn add_access_denied_ace_ex(
     acl: *mut Acl,
     ace_revision: u8,
     ace_flags: AceFlags,
@@ -102,7 +122,10 @@ pub fn add_access_denied_ace_ex(
     }
 }
 
-pub fn add_mandatory_ace(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn add_mandatory_ace(
     acl: *mut Acl,
     ace_revision: u8,
     ace_flags: AceFlags,
@@ -128,7 +151,10 @@ pub fn add_mandatory_ace(
     }
 }
 
-pub fn get_ace(acl: *const Acl, ace_index: u32) -> (*const AceHeader, bool) {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn get_ace(acl: *const Acl, ace_index: u32) -> (*const AceHeader, bool) {
     if acl.is_null() {
         return (core::ptr::null(), false);
     }
@@ -165,7 +191,10 @@ pub fn get_ace(acl: *const Acl, ace_index: u32) -> (*const AceHeader, bool) {
     }
 }
 
-pub fn delete_ace(acl: *mut Acl, ace_index: u32) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn delete_ace(acl: *mut Acl, ace_index: u32) -> bool {
     if acl.is_null() {
         return false;
     }
@@ -216,7 +245,10 @@ pub fn delete_ace(acl: *mut Acl, ace_index: u32) -> bool {
     }
 }
 
-pub fn first_free_ace(acl: *const Acl) -> (*mut u8, bool) {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn first_free_ace(acl: *const Acl) -> (*mut u8, bool) {
     if acl.is_null() {
         return (core::ptr::null_mut(), false);
     }
@@ -249,7 +281,10 @@ pub fn first_free_ace(acl: *const Acl) -> (*mut u8, bool) {
     }
 }
 
-pub fn query_information_acl(
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn query_information_acl(
     acl: *const Acl,
     ace_count: *mut u32,
     acl_size: *mut u32,
@@ -282,7 +317,10 @@ pub fn query_information_acl(
     }
 }
 
-pub fn set_information_acl(acl: *mut Acl, acl_revision: u8) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn set_information_acl(acl: *mut Acl, acl_revision: u8) -> bool {
     if acl.is_null() {
         return false;
     }
@@ -298,7 +336,10 @@ pub fn set_information_acl(acl: *mut Acl, acl_revision: u8) -> bool {
     true
 }
 
-pub fn valid_acl(acl: *const Acl) -> bool {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn valid_acl(acl: *const Acl) -> bool {
     if acl.is_null() {
         return false;
     }
@@ -306,7 +347,10 @@ pub fn valid_acl(acl: *const Acl) -> bool {
     unsafe { (*acl).is_valid() }
 }
 
-pub fn find_ace_by_sid(acl: *const Acl, sid: &sid) -> Option<u32> {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn find_ace_by_sid(acl: *const Acl, sid: &sid) -> Option<u32> {
     if acl.is_null() {
         return None;
     }
@@ -368,42 +412,44 @@ fn read_sid_from_acl_data(data: &[u8]) -> Option<sid> {
 }
 
 pub fn build_default_dacl(owner: &sid, is_container: bool) -> *mut Acl {
-    let acl_ptr = crate::mm::pool::allocate(
-        crate::mm::pool::PoolType::NonPaged,
-        core::mem::size_of::<Acl>(),
-    ) as *mut Acl;
+    unsafe {
+        let acl_ptr = crate::mm::pool::allocate(
+            crate::mm::pool::PoolType::NonPaged,
+            core::mem::size_of::<Acl>(),
+        ) as *mut Acl;
 
-    if acl_ptr.is_null() {
-        return core::ptr::null_mut();
+        if acl_ptr.is_null() {
+            return core::ptr::null_mut();
+        }
+
+        if !create_acl(
+            acl_ptr,
+            (core::mem::size_of::<Acl>() - 8) as u32,
+            ACL_REVISION,
+        ) {
+            crate::mm::pool::free(acl_ptr as *mut u8);
+            return core::ptr::null_mut();
+        }
+
+        let flags = if is_container {
+            AceFlags::CONTAINER_INHERIT | AceFlags::OBJECT_INHERIT
+        } else {
+            AceFlags::NONE
+        };
+
+        let full_control = super::acl::ACCESS_GENERIC_ALL
+            | super::acl::ACCESS_DELETE
+            | super::acl::ACCESS_READ_CONTROL
+            | super::acl::ACCESS_WRITE_DAC
+            | super::acl::ACCESS_WRITE_OWNER;
+
+        if !add_access_allowed_ace_ex(acl_ptr, ACL_REVISION, flags, full_control, owner) {
+            crate::mm::pool::free(acl_ptr as *mut u8);
+            return core::ptr::null_mut();
+        }
+
+        acl_ptr
     }
-
-    if !create_acl(
-        acl_ptr,
-        (core::mem::size_of::<Acl>() - 8) as u32,
-        ACL_REVISION,
-    ) {
-        crate::mm::pool::free(acl_ptr as *mut u8);
-        return core::ptr::null_mut();
-    }
-
-    let flags = if is_container {
-        AceFlags::CONTAINER_INHERIT | AceFlags::OBJECT_INHERIT
-    } else {
-        AceFlags::NONE
-    };
-
-    let full_control = super::acl::ACCESS_GENERIC_ALL
-        | super::acl::ACCESS_DELETE
-        | super::acl::ACCESS_READ_CONTROL
-        | super::acl::ACCESS_WRITE_DAC
-        | super::acl::ACCESS_WRITE_OWNER;
-
-    if !add_access_allowed_ace_ex(acl_ptr, ACL_REVISION, flags, full_control, owner) {
-        crate::mm::pool::free(acl_ptr as *mut u8);
-        return core::ptr::null_mut();
-    }
-
-    acl_ptr
 }
 
 pub fn init() {}
@@ -417,16 +463,16 @@ mod tests {
     fn acl_management_uses_inline_data_for_ace_addresses() {
         let mut acl = Acl::new();
         let sid = sid::well_known(WellKnownSid::LocalSystem);
-        assert!(add_access_allowed_ace(&mut acl, ACL_REVISION, 0x10, &sid));
+        assert!(unsafe { add_access_allowed_ace(&mut acl, ACL_REVISION, 0x10, &sid) });
 
-        let (ace, ok) = get_ace(&acl, 0);
+        let (ace, ok) = unsafe { get_ace(&acl, 0) };
         assert!(ok);
         assert!(!ace.is_null());
         unsafe {
             assert_eq!((*ace).ace_type, AceType::AccessAllowed as u8);
         }
 
-        let (free, ok) = first_free_ace(&acl);
+        let (free, ok) = unsafe { first_free_ace(&acl) };
         assert!(ok);
         unsafe {
             assert_eq!(
@@ -434,18 +480,18 @@ mod tests {
                 acl.data.as_ptr().add(8 + 4 + 4 + sid.size()) as *mut u8
             );
         }
-        assert_eq!(find_ace_by_sid(&acl, &sid), Some(0));
+        assert_eq!(unsafe { find_ace_by_sid(&acl, &sid) }, Some(0));
     }
 
     #[test]
     fn malformed_sid_is_not_treated_as_a_match() {
         let mut acl = Acl::new();
         let sid = sid::well_known(WellKnownSid::LocalSystem);
-        assert!(add_access_allowed_ace(&mut acl, ACL_REVISION, 0x10, &sid));
+        assert!(unsafe { add_access_allowed_ace(&mut acl, ACL_REVISION, 0x10, &sid) });
         let used = acl.acl_size as usize;
         acl.data[17] = 2;
         assert!(!acl.is_valid());
-        assert_eq!(find_ace_by_sid(&acl, &sid), None);
+        assert_eq!(unsafe { find_ace_by_sid(&acl, &sid) }, None);
         assert_eq!(used, 28);
     }
 }

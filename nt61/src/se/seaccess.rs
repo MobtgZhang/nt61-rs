@@ -15,7 +15,7 @@
 //!      grant it.
 //!   5. Mandatory access: check integrity level (no write-up rule).
 //
-//! References: Windows SDK, WRK secobj.c, ReactOS
+//!      References: Windows SDK, WRK secobj.c, ReactOS
 
 use super::acl::{AceFlags, AceType, Acl};
 use super::sid::sid;
@@ -245,7 +245,7 @@ fn check_access_with_granted(
 
     let maximum_access = generic_mapping
         .map(|gm| gm.generic_all)
-        .unwrap_or(u32::MAX & !ACCESS_MAXIMUM_ALLOWED);
+        .unwrap_or(!ACCESS_MAXIMUM_ALLOWED);
 
     if dacl.is_null() {
         let granted = if maximum_allowed {
@@ -568,6 +568,9 @@ pub fn get_generic_mapping_for_type(object_type: ObTypeIndex) -> &'static Generi
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// SeAccessCheck — the main Windows security access check API.
 ///
 /// This is the primary entry point for access validation in the NT security model.
@@ -580,7 +583,7 @@ pub fn get_generic_mapping_for_type(object_type: ObTypeIndex) -> &'static Generi
 ///
 /// # Returns
 /// * `(AccessCheckResult, granted_access)` - Whether access is allowed and what was granted
-pub fn se_access_check(
+pub unsafe fn se_access_check(
     object_type: ObTypeIndex,
     sd_ptr: *const SecurityDescriptor,
     desired_access: u32,
@@ -658,21 +661,26 @@ pub fn se_access_check(
     result
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// SeAccessCheckByType — access check with object-type specific logic.
 ///
 /// Extended version of SeAccessCheck that handles object-type specific checks
 /// like directory traversal and file append.
-pub fn se_access_check_by_type(
+pub unsafe fn se_access_check_by_type(
     object_type: ObTypeIndex,
     _object_type_ptr: *const (),
     sd_ptr: *const SecurityDescriptor,
     desired_access: u32,
     token_ptr: *const Token,
 ) -> (AccessCheckResult, u32) {
-    // _object_type_ptr is intentionally unused - reserved for future type-specific checks
-    // For now, delegate to the basic version
-    // In a full implementation, this would handle type-specific logic
-    se_access_check(object_type, sd_ptr, desired_access, token_ptr)
+    unsafe {
+        // _object_type_ptr is intentionally unused - reserved for future type-specific checks
+        // For now, delegate to the basic version
+        // In a full implementation, this would handle type-specific logic
+        se_access_check(object_type, sd_ptr, desired_access, token_ptr)
+    }
 }
 
 /// Security descriptor structure (simplified for kernel use).
@@ -696,15 +704,17 @@ impl SecurityDescriptor {
         }
 
         unsafe {
-            if (self.control & super::descriptor::SE_DACL_PRESENT) != 0 && !self.dacl.is_null() {
-                if !(*self.dacl).is_valid() {
-                    return false;
-                }
+            if (self.control & super::descriptor::SE_DACL_PRESENT) != 0
+                && !self.dacl.is_null()
+                && !(*self.dacl).is_valid()
+            {
+                return false;
             }
-            if (self.control & super::descriptor::SE_SACL_PRESENT) != 0 && !self.sacl.is_null() {
-                if !(*self.sacl).is_valid() {
-                    return false;
-                }
+            if (self.control & super::descriptor::SE_SACL_PRESENT) != 0
+                && !self.sacl.is_null()
+                && !(*self.sacl).is_valid()
+            {
+                return false;
             }
         }
 
@@ -748,8 +758,8 @@ impl SecurityDescriptor {
             (*sd_ptr).control = 0x8004; // SE_DACL_PRESENT | SE_SELF_RELATIVE
 
             // Copy owner and group from token
-            (*sd_ptr).owner = token.user.clone();
-            (*sd_ptr).group = token.primary_group.clone();
+            (*sd_ptr).owner = token.user;
+            (*sd_ptr).group = token.primary_group;
 
             // Build DACL based on token's user and enabled groups
             let dacl = build_dacl_from_token(token);
@@ -826,9 +836,12 @@ fn build_dacl_from_token(token: &super::token::Token) -> *const Acl {
     acl_ptr as *const Acl
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Build a security descriptor for a process.
 /// This is called from ps/process.rs to create proper process security descriptors.
-pub fn build_process_security_descriptor(
+pub unsafe fn build_process_security_descriptor(
     process: *mut crate::ps::process::Eprocess,
 ) -> *const SecurityDescriptor {
     if process.is_null() {
@@ -949,7 +962,7 @@ mod tests {
         };
 
         let (result, granted) =
-            se_access_check(ObTypeIndex::File, &sd, ACCESS_MAXIMUM_ALLOWED, &token);
+            unsafe { se_access_check(ObTypeIndex::File, &sd, ACCESS_MAXIMUM_ALLOWED, &token) };
         assert_eq!(result, AccessCheckResult::Denied);
         assert_eq!(granted, 0);
     }
@@ -958,12 +971,14 @@ mod tests {
     fn maximum_allowed_on_null_descriptor_applies_default_token_policy() {
         ensure_test_heap();
         let token = Token::new_primary(sid::well_known(WellKnownSid::Users));
-        let (result, granted) = se_access_check(
-            ObTypeIndex::File,
-            core::ptr::null(),
-            ACCESS_MAXIMUM_ALLOWED,
-            &token,
-        );
+        let (result, granted) = unsafe {
+            se_access_check(
+                ObTypeIndex::File,
+                core::ptr::null(),
+                ACCESS_MAXIMUM_ALLOWED,
+                &token,
+            )
+        };
         assert_eq!(result, AccessCheckResult::Allowed);
         assert_eq!(granted & ACCESS_MAXIMUM_ALLOWED, 0);
         assert_ne!(granted, 0);
@@ -986,7 +1001,7 @@ mod tests {
         };
 
         let (result, granted) =
-            se_access_check(ObTypeIndex::File, &sd, ACCESS_MAXIMUM_ALLOWED, &token);
+            unsafe { se_access_check(ObTypeIndex::File, &sd, ACCESS_MAXIMUM_ALLOWED, &token) };
         assert_eq!(result, AccessCheckResult::Allowed);
         assert_eq!(granted & ACCESS_MAXIMUM_ALLOWED, 0);
         assert_ne!(granted, 0);
@@ -1008,7 +1023,7 @@ mod tests {
         };
 
         let (result, granted) =
-            se_access_check(ObTypeIndex::File, &sd, ACCESS_MAXIMUM_ALLOWED, &token);
+            unsafe { se_access_check(ObTypeIndex::File, &sd, ACCESS_MAXIMUM_ALLOWED, &token) };
         assert_eq!(result, AccessCheckResult::Allowed);
         assert_eq!(granted & ACCESS_MAXIMUM_ALLOWED, 0);
         assert_ne!(granted, 0);

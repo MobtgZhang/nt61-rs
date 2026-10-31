@@ -7,7 +7,7 @@
 //!   * SeAccessCheck — the core access validation function
 //!   * SePrivilegeCheck — checks if a token has required privileges
 //
-//! References:
+//!     References:
 //!   * Windows SDK: winnt.h (SID, ACL, ACE structures)
 //!   * Windows Research Kernel (WRK)
 //!   * ReactOS security subystem

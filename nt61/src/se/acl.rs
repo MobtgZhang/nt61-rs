@@ -264,9 +264,7 @@ impl Acl {
                 return None;
             }
 
-            if AceType::from_u8(self.data[offset]).is_none() {
-                return None;
-            }
+            AceType::from_u8(self.data[offset])?;
 
             if matches!(
                 self.data[offset],
@@ -345,6 +343,12 @@ impl Acl {
     }
 }
 
+impl Default for Acl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Well-known DACLs for common objects.
 pub static ACL_EVERYONE_FULL: Acl = Acl::new();
 
@@ -358,8 +362,11 @@ pub fn create_default_dacl() -> Acl {
     Acl::new()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Check if a DACL is NULL (allows all access).
-pub fn is_null_dacl(acl: *const Acl) -> bool {
+pub unsafe fn is_null_dacl(acl: *const Acl) -> bool {
     if acl.is_null() {
         return true;
     }

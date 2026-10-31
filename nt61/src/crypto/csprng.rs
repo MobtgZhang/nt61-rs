@@ -367,6 +367,9 @@ pub fn fill(out: &mut [u8]) -> bool {
     true
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `rtl_gen_random` / `SystemFunction036` — fills `buffer` with
 /// `length` random bytes. Returns TRUE on success, FALSE on
 /// failure. The buffer must be readable+writeable.

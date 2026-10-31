@@ -228,6 +228,12 @@ impl Md5 {
     }
 }
 
+impl Default for Md5 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone)]
 pub struct Sha1 {
     state: [u32; 5],
@@ -342,6 +348,12 @@ impl Sha1 {
         state[2] = state[2].wrapping_add(c);
         state[3] = state[3].wrapping_add(d);
         state[4] = state[4].wrapping_add(e);
+    }
+}
+
+impl Default for Sha1 {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -487,6 +499,12 @@ impl Sha256 {
         state[5] = state[5].wrapping_add(f);
         state[6] = state[6].wrapping_add(g);
         state[7] = state[7].wrapping_add(h);
+    }
+}
+
+impl Default for Sha256 {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -715,6 +733,12 @@ impl Sha512 {
     }
 }
 
+impl Default for Sha512 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Sha384 {
     inner: Sha512,
 }
@@ -744,6 +768,12 @@ impl Sha384 {
         let mut output = [0u8; 48];
         output.copy_from_slice(&full[..48]);
         output
+    }
+}
+
+impl Default for Sha384 {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

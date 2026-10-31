@@ -130,6 +130,9 @@ pub struct KeyContext {
 
 static PROV_COUNTER: AtomicUsize = AtomicUsize::new(0x4000);
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_acquire_context_a(
     prov: *mut usize,
     container: *const u8,
@@ -158,6 +161,9 @@ pub unsafe extern "C" fn crypt_acquire_context_a(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_acquire_context_w(
     prov: *mut usize,
     container: *const u16,
@@ -186,6 +192,9 @@ pub unsafe extern "C" fn crypt_acquire_context_w(
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_release_context(prov: usize, _flags: u32) -> i32 {
     if prov == 0 {
         return 0;
@@ -194,6 +203,9 @@ pub unsafe extern "C" fn crypt_release_context(prov: usize, _flags: u32) -> i32 
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_create_hash(
     prov: usize,
     alg_id: u32,
@@ -220,6 +232,9 @@ pub unsafe extern "C" fn crypt_create_hash(
     0 // FALSE: no persistent hash state is available
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_hash_data(
     hash: usize,
     data: *const u8,
@@ -236,6 +251,9 @@ pub unsafe extern "C" fn crypt_hash_data(
     0 // FALSE: refusing to discard input
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_get_hash_param(
     hash: usize,
     _param: u32,
@@ -252,6 +270,9 @@ pub unsafe extern "C" fn crypt_get_hash_param(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_destroy_hash(hash: usize) -> i32 {
     if hash == 0 {
         return 0;
@@ -260,6 +281,9 @@ pub unsafe extern "C" fn crypt_destroy_hash(hash: usize) -> i32 {
     0 // FALSE: no cipher backend is available
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_gen_key(
     prov: usize,
     _alg_id: u32,
@@ -275,6 +299,9 @@ pub unsafe extern "C" fn crypt_gen_key(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_import_key(
     prov: usize,
     data: *const u8,
@@ -292,6 +319,9 @@ pub unsafe extern "C" fn crypt_import_key(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_export_key(
     key: usize,
     _exp_key: usize,
@@ -308,6 +338,9 @@ pub unsafe extern "C" fn crypt_export_key(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_get_key_param(
     key: usize,
     _param: u32,
@@ -324,6 +357,9 @@ pub unsafe extern "C" fn crypt_get_key_param(
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_set_key_param(
     key: usize,
     _param: u32,
@@ -338,6 +374,9 @@ pub unsafe extern "C" fn crypt_set_key_param(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_encrypt(
     key: usize,
     _hash: usize,
@@ -356,6 +395,9 @@ pub unsafe extern "C" fn crypt_encrypt(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_decrypt(
     key: usize,
     _hash: usize,
@@ -373,6 +415,9 @@ pub unsafe extern "C" fn crypt_decrypt(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_destroy_key(key: usize) -> i32 {
     if key == 0 {
         return 0;
@@ -381,6 +426,9 @@ pub unsafe extern "C" fn crypt_destroy_key(key: usize) -> i32 {
     1 // TRUE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_gen_random(prov: usize, len: u32, buffer: *mut u8) -> i32 {
     if prov == 0 || buffer.is_null() {
         return 0;
@@ -395,6 +443,9 @@ pub unsafe extern "C" fn crypt_gen_random(prov: usize, len: u32, buffer: *mut u8
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_sign_hash_a(
     hash: usize,
     _key_spec: u32,
@@ -412,6 +463,9 @@ pub unsafe extern "C" fn crypt_sign_hash_a(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_verify_signature_a(
     hash: usize,
     signature: *const u8,
@@ -429,6 +483,9 @@ pub unsafe extern "C" fn crypt_verify_signature_a(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_duplicate_hash(
     hash: usize,
     _reserved: *mut u32,
@@ -443,6 +500,9 @@ pub unsafe extern "C" fn crypt_duplicate_hash(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe extern "C" fn crypt_duplicate_key(
     key: usize,
     _reserved: *mut u32,
@@ -457,6 +517,9 @@ pub unsafe extern "C" fn crypt_duplicate_key(
     0 // FALSE
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn read_ansi_string(ptr: *const u8) -> String {
     let mut len = 0;
     while *ptr.add(len) != 0 {
@@ -470,6 +533,9 @@ unsafe fn read_ansi_string(ptr: *const u8) -> String {
     String::from_utf8_lossy(slice).into_owned()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn read_wide_string(ptr: *const u16) -> String {
     let mut len = 0;
     while *ptr.add(len) != 0 {
