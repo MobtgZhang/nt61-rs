@@ -18,6 +18,9 @@
 
 use nt61::kernel_main::kernel_main;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Switch to the kernel stack and jump to `kernel_main`. Never
 /// returns.
 #[cfg(target_arch = "riscv64")]
@@ -59,6 +62,9 @@ pub fn install_kernel_handoff() -> u64 {
     0
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn launch_kernel(stack_top: u64, bi_ptr: u64, _ntoskrnl_base: u64) -> ! {
     call_kernel_main(stack_top, bi_ptr)
 }

@@ -155,6 +155,9 @@ impl HybridAllocator {
 }
 
 unsafe impl GlobalAlloc for HybridAllocator {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let base_align = layout.align().max(8);
         let base_size = layout
@@ -181,6 +184,9 @@ unsafe impl GlobalAlloc for HybridAllocator {
         user
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
         if ptr.is_null() {
             return;
@@ -4483,6 +4489,9 @@ extern "efiapi" fn winload_load_file_callback(
     uefi::Status::SUCCESS
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Capture our own PE image bytes into a boot-services pool buffer and
 /// install the EFI_LOAD_FILE_PROTOCOL on a fresh handle. Returns the
 /// new handle on success. Safe to skip: the direct-launch path does

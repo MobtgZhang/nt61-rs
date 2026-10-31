@@ -21,6 +21,9 @@ pub fn install_kernel_handoff() -> u64 {
     nt61::arch::x86_64::ntoskrnl_handoff::install_handoff_pointer()
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 pub unsafe fn launch_kernel(stack_top: u64, bi_ptr: u64, ntoskrnl_entry: u64) -> ! {
     jump_to_ntoskrnl_kisystemstartup(stack_top, bi_ptr, ntoskrnl_entry)
 }
@@ -29,6 +32,9 @@ pub fn write_debug_marker(bytes: &[u8]) {
     write_com1_marker(bytes);
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Jump to the on-disk `ntoskrnl.exe!KiSystemStartup` and never
 /// return. This is the Win-7 winload → kernel hand-off.
 ///
