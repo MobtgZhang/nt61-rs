@@ -31,8 +31,11 @@ pub fn load_library_w(name: &[u16]) -> Result<HANDLE, NTSTATUS> {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `GetProcAddress` — resolve an export by name.
-pub fn get_proc_address(
+pub unsafe fn get_proc_address(
     module: HANDLE,
     name: &[u8],
 ) -> Option<unsafe extern "system" fn() -> isize> {
@@ -60,14 +63,21 @@ pub fn get_proc_address(
     if status >= 0 && !addr.is_null() {
         // Safety: the caller assumes the resolved address points at a
         // function with the declared signature (matching real Windows).
-        Some(unsafe { core::mem::transmute(addr) })
+        Some(unsafe {
+            core::mem::transmute::<*mut core::ffi::c_void, unsafe extern "system" fn() -> isize>(
+                addr,
+            )
+        })
     } else {
         None
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `FreeLibrary` — unload a DLL.
-pub fn free_library(h: HANDLE) -> Result<(), NTSTATUS> {
+pub unsafe fn free_library(h: HANDLE) -> Result<(), NTSTATUS> {
     let status = unsafe { crate::libs::ntdll::ldr::ldr_unload_dll(h) };
     if status >= 0 {
         Ok(())

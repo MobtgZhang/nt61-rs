@@ -20,18 +20,14 @@ pub fn get_system_time(system_time: &mut SystemTime) -> Result<(), NTSTATUS> {
         return Err(STATUS_INVALID_PARAMETER);
     };
 
-    system_time.w_year = u16::from(clock.year);
+    system_time.w_year = clock.year;
     system_time.w_month = u16::from(clock.month);
     system_time.w_day = u16::from(clock.day);
     system_time.w_hour = u16::from(clock.hour);
     system_time.w_minute = u16::from(clock.minute);
     system_time.w_second = u16::from(clock.second());
     system_time.w_milliseconds = 0;
-    system_time.w_day_of_week = weekday(
-        u16::from(clock.year),
-        u16::from(clock.month),
-        u16::from(clock.day),
-    );
+    system_time.w_day_of_week = weekday(clock.year, u16::from(clock.month), u16::from(clock.day));
     Ok(())
 }
 
@@ -140,7 +136,7 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     }
     let year_start = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + year_of_era / 400;
     let day_of_year = day_of_era - year_start;
-    let year = era * 400 + year_of_era as i64;
+    let year = era * 400 + year_of_era;
     let adjusted_month = (5 * day_of_year + 2) / 153;
     let month = adjusted_month + if adjusted_month < 10 { 3 } else { -9 };
     let day = day_of_year - (153 * adjusted_month + 2) / 5 + 1;

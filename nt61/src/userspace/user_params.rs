@@ -25,6 +25,9 @@ fn aligned_size(bytes: usize) -> usize {
     (bytes + 7) & !7
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 unsafe fn place_string(target: &mut UnicodeString, text: &[u16], cursor: &mut *mut u16) {
     let length = text.len().min(0x7FFF);
     let maximum_length = (length + 1).min(0x8000);
@@ -91,8 +94,11 @@ pub fn build_process_parameters(
     Ok(raw)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Install a process parameter block in the current process PEB.
-pub fn install_process_parameters(
+pub unsafe fn install_process_parameters(
     peb: *mut peb,
     params: *mut RtlUserProcessParameters,
 ) -> NTSTATUS {

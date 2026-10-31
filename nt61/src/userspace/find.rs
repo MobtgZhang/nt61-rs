@@ -13,8 +13,11 @@
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// User-mode entry point for `find.exe`.
-pub fn find_main(argc: i32, argv: *const *const u8) -> i32 {
+pub unsafe fn find_main(argc: i32, argv: *const *const u8) -> i32 {
     // Parse arguments: find [/V] [/C] [/I] [/N] "string" [files...]
     let mut invert = false; // /V
     let mut count_only = false; // /C

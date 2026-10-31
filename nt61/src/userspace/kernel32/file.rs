@@ -84,8 +84,11 @@ pub fn create_file_w(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `ReadFile` — read data from a file.
-pub fn read_file(
+pub unsafe fn read_file(
     h: HANDLE,
     buf: &mut [u8],
     bytes_read: *mut u32,
@@ -121,8 +124,11 @@ pub fn read_file(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `WriteFile` — write data to a file.
-pub fn write_file(
+pub unsafe fn write_file(
     h: HANDLE,
     buf: &[u8],
     bytes_written: *mut u32,
@@ -157,8 +163,11 @@ pub fn write_file(
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `CloseHandle` — close a file or other kernel object handle.
-pub fn close_handle(h: HANDLE) -> Result<(), NTSTATUS> {
+pub unsafe fn close_handle(h: HANDLE) -> Result<(), NTSTATUS> {
     let status = unsafe { crate::libs::ntdll::file::nt_close(h) };
     if status >= 0 {
         Ok(())

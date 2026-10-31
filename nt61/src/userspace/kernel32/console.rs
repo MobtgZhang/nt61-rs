@@ -11,8 +11,11 @@ pub const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5;
 pub const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6;
 pub const STD_ERROR_HANDLE: u32 = 0xFFFF_FFF4;
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `WriteConsoleW` — write a UTF-16 string to the console.
-pub fn write_console_w(
+pub unsafe fn write_console_w(
     _h: HANDLE,
     buf: &[u16],
     chars_written: *mut u32,
@@ -64,8 +67,11 @@ pub fn write_console_w(
     Ok(())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `WriteConsoleA` — write an ANSI string to the console.
-pub fn write_console_a(
+pub unsafe fn write_console_a(
     _h: HANDLE,
     buf: &[u8],
     chars_written: *mut u32,
@@ -82,8 +88,11 @@ pub fn write_console_a(
     Ok(())
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// `ReadConsoleW` — read a UTF-16 string from the console.
-pub fn read_console_w(
+pub unsafe fn read_console_w(
     _h: HANDLE,
     buf: &mut [u16],
     chars_read: *mut u32,

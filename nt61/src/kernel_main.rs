@@ -10,8 +10,8 @@
 //!     `efi_main` prepares a `BootInfo`, then `jmp`s straight to
 //!     `kernel_main`.
 //
-//! Adding or changing an init phase here propagates to *both* boot
-//! paths automatically.
+//!     Adding or changing an init phase here propagates to *both* boot
+//!     paths automatically.
 //
 //! # Windows 7 Compatible Logging
 //
@@ -684,7 +684,7 @@ pub fn run_safe_mode_shell(mode: servers::cmd::ShellMode) -> ! {
             let pane_height = (pane_bottom - pane_top) as usize;
             // Take only the last `pane_height` lines (most
             // recent) to fit the available rows.
-            let start = if n > pane_height { n - pane_height } else { 0 };
+            let start = n.saturating_sub(pane_height);
             for (i, line) in buf[start..n].iter().enumerate() {
                 set_cursor(0, pane_top + i as u8);
                 // Print up to COLS bytes; stop at NUL.
@@ -995,81 +995,83 @@ fn create_system_processes() {
 /// In Windows 7, these threads run in the context of the System process
 /// and have access to kernel-mode resources only.
 fn create_system_threads() {
-    boot_println!("    SYS_THREADS: Creating System process threads...");
+    unsafe {
+        boot_println!("    SYS_THREADS: Creating System process threads...");
 
-    // Get System process
-    let sys_process = match ps::process::get_by_pid(ps::process::PID_SYSTEM) {
-        Some(p) => p,
-        None => {
-            boot_println!(
-                "    SYS_THREADS: ERROR - System process not found; thread creation aborted"
-            );
-            return;
-        }
-    };
-
-    // create MiZeroPageThread - Pre-zeros free pages
-    boot_println!("      Creating MiZeroPageThread...");
-    match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
-        Some(thread) => {
-            {
-                (*thread).kthread.base_priority = 0; // Low priority
-                (*thread).kthread.priority = 0;
-                (*thread).kthread.state = ps::thread::KThreadState::Ready;
+        // Get System process
+        let sys_process = match ps::process::get_by_pid(ps::process::PID_SYSTEM) {
+            Some(p) => p,
+            None => {
+                boot_println!(
+                    "    SYS_THREADS: ERROR - System process not found; thread creation aborted"
+                );
+                return;
             }
-            boot_println!(
-                "        MiZeroPageThread TID {} created",
-                (*thread).client_id.unique_thread
-            );
-            // Add to ready queue
-            ke::scheduler::add_ready(thread as *mut _, 0);
-        }
-        None => {
-            boot_println!("        Failed to create MiZeroPageThread");
-        }
-    }
+        };
 
-    // create MiModifiedPageWriter - Writes dirty pages to pagefile
-    boot_println!("      Creating MiModifiedPageWriter...");
-    match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
-        Some(thread) => {
-            {
-                (*thread).kthread.base_priority = 0; // Low priority
-                (*thread).kthread.priority = 0;
-                (*thread).kthread.state = ps::thread::KThreadState::Ready;
+        // create MiZeroPageThread - Pre-zeros free pages
+        boot_println!("      Creating MiZeroPageThread...");
+        match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
+            Some(thread) => {
+                {
+                    thread.kthread.base_priority = 0; // Low priority
+                    thread.kthread.priority = 0;
+                    thread.kthread.state = ps::thread::KThreadState::Ready;
+                }
+                boot_println!(
+                    "        MiZeroPageThread TID {} created",
+                    thread.client_id.unique_thread
+                );
+                // Add to ready queue
+                ke::scheduler::add_ready(thread as *mut _, 0);
             }
-            boot_println!(
-                "        MiModifiedPageWriter TID {} created",
-                (*thread).client_id.unique_thread
-            );
-            ke::scheduler::add_ready(thread as *mut _, 0);
-        }
-        None => {
-            boot_println!("        Failed to create MiModifiedPageWriter");
-        }
-    }
-
-    // create System worker thread for DPC processing
-    boot_println!("      Creating System worker thread...");
-    match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
-        Some(thread) => {
-            {
-                (*thread).kthread.base_priority = 8; // Normal priority
-                (*thread).kthread.priority = 8;
-                (*thread).kthread.state = ps::thread::KThreadState::Ready;
+            None => {
+                boot_println!("        Failed to create MiZeroPageThread");
             }
-            boot_println!(
-                "        System worker TID {} created",
-                (*thread).client_id.unique_thread
-            );
-            ke::scheduler::add_ready(thread as *mut _, 8);
         }
-        None => {
-            boot_println!("        Failed to create System worker");
-        }
-    }
 
-    boot_println!("    SYS_THREADS: System threads created");
+        // create MiModifiedPageWriter - Writes dirty pages to pagefile
+        boot_println!("      Creating MiModifiedPageWriter...");
+        match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
+            Some(thread) => {
+                {
+                    thread.kthread.base_priority = 0; // Low priority
+                    thread.kthread.priority = 0;
+                    thread.kthread.state = ps::thread::KThreadState::Ready;
+                }
+                boot_println!(
+                    "        MiModifiedPageWriter TID {} created",
+                    thread.client_id.unique_thread
+                );
+                ke::scheduler::add_ready(thread as *mut _, 0);
+            }
+            None => {
+                boot_println!("        Failed to create MiModifiedPageWriter");
+            }
+        }
+
+        // create System worker thread for DPC processing
+        boot_println!("      Creating System worker thread...");
+        match ps::thread::create_thread(sys_process as *mut _, 0x4000) {
+            Some(thread) => {
+                {
+                    thread.kthread.base_priority = 8; // Normal priority
+                    thread.kthread.priority = 8;
+                    thread.kthread.state = ps::thread::KThreadState::Ready;
+                }
+                boot_println!(
+                    "        System worker TID {} created",
+                    thread.client_id.unique_thread
+                );
+                ke::scheduler::add_ready(thread as *mut _, 8);
+            }
+            None => {
+                boot_println!("        Failed to create System worker");
+            }
+        }
+
+        boot_println!("    SYS_THREADS: System threads created");
+    }
 }
 
 /// Initialize the System process working set.

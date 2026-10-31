@@ -82,6 +82,9 @@ static KERNEL_MAIN_LINK_KEEP: extern "C" fn(&nt61::kernel_main::BootInfo) -> ! =
 /// the standard C ABI and avoid conflicts with any libc symbols.
 //
 // Safety: The pointers must be valid for `n` bytes.
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 #[no_mangle]
 pub unsafe extern "C" fn memmove(
     dst: *mut core::ffi::c_void,

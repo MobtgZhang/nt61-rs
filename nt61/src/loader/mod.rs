@@ -296,6 +296,12 @@ impl LoaderResult {
     }
 }
 
+impl Default for LoaderResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Load PE image into memory
 pub fn load_pe(image: &[u8]) -> Option<LoaderResult> {
     // Verify DOS header
@@ -750,8 +756,7 @@ pub fn load_image_full(
     if size_of_image as usize > MAX_IMAGE_SIZE {
         return None;
     }
-    let mut img = Vec::with_capacity(size_of_image as usize);
-    img.resize(size_of_image as usize, 0u8);
+    let mut img = alloc::vec![0; size_of_image as usize];
     // `loaded.bytes` is addressed by RVA.  The headers live at RVA 0 and
     // are not part of any section, so they must be copied explicitly.
     // Without this, every later parse of the mapped image sees a zeroed
@@ -819,10 +824,11 @@ pub fn load_image_full(
     } else {
         read_data_directory_pe32plus(bytes, opt_off, 1) // 1 = IMPORT
     };
-    if import_rva != 0 && import_size != 0 {
-        if !resolve_imports(&mut loaded, bytes, import_rva, image_db) {
-            return None;
-        }
+    if import_rva != 0
+        && import_size != 0
+        && !resolve_imports(&mut loaded, bytes, import_rva, image_db)
+    {
+        return None;
     }
 
     Some(loaded)
@@ -919,7 +925,7 @@ fn apply_base_relocations(loaded: &mut LoadedImage, raw: &[u8], delta: i64) -> u
         let block_size =
             u32::from_le_bytes([raw[cur + 4], raw[cur + 5], raw[cur + 6], raw[cur + 7]]);
 
-        if block_size < 8 || block_size > 0x1000_0000 {
+        if !(8..=0x1000_0000).contains(&block_size) {
             break;
         }
         // Walk the block by byte range rather than by a guessed entry count:
@@ -932,7 +938,7 @@ fn apply_base_relocations(loaded: &mut LoadedImage, raw: &[u8], delta: i64) -> u
             let entry = u16::from_le_bytes([raw[cur], raw[cur + 1]]);
             cur += 2;
 
-            let reloc_type = (entry >> 12) as u16;
+            let reloc_type = entry >> 12;
             let offset_in_page = (entry & 0xFFF) as u32;
             let target_rva = page_rva.wrapping_add(offset_in_page);
 
@@ -1116,7 +1122,7 @@ fn resolve_imports(
             if entry == 0 {
                 break;
             }
-            let iat_off_in_image = (iat_rva + 8 * ((ilt_off - ilt_off_file) as u32 / 8)) as u32;
+            let iat_off_in_image = iat_rva + 8 * ((ilt_off - ilt_off_file) as u32 / 8);
             if entry & 0x8000_0000_0000_0000 != 0 {
                 // Import by name: the low bits are a hint/name RVA.
                 let hint_rva = (entry & 0x7FFF_FFFF) as u32;
@@ -1195,10 +1201,10 @@ pub struct ImageDatabase {
 impl ImageDatabase {
     pub fn new() -> Self {
         let empty = alloc::vec::Vec::new();
-        let result = Self {
+
+        Self {
             images: crate::ke::sync::Spinlock::new(empty),
-        };
-        result
+        }
     }
 
     /// Register `image` in the database. We scan its export table
@@ -1261,7 +1267,7 @@ impl ImageDatabase {
                 // which is fine because such images cannot be
                 // imported by anyone.
                 if let Some(e) = exports.first() {
-                    return Some(e.address - first_export_rva(&exports));
+                    return Some(e.address - first_export_rva(exports));
                 }
             }
         }
@@ -1271,6 +1277,12 @@ impl ImageDatabase {
     pub fn list(&self) -> Vec<String> {
         let g = self.images.lock();
         g.iter().map(|(n, _)| n.clone()).collect()
+    }
+}
+
+impl Default for ImageDatabase {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1529,8 +1541,11 @@ pub struct TlsData {
 }
 
 impl TlsData {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     /// create new TLS data for a thread
-    pub fn new(tls_dir: *const ImageTlsDirectory64) -> Option<&'static mut Self> {
+    pub unsafe fn new(tls_dir: *const ImageTlsDirectory64) -> Option<&'static mut Self> {
         if tls_dir.is_null() {
             return None;
         }
@@ -1540,11 +1555,10 @@ impl TlsData {
         // Calculate the size of TLS data
         let start = dir.start_va as usize;
         let end = dir.end_va as usize;
-        let size = if end > start { end - start } else { 0 };
+        let size = end.saturating_sub(start);
 
         // Allocate from non-paged pool
-        let data_ptr =
-            crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, size) as *mut u8;
+        let data_ptr = crate::mm::pool::allocate(crate::mm::pool::PoolType::NonPaged, size);
 
         if data_ptr.is_null() {
             return None;
@@ -1582,11 +1596,13 @@ impl TlsData {
 
     /// Free TLS data
     pub fn free(&mut self) {
-        if !self.tls_data_ptr.is_null() {
-            {
-                let _ = crate::mm::pool::free(self.tls_data_ptr);
+        unsafe {
+            if !self.tls_data_ptr.is_null() {
+                {
+                    let _ = crate::mm::pool::free(self.tls_data_ptr);
+                }
+                self.tls_data_ptr = core::ptr::null_mut();
             }
-            self.tls_data_ptr = core::ptr::null_mut();
         }
     }
 }
@@ -1636,10 +1652,7 @@ pub fn parse_tls_directory(image: &[u8]) -> Option<ImageTlsDirectory64> {
     };
 
     // Convert TLS directory RVA to file offset
-    let tls_file = match rva_to_file(tls_rva) {
-        Some(o) => o,
-        None => return None,
-    };
+    let tls_file = rva_to_file(tls_rva)?;
 
     if tls_file + 32 > image.len() {
         return None;
@@ -1728,7 +1741,7 @@ pub fn execute_tls_callbacks(loaded: &LoadedImage, _reason: u32) -> usize {
     }
 
     // Get callbacks pointer (relative to image base)
-    let callbacks_base = loaded.image_base as u64;
+    let callbacks_base = loaded.image_base;
     let callbacks_ptr = (callbacks_base + tls_dir.callbacks_va) as *const u64;
 
     let mut count = 0;
@@ -1976,7 +1989,7 @@ fn load_raw_image_into_user_address_space(
 
     // 2. Reserve a contiguous physical range big enough for the
     //    image and map it into the per-process PML4.
-    let page_count = ((size_of_image as u64 + 0xFFF) / 0x1000) as usize;
+    let page_count = (size_of_image as u64).div_ceil(0x1000) as usize;
     // Dynamically track every allocated page so images larger than
     // a fixed-size stack array are supported (a 16-slot array caps
     // at 64 KiB; real PE images can be megabytes).
@@ -2031,8 +2044,7 @@ fn load_raw_image_into_user_address_space(
     //     baked into .data/.rdata and RIP-relative displacements are
     //     all stored relative to the preferred ImageBase and must be
     //     fixed by the same delta the mapping moved by.
-    let mut rva_image: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-    rva_image.resize(size_of_image as usize, 0u8);
+    let mut rva_image: alloc::vec::Vec<u8> = alloc::vec![0; size_of_image as usize];
     let header_len = (u32::from_le_bytes([
         image[opt_off + 0x3C],
         image[opt_off + 0x3D],
@@ -2065,11 +2077,7 @@ fn load_raw_image_into_user_address_space(
         rva_image[dst..dst + sz].copy_from_slice(&image[src..src + sz]);
     }
     if delta != 0 {
-        crate::userspace::loader::apply_base_relocations_to_image(
-            &mut rva_image,
-            image,
-            delta,
-        );
+        crate::userspace::loader::apply_base_relocations_to_image(&mut rva_image, image, delta);
     }
 
     // 3. Map each 4 KiB page at `image_base + i*0x1000` with
@@ -2164,19 +2172,19 @@ fn load_raw_image_into_user_address_space(
                 let dst = dst_phys as *mut u8;
                 for off8 in (0..chunk).step_by(8) {
                     let rem = chunk - off8;
-                    let raw: u64;
+
                     let src_p = rva_image
                         .as_ptr()
                         .add(sh.virtual_address as usize + off + off8);
-                    if rem >= 8 {
-                        raw = core::ptr::read_unaligned(src_p as *const u64);
+                    let raw: u64 = if rem >= 8 {
+                        core::ptr::read_unaligned(src_p as *const u64)
                     } else {
                         let mut tmp = [0u8; 8];
                         for j in 0..rem {
                             tmp[j] = *src_p.add(j);
                         }
-                        raw = u64::from_le_bytes(tmp);
-                    }
+                        u64::from_le_bytes(tmp)
+                    };
                     // write 8 bytes (one u64) to destination.
                     core::ptr::write_volatile(dst.add(off8) as *mut u64, raw);
                 }
@@ -2541,7 +2549,7 @@ fn determine_section_protection(characteristics: u32) -> u64 {
     if characteristics & section::CNT_CODE != 0 {
         // .text section: readable and executable, not writable
         // R+X (remove any NX and RW bits)
-        flags = PTE_US | 0; // R+X means no RW, no NX
+        flags = PTE_US; // R+X means no RW, no NX
     }
 
     flags

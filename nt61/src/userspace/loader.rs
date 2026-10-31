@@ -295,7 +295,7 @@ pub fn apply_base_relocations_to_image(image: &mut [u8], raw: &[u8], delta: i64)
             u32::from_le_bytes([raw[cur + 4], raw[cur + 5], raw[cur + 6], raw[cur + 7]]);
 
         // Blocks are LONG-aligned and at most one page of entries.
-        if block_size < 8 || block_size > 0x1000_0000 {
+        if !(8..=0x1000_0000).contains(&block_size) {
             break;
         }
         let block_end = cur.saturating_add(block_size as usize).min(end);
@@ -315,7 +315,8 @@ pub fn apply_base_relocations_to_image(image: &mut [u8], raw: &[u8], delta: i64)
                 }
                 REL_BASED_HIGH => {
                     if target_rva + 2 <= image.len() {
-                        let current = u16::from_le_bytes([image[target_rva], image[target_rva + 1]]);
+                        let current =
+                            u16::from_le_bytes([image[target_rva], image[target_rva + 1]]);
                         let fixed = current.wrapping_add((delta >> 16) as u16);
                         image[target_rva..target_rva + 2].copy_from_slice(&fixed.to_le_bytes());
                         applied += 1;
@@ -323,7 +324,8 @@ pub fn apply_base_relocations_to_image(image: &mut [u8], raw: &[u8], delta: i64)
                 }
                 REL_BASED_LOW => {
                     if target_rva + 2 <= image.len() {
-                        let current = u16::from_le_bytes([image[target_rva], image[target_rva + 1]]);
+                        let current =
+                            u16::from_le_bytes([image[target_rva], image[target_rva + 1]]);
                         let fixed = current.wrapping_add(delta as u16);
                         image[target_rva..target_rva + 2].copy_from_slice(&fixed.to_le_bytes());
                         applied += 1;
@@ -352,7 +354,8 @@ pub fn apply_base_relocations_to_image(image: &mut [u8], raw: &[u8], delta: i64)
                     let next = u16::from_le_bytes([raw[cur], raw[cur + 1]]);
                     cur += 2;
                     if target_rva + 2 <= image.len() {
-                        let current = u16::from_le_bytes([image[target_rva], image[target_rva + 1]]);
+                        let current =
+                            u16::from_le_bytes([image[target_rva], image[target_rva + 1]]);
                         let combined = ((current as i64) << 16)
                             .wrapping_add(i16::from_le_bytes(next.to_le_bytes()) as i64)
                             .wrapping_add(delta);
@@ -378,14 +381,12 @@ pub fn apply_base_relocations_to_image(image: &mut [u8], raw: &[u8], delta: i64)
                         applied += 1;
                     }
                 }
-                REL_BASED_DIR64 => {
-                    if is_pe32plus && target_rva + 8 <= image.len() {
-                        let mut current = [0u8; 8];
-                        current.copy_from_slice(&image[target_rva..target_rva + 8]);
-                        let fixed = (i64::from_le_bytes(current).wrapping_add(delta)) as u64;
-                        image[target_rva..target_rva + 8].copy_from_slice(&fixed.to_le_bytes());
-                        applied += 1;
-                    }
+                REL_BASED_DIR64 if is_pe32plus && target_rva + 8 <= image.len() => {
+                    let mut current = [0u8; 8];
+                    current.copy_from_slice(&image[target_rva..target_rva + 8]);
+                    let fixed = (i64::from_le_bytes(current).wrapping_add(delta)) as u64;
+                    image[target_rva..target_rva + 8].copy_from_slice(&fixed.to_le_bytes());
+                    applied += 1;
                 }
                 _ => {
                     // Architecture-specific types (MIPS/ARM/RISC-V/

@@ -152,7 +152,7 @@ pub fn set_environment_variable_w(name: &[u16], value: Option<&[u16]>) -> i32 {
                     return 1;
                 };
 
-                if value.len() <= entry_length - separator - 1 {
+                if value.len() < entry_length - separator {
                     let old_length = entry_length - separator - 1;
                     unsafe {
                         for (offset, item) in value.iter().enumerate() {

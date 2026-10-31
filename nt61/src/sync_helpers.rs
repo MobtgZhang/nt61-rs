@@ -16,7 +16,13 @@ impl<T: Copy + Default, const N: usize> SyncArray<T, N> {
         F: FnOnce(&mut [T; N]) -> R,
     {
         let mut guard = self.data.lock();
-        f(&mut *guard)
+        f(&mut guard)
+    }
+}
+
+impl<T: Copy + Default, const N: usize> Default for SyncArray<T, N> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -45,5 +51,11 @@ impl<T> SyncOption<T> {
     {
         let mut guard = self.data.lock();
         f(&mut *guard)
+    }
+}
+
+impl<T> Default for SyncOption<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }

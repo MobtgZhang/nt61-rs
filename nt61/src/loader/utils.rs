@@ -45,7 +45,6 @@ pub mod loader_flags {
 }
 
 /// This is used for fast symbol lookup in the export table.
-
 pub fn hash_string(s: &str) -> u32 {
     let mut hash: u32 = 0;
     for byte in s.bytes() {
@@ -111,7 +110,7 @@ pub fn validate_checksum(data: &[u8]) -> bool {
 
     checksum = (checksum & 0xFFFF) + (checksum >> 16);
     checksum = checksum.wrapping_add(checksum >> 16);
-    checksum = checksum & 0xFFFF;
+    checksum &= 0xFFFF;
 
     let calculated_checksum = (checksum.wrapping_add(data.len() as u64)) as u32;
 
@@ -122,14 +121,14 @@ pub fn align_up(value: u32, alignment: u32) -> u32 {
     if alignment == 0 {
         return value;
     }
-    ((value + alignment - 1) / alignment) * alignment
+    value.div_ceil(alignment) * alignment
 }
 
 pub fn align_up64(value: u64, alignment: u64) -> u64 {
     if alignment == 0 {
         return value;
     }
-    ((value + alignment - 1) / alignment) * alignment
+    value.div_ceil(alignment) * alignment
 }
 
 pub fn is_valid_address_range(base: u64, size: u64) -> bool {

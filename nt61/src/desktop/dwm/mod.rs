@@ -123,11 +123,7 @@ pub fn set_surface_visible(surface_id: u64, visible: bool) {
 pub fn set_active_surface(surface_id: u64) {
     let mut pool = scratch_pool();
     for slot in pool.iter_mut() {
-        if slot.id == surface_id {
-            slot.active = true;
-        } else {
-            slot.active = false;
-        }
+        slot.active = slot.id == surface_id;
     }
 }
 

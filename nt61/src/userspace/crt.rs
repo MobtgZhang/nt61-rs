@@ -11,9 +11,12 @@ pub extern "system" fn __crt_startup(
     main(argc, argv)
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Walk a null-terminated table of C initializers and invoke each one,
 /// matching the MSVC _initterm contract used by CRT startup code.
-pub fn _initterm(table: *const unsafe extern "system" fn()) {
+pub unsafe fn _initterm(table: *const unsafe extern "system" fn()) {
     if table.is_null() {
         return;
     }
@@ -31,10 +34,13 @@ pub fn _initterm(table: *const unsafe extern "system" fn()) {
     }
 }
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// Walk a null-terminated table of CRT initializers that return an
 /// NTSTATUS-style status; abort on the first failure and propagate it,
 /// matching the MSVC _initterm_e contract.
-pub fn _initterm_e(table: *const unsafe extern "system" fn() -> i32) -> i32 {
+pub unsafe fn _initterm_e(table: *const unsafe extern "system" fn() -> i32) -> i32 {
     if table.is_null() {
         return 0;
     }

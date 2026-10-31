@@ -10,7 +10,7 @@
 //!   * Import resolution
 //!   * TEB/PEB setup for 32-bit processes
 //
-//! References:
+//!     References:
 //!   * Microsoft PE/COFF Specification
 //!   * geoffchappell.com — PE32/PE32+ structures
 
@@ -324,9 +324,7 @@ fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
 
 fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
     let bytes = data.get(offset..offset.checked_add(4)?)?;
-    Some(u32::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3],
-    ]))
+    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
 fn read_data_directory(
@@ -357,7 +355,9 @@ fn read_image_string(data: &[u8], offset: usize) -> Option<String> {
 }
 
 fn file_offset(header_info: &PE32HeaderInfo, rva: u32) -> Option<usize> {
-    header_info.rva_to_file_offset(rva).map(|offset| offset as usize)
+    header_info
+        .rva_to_file_offset(rva)
+        .map(|offset| offset as usize)
 }
 
 /// Parse a PE32 image from raw bytes.
@@ -635,7 +635,9 @@ pub fn parse_import_directory(
             if lookup_value == 0 {
                 break;
             }
-            let lookup = ImportLookupEntry { value: lookup_value };
+            let lookup = ImportLookupEntry {
+                value: lookup_value,
+            };
             let iat_rva = first_thunk_rva.wrapping_add((thunk_index * 4) as u32);
 
             let import = if lookup.is_ordinal() {
@@ -660,11 +662,7 @@ pub fn parse_import_directory(
                     .get(name_start..)
                     .and_then(|bytes| bytes.iter().position(|&byte| byte == 0))
                     .and_then(|length| data.get(name_start..name_start + length))
-                    .map(|bytes| {
-                        core::str::from_utf8(bytes)
-                            .unwrap_or("")
-                            .to_string()
-                    })
+                    .map(|bytes| core::str::from_utf8(bytes).unwrap_or("").to_string())
                 {
                     Some(name) => name,
                     None => break,
@@ -846,9 +844,7 @@ pub fn apply_relocations(image: &mut LoadedImage32, delta: i32) {
                 reloc_type::ABSOLUTE => {}
                 reloc_type::HIGHLOW => {
                     if let Some(bytes) = image.slice_for_rva_mut(rva, 4) {
-                        let value = u32::from_le_bytes([
-                            bytes[0], bytes[1], bytes[2], bytes[3],
-                        ]);
+                        let value = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
                         let adjusted = (value as i64 + delta as i64) as u32;
                         bytes.copy_from_slice(&adjusted.to_le_bytes());
                     }
@@ -877,11 +873,9 @@ pub fn apply_relocations(image: &mut LoadedImage32, delta: i32) {
                         let value = u16::from_le_bytes([bytes[0], bytes[1]]);
                         let mut high_delta = (delta as u32) >> 16;
                         let low_delta = (delta as u32) & 0xFFFF;
-                        let next_low_after_delta = u32::from(next_low)
-                            .checked_add(u32::from(low_delta))
-                            .unwrap_or(0);
-                        if next_low_after_delta > 0xFFFF
-                        {
+                        let next_low_after_delta =
+                            u32::from(next_low).checked_add(low_delta).unwrap_or(0);
+                        if next_low_after_delta > 0xFFFF {
                             high_delta = high_delta.wrapping_add(1);
                         }
                         let adjusted = (value as i32 + high_delta as i32) as u16;

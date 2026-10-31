@@ -179,7 +179,10 @@ pub fn alloc_bytes(size: usize) -> *mut u8 {
     ptr::null_mut()
 }
 
-pub fn free_bytes(pointer: *mut u8) {
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
+pub unsafe fn free_bytes(pointer: *mut u8) {
     if pointer.is_null() {
         return;
     }
@@ -227,10 +230,16 @@ pub fn free_bytes(pointer: *mut u8) {
 }
 
 unsafe impl GlobalAlloc for UserHeapAllocator {
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         alloc_bytes(layout.size())
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
     unsafe fn dealloc(&self, pointer: *mut u8, _layout: Layout) {
         free_bytes(pointer)
     }

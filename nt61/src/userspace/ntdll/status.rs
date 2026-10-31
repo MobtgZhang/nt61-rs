@@ -4,6 +4,8 @@
 //! are listed — Phase 2 will extend as needed. Values from
 //! `ntstatus.h` (Windows 7 SDK).
 
+pub type NTSTATUS = i32;
+
 pub const STATUS_SUCCESS: i32 = 0x0000_0000;
 pub const STATUS_WAIT_0: i32 = 0x0000_0000;
 pub const STATUS_WAIT_1: i32 = 0x0000_0001;
@@ -70,11 +72,11 @@ pub const STATUS_DIRECTORY_NOT_EMPTY: i32 = 0xC0000101_u32 as i32;
 pub const STATUS_PRIVILEGE_NOT_HELD: i32 = 0xC0000061_u32 as i32;
 
 /// Convert NTSTATUS to Result<()>.
-pub fn status_check(s: i32) -> Result<(), ()> {
+pub fn status_check(s: i32) -> Result<(), NTSTATUS> {
     if s >= 0 {
         Ok(())
     } else {
-        Err(())
+        Err(STATUS_UNSUCCESSFUL)
     }
 }
 

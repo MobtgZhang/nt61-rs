@@ -10,8 +10,11 @@
 //! will replace it with a real user-mode paged reader once the
 //! console API is fully wired up.
 
+/// # Safety
+///
+/// Caller must ensure every raw-pointer argument is valid and that the accessed memory obeys the kernel aliasing and lifetime rules.
 /// User-mode entry point for `more.com`.
-pub fn more_main(argc: i32, argv: *const *const u8) -> i32 {
+pub unsafe fn more_main(argc: i32, argv: *const *const u8) -> i32 {
     // Read each file listed in argv[1..] and print it to the console
     // one "screen" (24 lines) at a time, prompting to continue.
     const SCREEN_LINES: usize = 24;
@@ -47,7 +50,7 @@ pub fn more_main(argc: i32, argv: *const *const u8) -> i32 {
         for line in text.lines() {
             crate::kprintln!("{}", line);
             line_count += 1;
-            if line_count % SCREEN_LINES == 0 {
+            if line_count.is_multiple_of(SCREEN_LINES) {
                 // In a real console we would prompt "-- More --" and wait
                 // for a keypress. For now just continue printing.
             }
