@@ -158,7 +158,7 @@ fn serialize_record_binxml(r: &EventRecord) -> Vec<u8> {
         buf.extend_from_slice(&cu.to_le_bytes());
     }
     // Pad to 4-byte boundary
-    while buf.len() % 4 != 0 {
+    while !buf.len().is_multiple_of(4) {
         buf.push(0);
     }
     buf

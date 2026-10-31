@@ -42,17 +42,11 @@ macro_rules! expect_or_return {
 /// Safe unwrap for Option that returns a default value
 #[inline]
 pub fn unwrap_or_default<T: Default>(opt: Option<T>) -> T {
-    match opt {
-        Some(val) => val,
-        None => T::default(),
-    }
+    opt.unwrap_or_default()
 }
 
 /// Safe unwrap for Result that returns a default value
 #[inline]
 pub fn result_or_default<T: Default, E>(res: Result<T, E>) -> T {
-    match res {
-        Ok(val) => val,
-        Err(_) => T::default(),
-    }
+    res.unwrap_or_default()
 }

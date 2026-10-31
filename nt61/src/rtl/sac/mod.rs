@@ -81,12 +81,10 @@ pub fn start_sac_loop() {
                             crate::hal::serial::write_string("\x08 \x08");
                         }
                     }
-                    0x20..=0x7E => {
-                        if line_len < 255 {
-                            line_buf[line_len] = c;
-                            line_len += 1;
-                            crate::hal::serial::write_char(c);
-                        }
+                    0x20..=0x7E if line_len < 255 => {
+                        line_buf[line_len] = c;
+                        line_len += 1;
+                        crate::hal::serial::write_char(c);
                     }
                     _ => {}
                 }

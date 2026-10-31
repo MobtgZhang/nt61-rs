@@ -104,7 +104,7 @@ pub fn mark_post_mm() {
 
 #[inline(never)]
 pub fn write_early(s: &str) {
-    let _ = crate::hal::serial::write_string(s);
+    crate::hal::serial::write_string(s);
 
     if in_fault_context() {
         return;

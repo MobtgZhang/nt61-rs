@@ -90,10 +90,8 @@ impl ChannelManager {
             self.next_id += 1;
             let mut ch = Channel::new(id, name);
             // Deactivate all others then activate this one
-            for s in self.channels.iter_mut() {
-                if let Some(c) = s {
-                    c.is_current = false;
-                }
+            for c in self.channels.iter_mut().flatten() {
+                c.is_current = false;
             }
             ch.is_current = true;
             self.current_id = id;
@@ -109,12 +107,10 @@ impl ChannelManager {
                 if ch.id == id {
                     *slot = None;
                     if self.current_id == id {
-                        for s in self.channels.iter_mut() {
-                            if let Some(c) = s {
-                                c.is_current = true;
-                                self.current_id = c.id;
-                                return true;
-                            }
+                        if let Some(c) = self.channels.iter_mut().flatten().next() {
+                            c.is_current = true;
+                            self.current_id = c.id;
+                            return true;
                         }
                     }
                     return true;
@@ -125,18 +121,21 @@ impl ChannelManager {
     }
 
     pub fn get_channel(&self, id: ChannelId) -> Option<&Channel> {
-        for slot in &self.channels {
-            if let Some(ch) = slot {
-                if ch.id == id {
-                    return Some(ch);
-                }
-            }
-        }
-        None
+        self.channels
+            .iter()
+            .flatten()
+            .find(|&ch| ch.id == id)
+            .map(|v| v as _)
     }
 
     pub fn next_id(&self) -> ChannelId {
         self.next_id
+    }
+}
+
+impl Default for ChannelManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -173,12 +172,10 @@ pub fn next_channel_id() -> ChannelId {
 pub fn list_channels(buf: &mut [Channel]) -> usize {
     let mgr = CHANNEL_MGR.lock();
     let mut n = 0;
-    for slot in &mgr.channels {
-        if let Some(ch) = slot {
-            if n < buf.len() {
-                buf[n] = ch.clone();
-                n += 1;
-            }
+    for ch in mgr.channels.iter().flatten() {
+        if n < buf.len() {
+            buf[n] = *ch;
+            n += 1;
         }
     }
     n

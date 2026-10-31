@@ -210,20 +210,16 @@ impl EventLog {
 
     pub fn export_evtx(&self) -> Vec<u8> {
         let mut tmp = alloc::vec::Vec::new();
-        for slot in &self.records[..self.count] {
-            if let Some(rec) = slot {
-                tmp.push(rec.clone());
-            }
+        for rec in self.records[..self.count].iter().flatten() {
+            tmp.push(rec.clone());
         }
         evtx::write_evtx_file(&tmp, self.channel)
     }
 
     pub fn export_xml(&self) -> Vec<u8> {
         let mut tmp = alloc::vec::Vec::new();
-        for slot in &self.records[..self.count] {
-            if let Some(rec) = slot {
-                tmp.push(rec.clone());
-            }
+        for rec in self.records[..self.count].iter().flatten() {
+            tmp.push(rec.clone());
         }
         xml_export::records_to_xml(&tmp, self.channel)
     }

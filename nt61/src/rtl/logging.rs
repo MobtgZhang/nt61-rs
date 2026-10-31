@@ -349,9 +349,7 @@ pub fn format_subsystem_fixed(buf: &mut [u8; 11], name: &str) -> usize {
     let bytes = name.as_bytes();
     let len = bytes.len().min(10);
 
-    for i in 0..len {
-        buf[i] = bytes[i];
-    }
+    buf[..len].copy_from_slice(&bytes[..len]);
     // Pad with spaces
     for i in len..10 {
         buf[i] = b' ';

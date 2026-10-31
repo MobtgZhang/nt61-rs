@@ -110,7 +110,7 @@ impl LogLevel {
 // ============================================================================
 
 pub fn write_serial(s: &str) {
-    let _ = crate::hal::serial::write_string(s);
+    crate::hal::serial::write_string(s);
 }
 
 // ============================================================================
@@ -183,37 +183,37 @@ pub fn write_ntbtlog_line(file_path: &str, loaded: bool) {
     pos += 1;
 
     // MM
-    buf[pos] = b'0' + (ts.month / 10) as u8;
+    buf[pos] = b'0' + (ts.month / 10);
     pos += 1;
-    buf[pos] = b'0' + (ts.month % 10) as u8;
+    buf[pos] = b'0' + (ts.month % 10);
     pos += 1;
     buf[pos] = b' ';
     pos += 1;
 
     // DD
-    buf[pos] = b'0' + (ts.day / 10) as u8;
+    buf[pos] = b'0' + (ts.day / 10);
     pos += 1;
-    buf[pos] = b'0' + (ts.day % 10) as u8;
+    buf[pos] = b'0' + (ts.day % 10);
     pos += 1;
     buf[pos] = b' ';
     pos += 1;
 
     // HH:MM:SS.mmm
-    buf[pos] = b'0' + (ts.hour / 10) as u8;
+    buf[pos] = b'0' + (ts.hour / 10);
     pos += 1;
-    buf[pos] = b'0' + (ts.hour % 10) as u8;
-    pos += 1;
-    buf[pos] = b':';
-    pos += 1;
-    buf[pos] = b'0' + (ts.minute / 10) as u8;
-    pos += 1;
-    buf[pos] = b'0' + (ts.minute % 10) as u8;
+    buf[pos] = b'0' + (ts.hour % 10);
     pos += 1;
     buf[pos] = b':';
     pos += 1;
-    buf[pos] = b'0' + (ts.second / 10) as u8;
+    buf[pos] = b'0' + (ts.minute / 10);
     pos += 1;
-    buf[pos] = b'0' + (ts.second % 10) as u8;
+    buf[pos] = b'0' + (ts.minute % 10);
+    pos += 1;
+    buf[pos] = b':';
+    pos += 1;
+    buf[pos] = b'0' + (ts.second / 10);
+    pos += 1;
+    buf[pos] = b'0' + (ts.second % 10);
     pos += 1;
     buf[pos] = b'.';
     pos += 1;
